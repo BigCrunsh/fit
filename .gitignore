@@ -1,0 +1,20 @@
+# Data (never commit)
+*.db
+*.db-journal
+*.db-wal
+*.csv
+
+# Personal config
+config.local.yaml
+
+# Auth tokens
+.garmin-tokens/
+
+# Generated
+reports/*.html
+__pycache__/
+*.pyc
+.env
+
+# OS
+.DS_Store

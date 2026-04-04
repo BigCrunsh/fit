@@ -1,0 +1,28 @@
+# config.yaml — Template. Personal values go in config.local.yaml (gitignored).
+
+profile:
+  name: "${FIT_USER_NAME}"
+  age: "${FIT_USER_AGE}"
+  max_hr: "${FIT_USER_MAX_HR}"
+  zones:
+    z1: [0, 115]
+    z2: [115, 150]
+    z3: [150, 168]
+    z4: [168, 182]
+    z5: [182, 200]
+  location:
+    city: "${FIT_CITY:-Berlin}"
+    lat: "${FIT_LAT}"
+    lon: "${FIT_LON}"
+
+sync:
+  garmin_token_dir: "~/.garmy/"
+  db_path: "~/.fit/fitness.db"
+  weather_api: open-meteo
+  sync_days_default: 7
+
+analysis:
+  easy_hr_ceiling: 150
+  cardiac_efficiency_hr_range: [140, 160]
+  overload_threshold: 350
+  weekly_volume_increase_max_pct: 10
