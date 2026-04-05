@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from fit.db import get_db, _discover_migrations, _get_applied_versions, _ensure_schema_version_table
+from fit.db import get_db, _discover_migrations, _get_applied_versions
 
 
 MIGRATIONS_DIR = Path(__file__).parent.parent / "migrations"

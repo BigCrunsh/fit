@@ -3,11 +3,10 @@
 import logging
 import sqlite3
 from datetime import date, timedelta
-from pathlib import Path
 
 from fit import garmin, weather
 from fit.analysis import enrich_activity, compute_weekly_agg
-from fit.calibration import get_active_calibration, extract_lthr_from_race, add_calibration
+from fit.calibration import get_active_calibration, extract_lthr_from_race
 
 logger = logging.getLogger(__name__)
 

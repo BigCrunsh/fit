@@ -1,6 +1,5 @@
 """Shared test fixtures for the fit test suite."""
 
-import sqlite3
 import tempfile
 from pathlib import Path
 

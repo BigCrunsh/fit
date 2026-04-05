@@ -1,8 +1,5 @@
 """Tests for fit/config.py — three-layer config loading, deep merge, placeholder resolution."""
 
-import os
-import tempfile
-from pathlib import Path
 
 import pytest
 import yaml

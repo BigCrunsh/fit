@@ -99,8 +99,7 @@ def _status_cards(conn):
         if d == 0:
             return "="
         arrow = "↓" if d < 0 else "↑"
-        good = (d < 0) if invert else (d > 0)
-        return f"{arrow}{abs(d):.0f}" if not invert else f"{arrow}{abs(d):.0f}"
+        return f"{arrow}{abs(d):.0f}"
 
     r = h["training_readiness"]
     cards.append({"label": "Readiness", "value": r or "—", "unit": "",
@@ -469,7 +468,7 @@ def _definitions(conn):
     weight_row = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
     weight_val = f"{weight_row['weight_kg']:.1f}" if weight_row else "?"
     return {
-        "speed_per_bpm": f"Speed per heartbeat: (meters/min) ÷ avg HR. Higher = more efficient. The Z2-filtered line (bold) shows pure aerobic fitness at controlled effort — the most honest fitness signal.",
+        "speed_per_bpm": "Speed per heartbeat: (meters/min) ÷ avg HR. Higher = more efficient. The Z2-filtered line (bold) shows pure aerobic fitness at controlled effort — the most honest fitness signal.",
         "vo2max": f"Maximum oxygen uptake (ml/kg/min). Current: {vo2_val}. For sub-4:00 marathon at ~75kg, you need ≥50. Declines ~3-5% per month of inactivity, recovers ~1/month with consistent training.",
         "training_load": "Garmin's EPOC-based measure of physiological stress per session. <strong style='color:var(--z12)'>< 150 = easy</strong>, <strong style='color:var(--z3)'>150-250 = moderate</strong>, <strong style='color:var(--z45)'>250-350 = hard</strong>, <strong style='color:var(--danger)'>> 350 = overload risk</strong>. A typical well-trained week sums to 400-800 across all sessions.",
         "readiness": "Garmin's composite 0-100 score combining sleep quality, recovery time, HRV status, stress, and recent training load. <strong style='color:var(--safe)'>≥75 = ready for quality sessions</strong>, <strong style='color:var(--caution)'>50-74 = easy day</strong>, <strong style='color:var(--danger)'>< 50 = rest</strong>.",
@@ -566,7 +565,6 @@ def _get_event_annotations(conn) -> dict:
         d2 = date.fromisoformat(date_list[i])
         gap_days = (d2 - d1).days
         if gap_days > 7:
-            mid = d1 + (d2 - d1) / 2
             annotations[f"gap_{i}"] = {
                 "type": "box", "xMin": date_list[i - 1], "xMax": date_list[i],
                 "backgroundColor": "rgba(239,68,68,0.05)", "borderWidth": 0,

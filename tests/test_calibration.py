@@ -2,10 +2,8 @@
 
 from datetime import date, timedelta
 
-import pytest
 
 from fit.calibration import (
-    STALENESS_THRESHOLDS,
     add_calibration,
     extract_lthr_from_race,
     get_active_calibration,

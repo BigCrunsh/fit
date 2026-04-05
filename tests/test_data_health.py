@@ -1,11 +1,9 @@
 """Tests for fit/data_health.py — data source freshness checking."""
 
 from datetime import date, timedelta
-from unittest.mock import patch
 
-import pytest
 
-from fit.data_health import check_data_sources, _check, GARMIN_INSTRUCTIONS
+from fit.data_health import check_data_sources, _check
 
 
 # ════════════════════════════════════════════════════════════════

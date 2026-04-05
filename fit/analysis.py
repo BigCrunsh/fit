@@ -20,7 +20,6 @@ def compute_hr_zones(avg_hr: int | None, config: dict, lthr: int | None = None) 
         return {"hr_zone_maxhr": None, "hr_zone_lthr": None, "hr_zone": None, "effort_class": None}
 
     # Max HR model (always computed)
-    max_hr = config["profile"]["max_hr"]
     zones_maxhr = config["profile"].get("zones_max_hr", {})
     zone_maxhr = _classify_zone(avg_hr, zones_maxhr)
 
@@ -110,7 +109,6 @@ def classify_run_type(activity: dict, config: dict = None, recent_long_run_avg: 
 
     name = (activity.get("name") or "").lower()
     distance = activity.get("distance_km") or 0
-    avg_hr = activity.get("avg_hr")
     zone = activity.get("hr_zone")
 
     # Race detection (highest priority)

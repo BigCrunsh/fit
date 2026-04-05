@@ -1,10 +1,9 @@
 """Tests for fit/report/generator.py — dashboard generation edge cases."""
 
 import tempfile
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
-import pytest
 
 from fit.report.generator import (
     generate_dashboard,

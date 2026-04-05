@@ -2,7 +2,6 @@
 
 import json
 from datetime import date
-from unittest.mock import patch
 
 import pytest
 
@@ -212,7 +211,7 @@ class TestRevisePhase:
                       weekly_km_min, weekly_km_max, targets, status)
                       VALUES (1, 1, 'P1', 'Base', 20, 30, '{}', 'planned')""")
         db.commit()
-        new_id = revise_phase(db, 1, {"weekly_km_min": 25}, "adjust")
+        revise_phase(db, 1, {"weekly_km_min": 25}, "adjust")
         old = db.execute("SELECT status FROM training_phases WHERE id = 1").fetchone()
         assert old["status"] == "revised"
 

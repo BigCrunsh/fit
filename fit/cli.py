@@ -32,7 +32,7 @@ def sync(days: int, full: bool):
     config = get_config()
     conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
 
-    console.print(f"[bold]Syncing Garmin Connect...[/bold]")
+    console.print("[bold]Syncing Garmin Connect...[/bold]")
     try:
         counts = run_sync(conn, config, days=days, full=full)
         console.print(f"  [green]✓[/green] {counts['health']} health days")
@@ -68,7 +68,7 @@ def checkin():
 @click.option("--weekly", is_flag=True, help="Save a weekly snapshot (YYYY-WNN.html).")
 def report(daily: bool, weekly: bool):
     """Generate HTML dashboard."""
-    from datetime import date, datetime
+    from datetime import date
 
     from fit.config import get_config
     from fit.db import get_db
@@ -121,14 +121,7 @@ def recompute(recompute_all: bool):
         from fit.analysis import compute_weekly_agg
         from fit.sync import _upsert_weekly_agg
 
-        # Get all weeks with activities
-        weeks = conn.execute("""
-            SELECT DISTINCT strftime('%Y-W', date, 'weekday 0', '-6 days')
-                || substr('0' || (strftime('%W', date, 'weekday 0', '-6 days') + 0), -2)
-            FROM activities ORDER BY 1
-        """).fetchall()
-
-        # Simpler: get all distinct ISO weeks
+        # Get all distinct ISO weeks
         from datetime import date as d
         all_dates = conn.execute("SELECT DISTINCT date FROM activities ORDER BY date").fetchall()
         week_set = set()

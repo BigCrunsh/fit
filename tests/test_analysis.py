@@ -1,7 +1,5 @@
 """Tests for fit/analysis.py — zones, efficiency, run types, weekly agg, ACWR, marathon prediction."""
 
-import sqlite3
-from datetime import date, timedelta
 
 import pytest
 
@@ -14,7 +12,6 @@ from fit.analysis import (
     predict_marathon_time,
     compute_weekly_agg,
     enrich_activity,
-    _classify_zone,
     _classify_zone_lthr,
     _compute_acwr,
     _compute_streak,
