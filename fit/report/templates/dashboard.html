@@ -10,40 +10,44 @@
   --bg: #07070c; --surface: rgba(255,255,255,0.025); --border: rgba(255,255,255,0.06);
   --text: #e2e8f0; --text-muted: #64748b; --text-dim: #475569; --text-faint: #334155;
   --mono: 'JetBrains Mono', monospace; --sans: 'DM Sans', 'Helvetica Neue', sans-serif;
-  /* Safety palette (evaluative) */
   --safe: #22c55e; --caution: #eab308; --danger: #ef4444;
-  /* Intensity palette (descriptive) */
-  --z12: #38bdf8; --z3: #f59e0b; --z45: #f97316;
-  --accent: #818cf8;
+  --z12: #38bdf8; --z3: #f59e0b; --z45: #f97316; --accent: #818cf8;
 }
-* { margin: 0; padding: 0; box-sizing: border-box; }
+* { margin:0; padding:0; box-sizing:border-box; }
 body { font-family: var(--sans); background: var(--bg); color: var(--text); min-height: 100vh; padding: 18px 14px; max-width: 900px; margin: 0 auto; }
 h1 { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; }
-.tabs { display: flex; gap: 2px; background: var(--surface); border-radius: 8px; padding: 2px; margin: 14px 0; }
-.tab-btn { padding: 5px 12px; border-radius: 6px; font-size: 11px; font-weight: 600; border: none; cursor: pointer; background: transparent; color: var(--text-dim); font-family: var(--sans); transition: all .2s; }
-.tab-btn.active { background: rgba(255,255,255,0.1); color: var(--text); }
-.tab-content { display: none; }
-.tab-content.active { display: block; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 13px 15px; }
-.cards { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
-.card-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; margin-bottom: 5px; }
-.card-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; font-family: var(--mono); line-height: 1; }
-.card-sub { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
-.card { flex: 1; min-width: 110px; }
-.section-title { display: flex; align-items: center; gap: 7px; margin: 22px 0 10px; }
-.section-title h2 { font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.12em; }
-.section-title .line { flex: 1; height: 1px; background: rgba(255,255,255,0.04); }
-.chart-box { background: rgba(255,255,255,0.015); border: 1px solid rgba(255,255,255,0.045); border-radius: 12px; padding: 13px 10px 5px; margin-bottom: 16px; }
-.chart-box canvas { width: 100% !important; }
-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-th { padding: 5px 4px; text-align: left; color: var(--text-dim); font-weight: 700; font-size: 9px; text-transform: uppercase; border-bottom: 1px solid var(--border); }
-td { padding: 5px 4px; border-bottom: 1px solid rgba(255,255,255,0.025); font-family: var(--mono); font-size: 10px; }
-.insight-box { border-radius: 10px; padding: 11px 15px; margin-bottom: 9px; }
-.insight-title { font-size: 11px; font-weight: 700; margin-bottom: 3px; }
-.insight-body { font-size: 12px; color: #94a3b8; line-height: 1.65; }
-.checkin-bar { margin: 10px 0; background: rgba(59,130,246,0.04); border: 1px solid rgba(59,130,246,0.1); border-radius: 10px; padding: 9px 13px; }
-.stale-badge { font-size: 9px; background: rgba(234,179,8,0.15); color: var(--caution); padding: 2px 8px; border-radius: 12px; font-weight: 700; }
-.footer { margin-top: 32px; padding: 10px 0; border-top: 1px solid rgba(255,255,255,0.03); font-size: 8px; color: var(--text-faint); }
+.tabs { display:flex; gap:2px; background:var(--surface); border-radius:8px; padding:2px; margin:14px 0; }
+.tab-btn { padding:5px 12px; border-radius:6px; font-size:11px; font-weight:600; border:none; cursor:pointer; background:transparent; color:var(--text-dim); font-family:var(--sans); transition:all .2s; }
+.tab-btn.active { background:rgba(255,255,255,0.1); color:var(--text); }
+.tab-content { display:none; } .tab-content.active { display:block; }
+.card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:13px 15px; flex:1; min-width:100px; }
+.cards { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; }
+.card-label { font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.1em; font-weight:700; margin-bottom:5px; }
+.card-value { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; font-family:var(--mono); line-height:1; }
+.card-sub { font-size:10px; color:var(--text-muted); margin-top:4px; }
+.sec { display:flex; align-items:center; gap:7px; margin:22px 0 10px; }
+.sec h2 { font-size:11px; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.12em; }
+.sec .line { flex:1; height:1px; background:rgba(255,255,255,0.04); }
+.chart-box { background:rgba(255,255,255,0.015); border:1px solid rgba(255,255,255,0.045); border-radius:12px; padding:13px 10px 5px; margin-bottom:16px; }
+.chart-box canvas { width:100% !important; }
+table { width:100%; border-collapse:collapse; font-size:11px; }
+th { padding:5px 4px; text-align:left; color:var(--text-dim); font-weight:700; font-size:9px; text-transform:uppercase; border-bottom:1px solid var(--border); }
+td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-family:var(--mono); font-size:10px; }
+.headline { background:rgba(129,140,248,0.06); border:1px solid rgba(129,140,248,0.15); border-radius:12px; padding:14px 18px; margin:12px 0; font-size:13px; line-height:1.6; color:#c4b5fd; }
+.checkin-bar { margin:10px 0; background:rgba(59,130,246,0.04); border:1px solid rgba(59,130,246,0.1); border-radius:10px; padding:9px 13px; }
+.journey { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 18px; margin:14px 0; }
+.journey-bar { display:flex; height:28px; border-radius:6px; overflow:hidden; margin:8px 0; }
+.journey-seg { display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:700; font-family:var(--mono); }
+.insight-box { border-radius:10px; padding:11px 15px; margin-bottom:9px; }
+.insight-title { font-size:11px; font-weight:700; margin-bottom:3px; }
+.insight-body { font-size:12px; color:#94a3b8; line-height:1.65; }
+.run-bar { display:flex; align-items:center; gap:8px; margin:3px 0; font-size:10px; }
+.run-bar-fill { height:18px; border-radius:3px; display:flex; align-items:center; padding:0 6px; font-size:9px; font-weight:600; color:rgba(255,255,255,0.9); white-space:nowrap; }
+.def-toggle { cursor:pointer; font-size:11px; color:var(--text-dim); opacity:0.5; margin-left:4px; }
+.def-box { display:none; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.05); border-radius:8px; padding:10px 13px; margin:6px 0 12px; font-size:11px; color:#94a3b8; line-height:1.6; }
+.stale-badge { font-size:9px; background:rgba(234,179,8,0.15); color:var(--caution); padding:2px 8px; border-radius:12px; font-weight:700; }
+.wow-card { background:rgba(56,189,248,0.04); border:1px solid rgba(56,189,248,0.1); border-radius:10px; padding:10px 14px; margin:10px 0; font-size:11px; }
+.footer { margin-top:32px; padding:10px 0; border-top:1px solid rgba(255,255,255,0.03); font-size:8px; color:var(--text-faint); }
 </style>
 </head>
 <body>
@@ -55,74 +59,104 @@ td { padding: 5px 4px; border-bottom: 1px solid rgba(255,255,255,0.025); font-fa
   </div>
   <div class="tabs">
     {% for tab in tabs %}
-    <button class="tab-btn{% if loop.first %} active{% endif %}" onclick="showTab('{{ tab.id }}')">{{ tab.label }}</button>
+    <button class="tab-btn{% if loop.first %} active{% endif %}" onclick="showTab('{{ tab.id }}',this)">{{ tab.label }}</button>
     {% endfor %}
   </div>
 </div>
 
-<!-- Status Cards -->
-<div class="cards">
-{% for card in status_cards %}
-  <div class="card">
-    <div class="card-label">{{ card.label }}</div>
-    <div class="card-value" style="color:{{ card.color }}">{{ card.value }}<span style="font-size:11px;font-weight:400;color:var(--text-dim);margin-left:2px">{{ card.unit }}</span></div>
-    {% if card.sub %}<div class="card-sub">{{ card.sub }}</div>{% endif %}
+<!-- ═══ TODAY ═══ -->
+<div id="tab-today" class="tab-content active">
+  <div class="headline">{{ headline }}</div>
+
+  <div class="cards">
+  {% for card in status_cards %}
+    <div class="card">
+      <div class="card-label">{{ card.label }}</div>
+      <div class="card-value" style="color:{{ card.color }}">{{ card.value }}<span style="font-size:11px;font-weight:400;color:var(--text-dim);margin-left:2px">{{ card.unit }}</span></div>
+      {% if card.sub %}<div class="card-sub">{{ card.sub }}</div>{% endif %}
+    </div>
+  {% endfor %}
   </div>
-{% endfor %}
+
+  {% if checkin %}
+  <div class="checkin-bar">
+    <div style="font-size:9px;font-weight:700;color:#3b82f6;margin-bottom:3px">CHECK-IN · {{ checkin.date }}</div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:#94a3b8">
+      {% for f in checkin.fields %}<span>{{ f }}</span>{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if journey %}
+  <div class="journey">
+    <div style="font-size:10px;font-weight:700;color:var(--text-muted);margin-bottom:4px">{{ journey.goal_name }}</div>
+    <div class="journey-bar">
+      {% for seg in journey.segments %}
+      <div class="journey-seg" style="flex:{{ seg.width }};background:{{ seg.color }}">{{ seg.label }}</div>
+      {% endfor %}
+    </div>
+    <div style="font-size:10px;color:var(--text-muted);margin-top:4px">{{ journey.position }}</div>
+  </div>
+  {% endif %}
 </div>
 
-<!-- Check-in -->
-{% if checkin %}
-<div class="checkin-bar">
-  <div style="font-size:9px;font-weight:700;color:#3b82f6;margin-bottom:3px">CHECK-IN · {{ checkin.date }}</div>
-  <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:#94a3b8">
-    {% for item in checkin.fields %}<span>{{ item }}</span>{% endfor %}
+<!-- ═══ TRAINING ═══ -->
+<div id="tab-training" class="tab-content">
+  {% if wow %}
+  <div class="wow-card">
+    <div style="font-size:9px;font-weight:700;color:var(--z12);margin-bottom:4px">WEEK OVER WEEK</div>
+    {{ wow }}
   </div>
-</div>
-{% endif %}
+  {% endif %}
 
-<!-- Tab: Training -->
-<div id="tab-training" class="tab-content active">
-  <div class="section-title"><h2>Weekly Volume</h2><div class="line"></div></div>
+  <div class="sec"><h2>Weekly Volume</h2><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-volume" height="160"></canvas></div>
 
-  <div class="section-title"><h2>Training Load Per Run</h2><div class="line"></div></div>
+  <div class="sec"><h2>Training Load Per Run</h2><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-load" height="150"></canvas></div>
 
-  <div class="section-title"><h2>Run Log</h2><div class="line"></div></div>
-  <div style="overflow-x:auto">
-    <table>
-      <thead><tr>
-        <th>Date</th><th>Name</th><th>Dist</th><th>Pace</th><th>HR</th><th>Zone</th><th>Type</th><th>Load</th>
-      </tr></thead>
-      <tbody>
-      {% for run in run_log %}
-        <tr>
-          <td style="color:var(--text-muted)">{{ run.date }}</td>
-          <td style="color:var(--text);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ run.name }}</td>
-          <td style="font-weight:600">{{ run.distance }}</td>
-          <td style="color:{{ run.pace_color }}">{{ run.pace }}</td>
-          <td>{{ run.hr }}</td>
-          <td><span style="font-size:9px;font-weight:700;color:{{ run.zone_color }};background:{{ run.zone_color }}15;padding:1px 6px;border-radius:4px">{{ run.zone }}</span></td>
-          <td style="color:var(--text-muted)">{{ run.run_type }}</td>
-          <td style="color:{{ run.load_color }}">{{ run.load }}</td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
+  <div class="sec"><h2>Run Timeline</h2><div class="line"></div></div>
+  {% for run in run_timeline %}
+  <div class="run-bar">
+    <span style="color:var(--text-muted);width:60px;font-family:var(--mono);font-size:9px">{{ run.date }}</span>
+    <div class="run-bar-fill" style="width:{{ run.width }}%;background:{{ run.color }};min-width:40px">{{ run.distance_km }}km</div>
+    <span style="color:var(--text-muted);font-size:9px">{{ run.run_type }} {{ run.zone }} {% if run.rpe %}RPE {{ run.rpe }}{% endif %}</span>
   </div>
+  {% endfor %}
 </div>
 
-<!-- Tab: Body -->
+<!-- ═══ BODY ═══ -->
 <div id="tab-body" class="tab-content">
-  <div class="section-title"><h2>Readiness · RHR · HRV</h2><div class="line"></div></div>
+  <div class="sec"><h2>Readiness · RHR · HRV</h2><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-readiness" height="180"></canvas></div>
 
-  <div class="section-title"><h2>Sleep</h2><div class="line"></div></div>
+  <div class="sec"><h2>Sleep</h2><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-sleep" height="150"></canvas></div>
+
+  <div class="sec"><h2>Weight</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-weight" height="130"></canvas></div>
 </div>
 
-<!-- Tab: Coach -->
+<!-- ═══ FITNESS ═══ -->
+<div id="tab-fitness" class="tab-content">
+  <div class="sec"><h2>Aerobic Efficiency (Speed / BPM)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.speed_per_bpm }}</div><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-efficiency" height="170"></canvas></div>
+
+  <div class="sec"><h2>VO2max</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.vo2max }}</div><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-vo2" height="140"></canvas></div>
+
+  <div class="sec"><h2>Zone Distribution (by time)</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-zones" height="130"></canvas></div>
+
+  {% if race_prediction %}
+  <div class="sec"><h2>Race Prediction</h2><div class="line"></div></div>
+  <div style="background:rgba(167,139,250,0.04);border:1px solid rgba(167,139,250,0.12);border-radius:12px;padding:15px">
+    {{ race_prediction | safe }}
+  </div>
+  {% endif %}
+</div>
+
+<!-- ═══ COACH ═══ -->
 <div id="tab-coach" class="tab-content">
   {% if coaching %}
     <div style="font-size:10px;color:var(--text-muted);margin-bottom:12px">Generated: {{ coaching.generated_at }} {% if coaching.stale %}<span class="stale-badge">STALE</span>{% endif %}</div>
@@ -134,33 +168,25 @@ td { padding: 5px 4px; border-bottom: 1px solid rgba(255,255,255,0.025); font-fa
     {% endfor %}
   {% else %}
     <div style="color:var(--text-muted);padding:40px 0;text-align:center">
-      No coaching notes yet. Run <code>/fit-coach</code> in Claude Code or ask Claude Chat to generate them.
+      No coaching notes yet. Run <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">/fit-coach</code> in Claude Code or ask Claude Chat to generate them.
     </div>
   {% endif %}
 </div>
 
-<div class="footer">
-  <span>fit v0.1.0 · Generated {{ generated_at }}</span>
-</div>
+<div class="footer">fit v0.1.0 · Generated {{ generated_at }}</div>
 
+<script>{{ chartjs_code }}</script>
+<script>{{ annotation_code }}</script>
 <script>
-{{ chartjs_code }}
-</script>
-<script>
-function showTab(id) {
+function showTab(id, btn) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + id).classList.add('active');
-  event.target.classList.add('active');
+  btn.classList.add('active');
 }
-
-// Chart configs
-const fontColor = '#475569';
-const gridColor = 'rgba(255,255,255,0.03)';
-Chart.defaults.color = fontColor;
+Chart.defaults.color = '#475569';
 Chart.defaults.font.family = "'JetBrains Mono', monospace";
 Chart.defaults.font.size = 10;
-
 {% for chart in charts %}
 new Chart(document.getElementById('{{ chart.id }}'), {{ chart.config | safe }});
 {% endfor %}

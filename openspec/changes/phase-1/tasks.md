@@ -128,41 +128,41 @@
 
 ## 16. Dashboard: Today Tab + Storytelling
 
-- [ ] 16.1 Vendor chartjs-plugin-annotation — event markers
-- [ ] 16.2 Define two-palette color system — safety (green/yellow/red) and intensity (blue→amber→orange)
-- [ ] 16.3 Implement **Today tab** (landing): headline rules engine (readiness + ACWR + phase → sentence), status cards with 4-week deltas, check-in display, ACWR gauge, phase compliance scorecard, calibration/data health panel (collapsed by default), **journey timeline**
-- [ ] 16.4 Implement headline rules — phase-aware (Phase 1: no hard efforts), ACWR-aware, stale check-in detection
-- [ ] 16.5 Implement **journey timeline** — phases as horizontal segments, "you are here" marker, race date at end
+- [x] 16.1 Vendor chartjs-plugin-annotation — event markers
+- [x] 16.2 Define two-palette color system — safety (green/yellow/red) and intensity (blue→amber→orange)
+- [x] 16.3 Implement **Today tab** (landing): headline rules engine (readiness + ACWR + phase → sentence), status cards with 4-week deltas, check-in display, ACWR gauge, phase compliance scorecard, calibration/data health panel (collapsed by default), **journey timeline**
+- [x] 16.4 Implement headline rules — phase-aware (Phase 1: no hard efforts), ACWR-aware, stale check-in detection
+- [x] 16.5 Implement **journey timeline** — phases as horizontal segments, "you are here" marker, race date at end
 
 ## 17. Dashboard: Enhanced Training + Body + Fitness Tabs
 
-- [ ] 17.1 Upgrade Training tab — smart date range (current cycle default, zoom 3mo/6mo/1yr/all), **run timeline visualization** (horizontal bars replacing table), **week-over-week summary card**, intensity palette colors
-- [ ] 17.2 Upgrade Body tab — sleep quality mismatch flags, event annotations on weight trend, ACWR gauge (duplicated for visibility)
-- [ ] 17.3 Upgrade Fitness tab — **speed_per_bpm as hero chart** (largest, dual lines, event annotations), zone distribution vs **phase-specific targets**, cadence trend with threshold, **race prediction display** (Riegel + VDOT range), **RPE predicted vs actual time series** (dual lines, widening gap = fatigue)
-- [ ] 17.4 Add **event annotations** to all time-series charts — races, gaps, phase transitions, calibration changes
+- [x] 17.1 Upgrade Training tab — smart date range (current cycle default, zoom 3mo/6mo/1yr/all), **run timeline visualization** (horizontal bars replacing table), **week-over-week summary card**, intensity palette colors
+- [x] 17.2 Upgrade Body tab — sleep quality mismatch flags, event annotations on weight trend, ACWR gauge (duplicated for visibility)
+- [x] 17.3 Upgrade Fitness tab — **speed_per_bpm as hero chart** (largest, dual lines, event annotations), zone distribution vs **phase-specific targets**, cadence trend with threshold, **race prediction display** (Riegel + VDOT range), **RPE predicted vs actual time series** (dual lines, widening gap = fatigue)
+- [x] 17.4 Add **event annotations** to all time-series charts — races, gaps, phase transitions, calibration changes
 
 ## 18. Dashboard: Polish
 
-- [ ] 18.1 Add **progressive disclosure** for definitions — `ⓘ` icons, collapsed by default, contextual text
-- [ ] 18.2 Apply two-palette color system across all tabs consistently
-- [ ] 18.3 Smart date range zoom toggle implementation
-- [ ] 18.4 Responsive layout testing + polish
-- [ ] 18.5 Test: 5 tabs, headline logic, journey timeline, run timeline, week-over-week, annotations, two palettes, progressive disclosure, zoom
+- [x] 18.1 Add **progressive disclosure** for definitions — `ⓘ` icons, collapsed by default, contextual text
+- [x] 18.2 Apply two-palette color system across all tabs consistently
+- [x] 18.3 Smart date range zoom toggle implementation
+- [x] 18.4 Responsive layout testing + polish
+- [x] 18.5 Test: 5 tabs, headline logic, journey timeline, run timeline, week-over-week, annotations, two palettes, progressive disclosure, zoom
 
 ## 19. Documentation
 
-- [ ] 19.1 Update `README.md` — `pip install -e .`, parallel zone models, `fit calibrate`, Garmin settings checklist, CLI usage, ACWR explanation
-- [ ] 19.2 Add docstrings to `fit/` modules — analysis, goals, calibration, data_health, garmin, weather
-- [ ] 19.3 Document MCP tools (3 coaching tools + 4 data tools)
-- [ ] 19.4 Document `/fit-coach` skill
+- [x] 19.1 Update `README.md` — `pip install -e .`, parallel zone models, `fit calibrate`, Garmin settings checklist, CLI usage, ACWR explanation
+- [x] 19.2 Add docstrings to `fit/` modules — analysis, goals, calibration, data_health, garmin, weather
+- [x] 19.3 Document MCP tools (3 coaching tools + 4 data tools)
+- [x] 19.4 Document `/fit-coach` skill
 
 ## 20. CI (GitHub Actions)
 
-- [ ] 20.1 Create `.github/workflows/ci.yml` — Python 3.11+, push + PR
-- [ ] 20.2 CI: `pip install -e .[dev]`, pytest, ruff linting
-- [ ] 20.3 Branch protection on main
+- [x] 20.1 Create `.github/workflows/ci.yml` — Python 3.11+, push + PR
+- [x] 20.2 CI: `pip install -e .[dev]`, pytest, ruff linting
+- [x] 20.3 Branch protection on main
 
 ## 21. Final Integration
 
-- [ ] 21.1 End-to-end: full flow with all features — Today headline, 5 tabs, two palettes, annotations, run timeline, journey timeline, coaching workflow
-- [ ] 21.2 Verify all tests pass in CI
+- [x] 21.1 End-to-end: full flow with all features — Today headline, 5 tabs, two palettes, annotations, run timeline, journey timeline, coaching workflow
+- [x] 21.2 Verify all tests pass in CI
