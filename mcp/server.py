@@ -224,11 +224,36 @@ def get_coaching_context() -> str:
     try:
         sections = []
 
+        # Profile + zone boundaries (so Claude knows the actual thresholds)
+        max_hr = config.get("profile", {}).get("max_hr")
+        zones_maxhr = config.get("profile", {}).get("zones_max_hr", {})
+        zone_model = config.get("profile", {}).get("zone_model", "max_hr")
+        sections.append(f"Profile: max_hr={max_hr}, zone_model={zone_model}")
+        z2_bounds = zones_maxhr.get("z2", [115, 134])
+        z4_bounds = zones_maxhr.get("z4", [154, 173])
+        sections.append(f"Zone boundaries (max HR model): Z2 (Easy)={z2_bounds[0]}-{z2_bounds[1]} bpm, "
+                        f"Z3 (Moderate)={zones_maxhr.get('z3', [134, 154])[0]}-{zones_maxhr.get('z3', [134, 154])[1]}, "
+                        f"Z4 (Hard)={z4_bounds[0]}-{z4_bounds[1]}")
+        sections.append(f"IMPORTANT: Easy runs must stay below {z2_bounds[1]} bpm (Z2 ceiling), NOT 150 bpm")
+
+        # LTHR calibration if available
+        from fit.calibration import get_active_calibration as _get_cal
+        lthr_cal = _get_cal(conn, "lthr")
+        if lthr_cal:
+            sections.append(f"LTHR: {lthr_cal['value']} bpm ({lthr_cal['method']}, {lthr_cal['date']})")
+            zones_lthr = config.get("profile", {}).get("zones_lthr", {})
+            sections.append(f"Zone boundaries (LTHR model): Z2={round(lthr_cal['value']*0.85)}-{round(lthr_cal['value']*0.89)}, "
+                            f"Z4={round(lthr_cal['value']*0.95)}-{round(lthr_cal['value']*0.99)}")
+
+        # ACWR thresholds
+        acwr_safe = config.get("analysis", {}).get("acwr_safe_range", [0.8, 1.3])
+        acwr_danger = config.get("analysis", {}).get("acwr_danger_threshold", 1.5)
+
         # ACWR
         acwr_row = conn.execute("SELECT week, acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
         if acwr_row:
             acwr = acwr_row["acwr"]
-            safety = "SAFE" if 0.8 <= acwr <= 1.3 else "CAUTION" if acwr <= 1.5 else "DANGER"
+            safety = "SAFE" if acwr_safe[0] <= acwr <= acwr_safe[1] else "CAUTION" if acwr <= acwr_danger else "DANGER"
             sections.append(f"ACWR: {acwr} ({safety})")
 
         # Zone distribution (last 4 weeks)
