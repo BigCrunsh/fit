@@ -10,9 +10,9 @@ Additionally, Phase 1 has tech debt to address: `db.py` uses `executescript` whi
 
 Split into two sub-phases to manage scope:
 
-**Phase 2a — "Data Story + Quick Wins"**: Sync UX (progress bars, retry), correlation engine (with alerts), Fitdays auto-import, Phase 1 tech debt fixes.
+**Phase 2a** moved to `phase-1-gaps` change (unified batch with Phase 1 spec fixes).
 
-**Phase 2b — "Deep Analysis + Plan"**: .fit file analysis (per-km splits, cardiac drift), Runna plan integration (adherence tracking), Run Story narrative, ioBroker.
+**Phase 2b — "Deep Analysis + Plan"** (this change): .fit file analysis (per-km splits, cardiac drift), Runna plan integration (adherence tracking), Run Story narrative, milestones, ioBroker.
 
 ## Capabilities
 
