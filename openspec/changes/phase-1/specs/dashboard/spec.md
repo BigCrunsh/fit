@@ -1,0 +1,246 @@
+## ADDED Requirements
+
+### Requirement: fit report generates a self-contained HTML dashboard
+`fit report` SHALL generate a single self-contained HTML file with Chart.js (+ chartjs-plugin-annotation for event markers) for charting. The dashboard SHALL use a dark theme (`#07070c` background), monospace numerics (JetBrains Mono), and an information-dense layout. The output file SHALL be viewable in any browser without a build step or server.
+
+#### Scenario: Default report generation
+- **WHEN** user runs `fit report`
+- **THEN** `reports/dashboard.html` is generated (or overwritten) and a success message is displayed
+
+#### Scenario: Report is self-contained
+- **WHEN** the generated HTML file is opened in a browser with no internet
+- **THEN** all charts render correctly (Chart.js + annotation plugin inlined)
+
+### Requirement: Dashboard has 5 tabs
+The dashboard SHALL have 5 tabs: **Today**, **Training**, **Body**, **Fitness**, and **Coach**. Today is the landing tab. Tab switching SHALL work via client-side JavaScript with no page reload.
+
+#### Scenario: Tab navigation
+- **WHEN** user clicks a tab header
+- **THEN** the corresponding tab content is shown and others are hidden
+
+#### Scenario: Today is the default tab
+- **WHEN** the dashboard is opened
+- **THEN** the Today tab is shown first
+
+### Requirement: Two-palette color system
+The dashboard SHALL use two distinct color palettes to avoid semantic confusion:
+
+**Health/Safety palette** (evaluative — is this good or bad?):
+- Green = good / safe / on track
+- Yellow/amber = caution / approaching limit
+- Red = alert / danger / action needed
+- Used for: readiness, ACWR, staleness, phase compliance, sleep quality mismatches, RPE mismatches, calibration status
+
+**Intensity palette** (descriptive — how hard was this?):
+- Cool blue/cyan = Z1-Z2 (low intensity)
+- Warm amber/gold = Z3 (moderate)
+- Hot orange/magenta = Z4-Z5 (high intensity)
+- Used for: zone distribution, training load bars, run type colors, HR per run bars
+
+#### Scenario: Z4 interval not confused with danger
+- **WHEN** a training load bar shows a Z4 interval session
+- **THEN** the bar uses the intensity palette (hot orange), not the safety palette (red), because a hard session is intentional training, not a problem
+
+#### Scenario: ACWR uses safety palette
+- **WHEN** ACWR gauge shows 1.6
+- **THEN** it uses the safety palette red (danger), distinct from the intensity orange used for hard workouts
+
+### Requirement: Today tab provides daily synthesis and actionable headline
+The Today tab SHALL display: (1) a **headline sentence** synthesizing readiness, ACWR safety, phase compliance, and a recommendation for today (rule-based, no Claude needed), (2) status cards with 4-week rolling deltas (readiness, RHR, sleep, HRV, VO2max, weight, ACWR safety color, consistency streak), (3) latest check-in (hydration, alcohol, legs, sleep quality, RPE, notes), (4) ACWR gauge (prominent, safety-colored with trend), (5) active phase compliance mini-scorecard (on/off track per dimension), (6) calibration + data source health panel (collapsed by default, expandable), (7) **journey timeline** showing the marathon goal with phase progression.
+
+#### Scenario: Ready for quality session
+- **WHEN** readiness ≥ 75, ACWR 0.8-1.3, phase is on track, and active phase allows quality sessions
+- **THEN** headline reads: "Ready for training. Phase 2 allows a tempo session today. ACWR is safe at 1.1."
+
+#### Scenario: Recovery day recommended
+- **WHEN** readiness < 50 OR ACWR > 1.3 OR sleep_quality is "Poor"
+- **THEN** headline reads: "Recovery day recommended. Readiness is 42, ACWR at 1.4. Easy walk or rest."
+
+#### Scenario: Stale check-in prompt
+- **WHEN** last check-in was > 1 day ago
+- **THEN** headline includes: "No check-in today. Run `fit checkin` before training."
+
+#### Scenario: Phase 1 with no quality sessions
+- **WHEN** active phase is Phase 1 (quality_sessions_per_week = 0) and readiness is high
+- **THEN** headline reads: "Ready for an easy Z2 run. Phase 1: base building only, no hard efforts yet."
+
+### Requirement: Journey timeline visualization
+The Today tab SHALL display a horizontal journey timeline for the primary goal, showing: all training phases as segments (colored by status: completed=solid, active=gradient, planned=outline), the current position marked ("You are here — Week 3 of Phase 1"), key metrics below each phase (current vs target), and the race date at the end. This provides emotional context — where you are in the story.
+
+#### Scenario: Journey timeline with active Phase 1
+- **WHEN** Phase 1 is active and 3 weeks in
+- **THEN** the timeline shows Phase 1 partially filled, Phases 2-4 as outlines, race day at the end, with "Week 3 of Phase 1" marker and current vs target metrics
+
+#### Scenario: Phase transition visible
+- **WHEN** Phase 1 is completed and Phase 2 is active
+- **THEN** Phase 1 shows as solid (with actual metrics), Phase 2 partially filled, remaining phases as outlines
+
+### Requirement: Status cards show current state with 4-week rolling deltas
+The Today tab header SHALL display status cards for: Readiness (latest, safety-colored), RHR (latest, 4-week delta), Sleep (latest hours, deep + REM), HRV (latest, weekly avg, 4-week delta), VO2max (latest, peak ref, 4-week delta), Weight (latest, race target, 4-week delta), and Consistency (streak weeks). Each card uses the health/safety palette for delta direction. Status cards are visible on the Today tab.
+
+#### Scenario: Status cards with 4-week delta
+- **WHEN** current RHR is 57, RHR 4 weeks ago was 61
+- **THEN** RHR card shows "57 bpm ↓4" with green (improving)
+
+#### Scenario: Insufficient data for delta
+- **WHEN** fewer than 28 days of data
+- **THEN** delta annotations omitted
+
+### Requirement: Latest check-in displayed on Today tab
+The Today tab SHALL display the most recent check-in: hydration, alcohol, legs, sleep quality, RPE, and notes.
+
+#### Scenario: Check-in displayed
+- **WHEN** at least one check-in exists
+- **THEN** latest check-in date and values shown
+
+#### Scenario: No check-ins exist
+- **WHEN** no check-ins
+- **THEN** "No check-ins yet. Run `fit checkin` to start."
+
+### Requirement: Calibration and data source health panel (collapsed by default)
+The Today tab SHALL include a collapsible calibration + data health panel. Collapsed by default (showing only a summary: "2 warnings" or "All healthy"). When expanded: calibration status per metric (value, method, date, staleness color), data source status per source (active/stale/missing with Garmin instructions), active test prompts.
+
+#### Scenario: Panel collapsed with warnings
+- **WHEN** LTHR is stale and SpO2 is missing
+- **THEN** collapsed panel shows "2 warnings" badge; expanded shows details
+
+#### Scenario: All healthy collapsed
+- **WHEN** all calibrations current and all sources active
+- **THEN** collapsed panel shows "All healthy ✓" in green
+
+### Requirement: Training tab shows training structure (smart date range)
+The Training tab SHALL display the current training cycle (from Phase 1 start date or last significant gap, with zoom toggle: 3mo / 6mo / 1yr / all). Charts: (1) weekly volume bars with longest run highlighted (primary chart), (2) **run type breakdown** (stacked weekly: easy/long/tempo/intervals/recovery/race — using intensity palette), (3) training load per run (intensity-colored bars), (4) **run timeline** visualization (replaces traditional table).
+
+#### Scenario: Run type breakdown
+- **WHEN** last 8 weeks have classified runs
+- **THEN** stacked bars show easy/long/tempo/intervals/recovery per week, colored by intensity palette
+
+#### Scenario: Run timeline instead of table
+- **WHEN** last 10 runs exist
+- **THEN** a horizontal bar timeline shows each run: bar length = distance, color = intensity zone, label = run_type + RPE. This replaces the traditional number table.
+
+#### Scenario: Smart date range default
+- **WHEN** Phase 1 started Apr 1 and current date is Jun 15
+- **THEN** the default view starts from Apr 1 (current cycle), not from all-time
+
+#### Scenario: Zoom toggle
+- **WHEN** user clicks "1yr" zoom toggle
+- **THEN** all charts on the Training tab rescale to show 1 year of data
+
+### Requirement: Event annotations on time-series charts
+All time-series charts (VO2max, weight, training load, volume, speed_per_bpm, cadence) SHALL display event annotations as vertical markers at key dates. Event sources: races (from `run_type = 'race'`), training gaps (> 7 days no activity), phase transitions (from `training_phases`), calibration changes (from `calibration`), goal milestones (from `goal_log`). Markers are subtle (thin vertical line) with labels on hover via Chart.js annotation plugin.
+
+#### Scenario: Race annotation on VO2max chart
+- **WHEN** a HM race occurred on Oct 19 and VO2max peaked at 51
+- **THEN** a vertical marker labeled "HM Race" appears at Oct 19 on the VO2max chart
+
+#### Scenario: Gap annotation
+- **WHEN** a 100-day training gap occurred Nov-Feb
+- **THEN** a shaded region labeled "100d gap" appears on time-series charts
+
+#### Scenario: Phase transition annotation
+- **WHEN** Phase 1 → Phase 2 transition on Jun 1
+- **THEN** a vertical marker labeled "Phase 2 start" appears on all time-series charts
+
+### Requirement: Body tab shows recovery and physiology (last 14-21 days)
+The Body tab SHALL display recent-state data (last 14-21 days, configurable): readiness+RHR+HRV combo chart (readiness bars safety-colored, RHR line, HRV dashed line), sleep composition stacked bars (deep/REM/light) with average annotations, **sleep quality mismatch flags** (Garmin hours vs subjective quality), weight trend (with race target and event annotations), stress vs body battery chart.
+
+#### Scenario: Sleep quality mismatch
+- **WHEN** Garmin reports 8h sleep but checkin sleep_quality is "Poor"
+- **THEN** that day's sleep bar has a warning badge: "8h but felt Poor"
+
+#### Scenario: Recovery charts render
+- **WHEN** 16 days of daily_health data
+- **THEN** all Body tab charts render with data points
+
+### Requirement: Fitness tab shows performance trends (last 90 days, smart zoom)
+The Fitness tab SHALL display last 90 days (with zoom toggle): (1) **speed_per_bpm trend** as the hero chart (dual lines: raw + Z2-filtered, higher = better, with peak reference and event annotations — this IS the fitness signal), (2) VO2max trend (area chart with sub-4:00 reference line and event annotations), (3) zone distribution by training TIME vs **active phase targets** (not fixed 80/20), (4) cadence trend with low-threshold reference (165 spm), (5) **race prediction** (Riegel + VDOT range display with confidence), (6) **RPE: predicted vs actual time series** (dual lines over time, widening gap = accumulating fatigue), (7) training gaps with duration and fitness impact annotation.
+
+#### Scenario: Speed_per_bpm as hero chart
+- **WHEN** the Fitness tab is opened
+- **THEN** the speed_per_bpm trend is the largest, most prominent chart — it's the primary fitness signal
+
+#### Scenario: Zone distribution vs phase targets
+- **WHEN** active Phase 1 has z12_pct_target: 90 and actual is 72%
+- **THEN** the zone chart compares actual to Phase 1 target (90%)
+
+#### Scenario: RPE predicted vs actual over time
+- **WHEN** 10+ runs have RPE data
+- **THEN** a dual-line chart shows predicted RPE (from HR zone) vs actual RPE (from check-in) over time. Widening gap = fatigue accumulation warning.
+
+#### Scenario: Race prediction range
+- **WHEN** a recent HM race exists and VO2max is 49
+- **THEN** display: "Riegel (from Oct HM): ~3:52, VDOT (VO2max 49): ~3:55, post-gap estimate: ~4:10-4:15" with confidence explanation
+
+#### Scenario: Cadence trend with threshold
+- **WHEN** 10+ runs with cadence
+- **THEN** cadence trend line with 165 spm reference and annotation of runs below threshold
+
+### Requirement: ACWR gauge prominently displayed
+The ACWR gauge SHALL appear on BOTH the Today tab and the Body tab. It uses the safety palette (green 0.8-1.3, yellow 1.3-1.5, red >1.5 or <0.6) and shows the current value with a mini trend line of the last 4-6 weeks.
+
+#### Scenario: ACWR danger zone
+- **WHEN** current ACWR is 1.6
+- **THEN** gauge shows red with: "Training spike detected. Reduce load this week."
+
+### Requirement: Coach tab displays stored coaching insights
+The Coach tab SHALL read from `reports/coaching.json` and render insight boxes (type/title/body), generation timestamp, and stale indicator. Insight types use the safety palette for color-coding.
+
+#### Scenario: Current coaching
+- **WHEN** coaching.json exists and report_date matches last sync
+- **THEN** insight boxes rendered with timestamp
+
+#### Scenario: Stale coaching
+- **WHEN** coaching.json report_date is before last sync
+- **THEN** stale warning shown with regeneration instructions
+
+#### Scenario: No coaching
+- **WHEN** coaching.json does not exist
+- **THEN** placeholder with instructions
+
+### Requirement: Metric definitions use progressive disclosure
+Metric definitions SHALL be collapsed by default, shown via a small `ⓘ` icon next to each chart title. Clicking the icon expands a contextual definition that references the user's actual data, not generic text. Example: "Your VO2max is 49, which predicts a ~3:55 marathon. At your peak (53) you could run ~3:35. For sub-4:00 at your weight, you need ≥50."
+
+#### Scenario: Definition collapsed by default
+- **WHEN** a chart is displayed
+- **THEN** only the chart title and a small `ⓘ` icon are visible; the definition is hidden
+
+#### Scenario: Definition expanded with context
+- **WHEN** user clicks `ⓘ` next to the VO2max chart
+- **THEN** a contextual definition appears referencing the user's current VO2max, peak, and what the number means for their specific goal
+
+### Requirement: Week-over-week comparison
+The Training tab SHALL include a **week-over-week summary card** showing the current (or most recent complete) week vs the previous week: delta in total km, run count, longest run, zone compliance, ACWR change, and a one-line verdict (e.g., "Volume up 12%, zone compliance improved, ACWR stable").
+
+#### Scenario: Week-over-week with improvement
+- **WHEN** this week: 28km, 4 runs, z12_pct 82% vs last week: 22km, 3 runs, z12_pct 75%
+- **THEN** summary shows: "+6km (+27%), +1 run, zone compliance 75%→82% ↑, ACWR 1.1 (safe)"
+
+#### Scenario: Incomplete current week
+- **WHEN** it's Wednesday (week not complete)
+- **THEN** summary shows current week so far vs full previous week, labeled "Week in progress"
+
+### Requirement: Training phase progress display
+The Today tab SHALL display the active training phase with: phase name, date range, targets vs current actuals as a multi-dimensional mini-scorecard (on/off track per dimension, safety-colored), and the journey timeline. The Training tab SHALL show phase-specific context on charts (phase boundary annotations).
+
+#### Scenario: Active phase scorecard
+- **WHEN** Phase 1 targets weekly_km [25,30] and current avg is 22
+- **THEN** volume shows "22 km/wk" in yellow (below target 25-30)
+
+### Requirement: Daily and weekly snapshot reports
+`fit report` SHALL support `--daily` and `--weekly` flags for timestamped snapshots.
+
+#### Scenario: Daily snapshot
+- **WHEN** `fit report --daily` on 2026-04-05
+- **THEN** `reports/2026-04-05.html` + `reports/dashboard.html` updated
+
+#### Scenario: Weekly snapshot
+- **WHEN** `fit report --weekly` during W14
+- **THEN** `reports/2026-W14.html` + `reports/dashboard.html` updated
+
+### Requirement: Report generation is cron-friendly
+`fit report` SHALL exit 0 on success, no interactive prompts, writes only to reports directory.
+
+#### Scenario: Cron execution
+- **WHEN** `fit report --daily` by cron with no TTY
+- **THEN** silent generation, exit 0

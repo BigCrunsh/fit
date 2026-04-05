@@ -4,12 +4,20 @@ profile:
   name: "${FIT_USER_NAME}"
   age: "${FIT_USER_AGE}"
   max_hr: "${FIT_USER_MAX_HR}"
-  zones:
-    z1: [0, 115]
-    z2: [115, 150]
-    z3: [150, 168]
-    z4: [168, 182]
-    z5: [182, 200]
+  lthr: "${FIT_USER_LTHR:-}"           # Lactate threshold HR (optional). If set, zones use LTHR model instead of max HR.
+  zone_model: "${FIT_ZONE_MODEL:-max_hr}"  # "max_hr" (default) or "lthr" (Friel model)
+  zones_max_hr:  # Standard 5-zone model (% of max HR) — used when zone_model=max_hr
+    z1: [0, 115]       # Recovery:   < 60%
+    z2: [115, 134]     # Easy:       60-70%
+    z3: [134, 154]     # Moderate:   70-80%
+    z4: [154, 173]     # Threshold:  80-90%
+    z5: [173, 200]     # VO2max:     90-100%
+  zones_lthr:  # Friel model (% of LTHR) — used when zone_model=lthr and lthr is set
+    z1_pct: [0, 85]        # Recovery:   < 85% LTHR
+    z2_pct: [85, 89]       # Aerobic:    85-89% LTHR
+    z3_pct: [90, 94]       # Tempo:      90-94% LTHR
+    z4_pct: [95, 99]       # Threshold:  95-99% LTHR
+    z5_pct: [100, 106]     # VO2max:     100%+ LTHR
   location:
     city: "${FIT_CITY:-Berlin}"
     lat: "${FIT_LAT}"
@@ -22,7 +30,10 @@ sync:
   sync_days_default: 7
 
 analysis:
-  easy_hr_ceiling: 150
-  cardiac_efficiency_hr_range: [140, 160]
+  easy_hr_ceiling: 134           # Top of Z2 — true easy ceiling
+  speed_per_bpm_hr_range: [115, 134]  # Z2 only for pure aerobic trending
   overload_threshold: 350
+  acwr_safe_range: [0.8, 1.3]   # Acute:Chronic Workload Ratio safe zone
+  acwr_danger_threshold: 1.5     # ACWR above this = high injury risk
   weekly_volume_increase_max_pct: 10
+  low_cadence_threshold: 165     # Flag runs below this cadence (spm)
