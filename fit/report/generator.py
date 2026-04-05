@@ -111,12 +111,14 @@ def _status_cards(conn):
     r = h["training_readiness"]
     cards.append({"label": "Readiness", "value": r or "—", "unit": "",
                   "color": SAFE if r and r >= 75 else CAUTION if r and r >= 50 else DANGER,
-                  "sub": delta(r, h4["training_readiness"] if h4 else None) + " 4wk" if h4 else ""})
+                  "sub": delta(r, h4["training_readiness"] if h4 else None) + " 4wk" if h4 else "",
+                  "tooltip": "Garmin composite score (0-100). ≥75 = ready for quality sessions. 50-74 = easy day. <50 = rest. Based on sleep, HRV, stress, and recent training load."})
 
     rhr = h["resting_heart_rate"]
     cards.append({"label": "RHR", "value": rhr or "—", "unit": "bpm",
                   "color": SAFE if rhr and rhr <= 58 else CAUTION,
-                  "sub": delta(rhr, h4["resting_heart_rate"] if h4 else None, invert=True) + " 4wk" if h4 else ""})
+                  "sub": delta(rhr, h4["resting_heart_rate"] if h4 else None, invert=True) + " 4wk" if h4 else "",
+                  "tooltip": "Resting heart rate. Lower = fitter. Rising RHR signals fatigue, illness, or overtraining. Watch for trends, not single days."})
 
     sleep_sub = []
     if h["deep_sleep_hours"]:
@@ -127,11 +129,13 @@ def _status_cards(conn):
     except (IndexError, KeyError):
         pass
     cards.append({"label": "Sleep", "value": f"{h['sleep_duration_hours']:.1f}" if h["sleep_duration_hours"] else "—",
-                  "unit": "h", "color": SAFE, "sub": " ".join(sleep_sub)})
+                  "unit": "h", "color": SAFE, "sub": " ".join(sleep_sub),
+                  "tooltip": "Total sleep last night. D=deep (physical recovery), R=REM (cognitive). Target: ≥7.5h total, ≥1h deep, ≥1.5h REM."})
 
     hrv = h["hrv_last_night"]
     cards.append({"label": "HRV", "value": hrv or "—", "unit": "ms", "color": ACCENT,
-                  "sub": delta(hrv, h4["hrv_last_night"] if h4 else None) + " 4wk" if h4 else ""})
+                  "sub": delta(hrv, h4["hrv_last_night"] if h4 else None) + " 4wk" if h4 else "",
+                  "tooltip": "Heart rate variability (last night). Higher = more recovered. Drops after hard efforts, alcohol, poor sleep. Trends matter more than single values."})
 
     vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
     vo2_peak = conn.execute("SELECT MAX(vo2max) as peak FROM activities WHERE vo2max IS NOT NULL").fetchone()
@@ -772,24 +776,27 @@ def _coaching(conn):
 def _goal_progress(conn):
     results = []
 
-    # Metric goals with clear current/target
+    # Metric goals with clear current/target + hover tooltips
     vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
     if vo2:
         results.append({"icon": "📈", "label": "VO2max", "current": f"{vo2['vo2max']:.0f}", "target": "51", "unit": "",
-                        "pct": min(vo2["vo2max"] / 51 * 100, 100), "color": SAFE if vo2["vo2max"] >= 50 else CAUTION})
+                        "pct": min(vo2["vo2max"] / 51 * 100, 100), "color": SAFE if vo2["vo2max"] >= 50 else CAUTION,
+                        "tooltip": f"Maximum oxygen uptake. Current: {vo2['vo2max']:.0f} ml/kg/min. Need ≥50 for sub-4:00 marathon. Improves ~1/month with consistent training."})
 
     weight = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
     if weight:
         w = weight["weight_kg"]
-        pct = max(0, (78.3 - w) / (78.3 - 75) * 100)  # progress from start toward target
+        pct = max(0, (78.3 - w) / (78.3 - 75) * 100)
         results.append({"icon": "⚖️", "label": "Weight", "current": f"{w:.1f}", "target": "75", "unit": "kg",
-                        "pct": min(pct, 100), "color": SAFE if w <= 76 else CAUTION if w <= 78 else DANGER})
+                        "pct": min(pct, 100), "color": SAFE if w <= 76 else CAUTION if w <= 78 else DANGER,
+                        "tooltip": f"Current: {w:.1f}kg. Target: 75kg through training volume. Each kg lost saves ~2-3 sec/km over 42km = 7-10 min total."})
 
     streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
     if streak:
         s = streak[0] or 0
         results.append({"icon": "🔥", "label": "Streak", "current": str(s), "target": "8", "unit": "wk",
-                        "pct": min(s / 8 * 100, 100), "color": SAFE if s >= 6 else CAUTION if s >= 3 else DANGER})
+                        "pct": min(s / 8 * 100, 100), "color": SAFE if s >= 6 else CAUTION if s >= 3 else DANGER,
+                        "tooltip": f"Consecutive weeks with 3+ runs. Current: {s}. Target: 8 weeks of consistency before increasing intensity. The #1 predictor of marathon readiness."})
 
     # Next race countdown
     next_race = conn.execute("""
@@ -799,8 +806,10 @@ def _goal_progress(conn):
     if next_race:
         from datetime import date as d
         days_left = (d.fromisoformat(next_race["date"]) - d.today()).days
+        target_str = f" Target: {next_race['target_time']}." if next_race["target_time"] else ""
         results.append({"icon": "🏁", "label": next_race["name"][:15], "current": str(days_left), "target": "", "unit": "days",
-                        "pct": None, "color": ACCENT})
+                        "pct": None, "color": ACCENT,
+                        "tooltip": f"{next_race['name']} ({next_race['distance']}) on {next_race['date']}.{target_str} {days_left} days to go."})
 
     return results
 

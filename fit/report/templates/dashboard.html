@@ -79,7 +79,7 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
 
   <div class="cards">
   {% for card in status_cards %}
-    <div class="card">
+    <div class="card" {% if card.tooltip %}title="{{ card.tooltip }}"{% endif %} style="cursor:{% if card.tooltip %}help{% else %}default{% endif %}">
       <div class="card-label">{{ card.label }}</div>
       <div class="card-value" style="color:{{ card.color }}">{{ card.value }}<span style="font-size:11px;font-weight:400;color:var(--text-dim);margin-left:2px">{{ card.unit }}</span></div>
       {% if card.sub %}<div class="card-sub">{{ card.sub }}</div>{% endif %}
@@ -99,7 +99,7 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   {% if goal_progress %}
   <div class="cards" style="margin-top:12px">
   {% for g in goal_progress %}
-    <div class="card" style="min-width:100px;text-align:center">
+    <div class="card" style="min-width:100px;text-align:center;cursor:help" {% if g.tooltip %}title="{{ g.tooltip }}"{% endif %}>
       <div style="font-size:14px">{{ g.icon }}</div>
       <div style="font-size:18px;font-weight:700;color:{{ g.color }};font-family:var(--mono)">{{ g.current }}<span style="font-size:10px;font-weight:400;color:var(--text-dim)">{% if g.target %}/{{ g.target }}{% endif %}{{ g.unit }}</span></div>
       <div style="font-size:9px;color:var(--text-dim);margin-top:2px">{{ g.label }}</div>
