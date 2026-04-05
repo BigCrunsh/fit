@@ -87,3 +87,25 @@ The server SHALL expose `explore_database_structure()` (lists all tables and vie
 #### Scenario: Invalid table name
 - **WHEN** Claude calls `get_table_details("nonexistent")`
 - **THEN** the tool returns an error indicating the table does not exist
+
+### Requirement: Coaching context includes correlations and alerts
+The `get_coaching_context()` tool SHALL include 5 sections: (1) **Profile** — zone boundaries from config (both max_hr and LTHR models), calibration staleness, explicit Z2 ceiling so Claude never defaults to incorrect thresholds, (2) **Health** — ACWR with safety classification (safe/caution/danger using config thresholds), 7-day avg RHR/sleep/HRV/readiness, consistency streak, (3) **Training** — 4-week zone distribution, active training phase with targets, run type breakdown (4 weeks), speed_per_bpm trend with 4-week vs previous-4-week delta, (4) **Correlations** — top 5 computed correlations by absolute Spearman r with sample size and confidence, plus up to 3 recent unacknowledged alerts, (5) **Goals** — active goals with target dates.
+
+#### Scenario: Coaching context with correlations
+- **WHEN** Claude calls `get_coaching_context()` and correlations have been computed
+- **THEN** the returned context includes top correlations sorted by |r| with format "metric_pair r=+0.35 (n=42, high)"
+
+#### Scenario: Coaching context with active alerts
+- **WHEN** Claude calls `get_coaching_context()` and 2 alerts fired this week
+- **THEN** the returned context includes "Active alerts (2): [first 80 chars of each message]"
+
+#### Scenario: Coaching context zone boundary emphasis
+- **WHEN** Claude calls `get_coaching_context()`
+- **THEN** the context explicitly states "IMPORTANT: Easy runs must stay below {Z2_ceiling} bpm (Z2 ceiling), NOT 150 bpm"
+
+### Requirement: Save coaching notes validates insight body content
+`save_coaching_notes()` SHALL validate that every insight has a `body` field with at least 20 characters. Insights with missing or too-short body text are rejected with a descriptive error explaining that each insight must contain full analysis paragraphs with specific numbers and actionable recommendations, not just titles.
+
+#### Scenario: Insight with empty body rejected
+- **WHEN** Claude calls `save_coaching_notes()` with an insight that has a title but no body
+- **THEN** the tool returns an error listing the invalid insight and explaining the body requirement

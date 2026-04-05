@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: fit report generates a self-contained HTML dashboard
-`fit report` SHALL generate a single self-contained HTML file with Chart.js (+ chartjs-plugin-annotation for event markers) for charting. The dashboard SHALL use a dark theme (`#07070c` background), monospace numerics (JetBrains Mono), and an information-dense layout. The output file SHALL be viewable in any browser without a build step or server.
+`fit report` SHALL generate a single self-contained HTML file with Chart.js 4.4.7 (+ chartjs-plugin-annotation for event markers + chartjs-adapter-date-fns for time-scaled x-axes) for charting. All three JS libraries are vendored and inlined. The dashboard SHALL use a dark theme (`#07070c` background), monospace numerics (JetBrains Mono), and an information-dense layout. The output file SHALL be viewable in any browser without a build step or server. Generation uses Jinja2 templates (`fit/report/templates/dashboard.html`).
 
 #### Scenario: Default report generation
 - **WHEN** user runs `fit report`
@@ -21,6 +21,9 @@ The dashboard SHALL have 5 tabs: **Today**, **Training**, **Body**, **Fitness**,
 #### Scenario: Today is the default tab
 - **WHEN** the dashboard is opened
 - **THEN** the Today tab is shown first
+
+### Requirement: Time-scaled x-axes on time-series charts
+All time-series charts SHALL use `chartjs-adapter-date-fns` for proper date-scaled x-axes. This ensures that gaps in data (e.g., training breaks) are visually proportional to their duration, rather than equally spaced.
 
 ### Requirement: Two-palette color system
 The dashboard SHALL use two distinct color palettes to avoid semantic confusion:
@@ -63,6 +66,19 @@ The Today tab SHALL display: (1) a **headline sentence** synthesizing readiness,
 #### Scenario: Phase 1 with no quality sessions
 - **WHEN** active phase is Phase 1 (quality_sessions_per_week = 0) and readiness is high
 - **THEN** headline reads: "Ready for an easy Z2 run. Phase 1: base building only, no hard efforts yet."
+
+### Requirement: Goal progress cards with hover tooltips on Today tab
+The Today tab SHALL display goal progress cards for tracked metrics: VO2max (current vs target with percentage), Weight (current vs target with progress bar), Streak (consecutive weeks vs target), and next race countdown (days remaining). Each card includes a hover tooltip with contextual explanation (e.g., "Each kg lost saves ~2-3 sec/km over 42km").
+
+#### Scenario: Goal progress with next race
+- **WHEN** a registered race exists in race_calendar
+- **THEN** a countdown card shows days remaining, distance, and target time on hover
+
+### Requirement: Recent alerts displayed on Today tab
+The Today tab SHALL show unacknowledged alerts from the last 7 days, rendered as colored alert boxes with the alert message.
+
+### Requirement: Correlation cards on Coach tab
+The Coach tab SHALL display correlation results as horizontal bar cards, sorted by absolute Spearman r. Each card shows: label (with underscores replaced and lag notation), r value (formatted as +/-0.XX), sample size, confidence level, bar width proportional to |r|, and color (green for positive, red for negative correlations).
 
 ### Requirement: Journey timeline visualization
 The Today tab SHALL display a horizontal journey timeline for the primary goal, showing: all training phases as segments (colored by status: completed=solid, active=gradient, planned=outline), the current position marked ("You are here — Week 3 of Phase 1"), key metrics below each phase (current vs target), and the race date at the end. This provides emotional context — where you are in the story.
@@ -244,3 +260,27 @@ The Today tab SHALL display the active training phase with: phase name, date ran
 #### Scenario: Cron execution
 - **WHEN** `fit report --daily` by cron with no TTY
 - **THEN** silent generation, exit 0
+
+### Requirement: Stress vs Body Battery chart on Body tab
+The Body tab SHALL display a dual-line chart showing average stress level and body battery peak over the last 21 days. Battery is rendered as a filled area (green), stress as a red line. This shows the interplay between energy reserves and physiological stress.
+
+### Requirement: ACWR trend chart on Body tab
+The Body tab SHALL display an ACWR bar chart over all weeks with data. Each bar is safety-colored (green 0.8-1.3, yellow 1.3-1.5, red >1.5). Horizontal annotation lines mark the safe range (0.8, 1.3) and danger threshold (1.5).
+
+### Requirement: Run type breakdown stacked chart on Training tab
+The Training tab SHALL display a stacked bar chart of run types per week (last 12 weeks): easy, long, tempo, intervals, recovery, race. Colors use the intensity palette (Z12 for easy/recovery, Z3 for tempo, Z45 for intervals/race).
+
+### Requirement: Marathon prediction trend on Fitness tab
+The Fitness tab SHALL display a monthly marathon prediction trend line using VDOT estimates from monthly average VO2max. Y-axis is reversed (lower = faster). A horizontal annotation line marks the sub-4:00 target (240 minutes).
+
+### Requirement: RPE chart uses Garmin Training Effect as proxy
+The Fitness tab RPE chart SHALL use Garmin's `aerobic_te` (Training Effect, 1-5 scale) mapped to RPE 1-10 scale (TE * 2) as the "predicted" effort line. When check-in RPE data exists, a second "actual" line is overlaid. The gap between lines indicates fatigue accumulation.
+
+### Requirement: Sleep quality mismatch flags on Body tab
+The dashboard SHALL detect and display sleep quality mismatches: cases where Garmin reports ≥7h sleep but the check-in records "Poor" quality (possible stress/disruption), or <6h sleep but "Good" quality (monitor for cumulative deficit). Mismatches are shown as warning badges in the sleep section.
+
+### Requirement: Contextual metric definitions with user data
+Each chart's info icon (`i`) SHALL expand a definition that references the user's actual current values, not generic text. For example: "Your VO2max is 49, which predicts a ~3:55 marathon. For sub-4:00 at ~75kg, you need ≥50." Definitions are generated in `generator.py` using live DB queries.
+
+### Requirement: Dashboard color constants
+The generator SHALL define color constants matching the two-palette system: `SAFE = "#22c55e"`, `CAUTION = "#eab308"`, `DANGER = "#ef4444"` (safety palette), `Z12 = "#38bdf8"`, `Z3 = "#f59e0b"`, `Z45 = "#f97316"` (intensity palette), `ACCENT = "#818cf8"` (highlight/info).

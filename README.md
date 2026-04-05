@@ -33,11 +33,15 @@ Goal-agnostic personal fitness data platform. Ingests from Garmin, Fitdays, Appl
 | Pull new data from Garmin | `fit sync` | Automated pipeline: health + activities + weather + enrichment |
 | Log how you feel today | `fit checkin` | Subjective data (legs, sleep quality, RPE) joins with Garmin biometrics |
 | See your training at a glance | `fit report` → open HTML | 5-tab dashboard: Today, Training, Body, Fitness, Coach |
-| Quick status check in terminal | `fit status` | Counts, last sync, goals, active phase |
+| Quick status check in terminal | `fit status` | Counts, calibration, data health, phase, ACWR, streak, goals |
 | Deep question about your data | **Claude Chat** | Ad-hoc SQL queries, cross-referencing, pattern detection |
 | Weekly coaching analysis | **Claude Chat** or `/fit-coach` | AI reads all your data, generates structured insights |
 | Update physiological baseline | `fit calibrate max_hr` or `lthr` | After a race or time trial |
 | Fix derived metrics after changes | `fit recompute` | Re-enriches all activities, rebuilds weekly aggregations |
+| See cross-metric correlations | `fit correlate` | Spearman rank: alcohol→HRV, sleep→readiness, temp→efficiency, etc. |
+| Validate data pipeline | `fit doctor` | Schema, tables, freshness, calibrations, data sources, correlations |
+| View race schedule | `fit races` | Calendar with official results, Garmin times, match status |
+| Track a new goal | `fit goal add` | Race, metric (VO2max, weight), or habit (consistency streak) |
 
 ### First-time setup (init)
 
@@ -128,10 +132,16 @@ The dashboard's data health panel shows which sources are active, stale, or miss
 | `fit sync [--days N] [--full]` | Pull Garmin data, enrich with weather + zones + ACWR, compute weekly agg |
 | `fit checkin` | Interactive check-in: hydration, legs, eating, energy, sleep quality, RPE, weight |
 | `fit report [--daily] [--weekly]` | Generate HTML dashboard (5 tabs: Today/Training/Body/Fitness/Coach) |
-| `fit status` | Quick overview: data counts, last sync, goals |
-| `fit recompute` | Re-enrich all activities and rebuild weekly aggregations |
+| `fit status` | Quick overview: data counts, calibration, data health, phase, ACWR, streak, goals |
+| `fit doctor` | Validate data pipeline: schema, tables, weekly_agg freshness, calibration, data sources, correlations |
+| `fit correlate` | Compute cross-domain Spearman correlations (5 pairs: alcohol/sleep/temp/water vs HRV/RHR/readiness/efficiency) |
+| `fit recompute [--all]` | Re-enrich all activities and rebuild weekly aggregations |
 | `fit calibrate max_hr` | Calibrate max HR from race observation |
 | `fit calibrate lthr` | Calibrate LTHR from 30-min time trial |
+| `fit races` | Show race calendar with match status, official times, and Garmin times |
+| `fit goal add` | Add a new goal interactively (race, metric, or habit type) |
+| `fit goal list` | Show all active goals with live progress (VO2max %, weight, streak) |
+| `fit goal complete <id>` | Mark a goal as achieved |
 
 ## Dashboard
 
@@ -197,14 +207,23 @@ The coaching context explicitly includes configured zone boundaries so Claude ne
 
 ## Database
 
-SQLite at `~/.fit/fitness.db`. 10 tables, 2 views:
+SQLite at `~/.fit/fitness.db`. 14 tables, 2 views:
 
 | Table | Key data |
 |-------|----------|
 | activities | All types (running, cycling, hiking), parallel zones, speed_per_bpm, run_type, RPE |
 | daily_health | RHR, sleep, HRV, readiness, stress, body battery, SpO2 |
 | checkins | Hydration, legs, eating, energy, sleep quality, RPE, weight |
+| body_comp | Weight measurements from Fitdays/Apple Health/check-ins |
+| weather | Daily weather data from Open-Meteo |
 | weekly_agg | Run metrics, cross-training, ACWR, zone distribution by time, consistency streak |
 | training_phases | Phased targets + actuals, phase lifecycle (planned → active → completed/revised) |
 | calibration | Max HR, LTHR, weight — with staleness tracking and retest prompts |
 | goals / goal_log | Active goals + append-only event history |
+| correlations | Spearman rank correlations between health/behavior/performance pairs |
+| alerts | Threshold-based coaching alerts (volume ramp, zone compliance, readiness gate, alcohol+HRV) |
+| race_calendar | Race registry with official results, target times, and Garmin activity matching |
+| import_log | CSV import tracking (filename, hash, row counts) for deduplication |
+| schema_version | Migration version tracking |
+
+Views: `v_run_days` (activities + health + checkin + weather + body_comp joined), `v_all_training` (all activity types).

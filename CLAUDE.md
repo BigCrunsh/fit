@@ -13,17 +13,23 @@ fit sync --full && fit recompute  # init: pull all history + enrich everything
 fit checkin                   # daily: interactive check-in (after training)
 fit report                    # generate dashboard → ~/.fit/reports/dashboard.html
 fit report --daily            # snapshot: reports/YYYY-MM-DD.html
-fit status                    # quick overview in terminal
+fit status                    # quick overview: counts, calibration, data health, phase, ACWR, goals
+fit doctor                    # validate pipeline: schema, tables, freshness, calibration, data sources
+fit correlate                 # compute cross-domain Spearman correlations (5 pairs)
 fit calibrate max_hr          # after a race: update max HR
 fit calibrate lthr            # after a 30-min time trial: update LTHR
 fit recompute                 # after config changes: re-enrich all activities
+fit races                     # show race calendar with match status
+fit goal add                  # add a goal interactively (race/metric/habit)
+fit goal list                 # show active goals with progress
+fit goal complete <id>        # mark a goal as achieved
 ```
 
 ## Architecture
 
 ```
 fit/                 # Python package (pip install -e .)
-  cli.py             # Click group: sync, checkin, report, status, recompute, calibrate
+  cli.py             # Click group: sync, checkin, report, status, doctor, correlate, recompute, calibrate, races, goal (add/list/complete)
   config.py          # Three-layer: config.yaml → config.local.yaml → env vars
   db.py              # SQLite + transaction-safe migration runner
   garmin.py          # Garmin Connect API via garminconnect + garth
@@ -31,18 +37,24 @@ fit/                 # Python package (pip install -e .)
   sync.py            # Sync pipeline: fetch → enrich → upsert → weekly_agg
   analysis.py        # Zones (parallel max_hr + LTHR), speed_per_bpm, run types, ACWR, race predictions
   checkin.py         # Interactive check-in with RPE, sleep quality
-  goals.py           # Training phases, phase compliance, goal log
+  goals.py           # Training phases, phase compliance, goal log, goal CRUD
   calibration.py     # Max HR, LTHR staleness tracking + auto-extraction from races
   data_health.py     # Data source health check (what Garmin settings are missing)
+  correlations.py    # Spearman rank correlation engine (5 predefined pairs, zero-dependency)
+  alerts.py          # Threshold-based coaching alerts (volume ramp, zone compliance, readiness, alcohol+HRV)
+  logging_config.py  # Logging setup
   report/
-    generator.py     # Jinja2 + Chart.js dashboard generator
+    generator.py     # Jinja2 + Chart.js dashboard generator (all tabs, charts, panels)
     headline.py      # Rule-based Today headline engine
     templates/       # dashboard.html Jinja2 template
     chartjs.min.js   # Vendored Chart.js 4.4.7
     chartjs-annotation.min.js  # Event annotation plugin
+    chartjs-date-adapter.min.js  # Date adapter for time-scaled x-axes
 mcp/
-  server.py          # MCP server: 8 tools (read-only DB + coaching workflow)
-migrations/          # Numbered .sql/.py migrations
+  server.py          # MCP server: 8 tools (read-only DB + coaching workflow with correlation/alert context)
+migrations/          # Numbered .sql/.py migrations (001-006+)
+  005_correlations_alerts.sql  # correlations, alerts, import_log tables
+  006_race_calendar.sql        # race_calendar table
 tests/               # pytest suite
 ```
 
@@ -57,6 +69,13 @@ tests/               # pytest suite
 - **Phase-specific targets**: dashboard compares actual zone distribution to the active training phase's targets, not a fixed 80/20
 - **3 coaching MCP tools** (not 1 monolithic): check_dashboard_freshness → get_coaching_context → save_coaching_notes
 - **coaching context includes zone boundaries** — Claude must never default to "HR 150 for easy" when Z2 ceiling is 134
+- **Spearman correlations zero-dependency** — no scipy; custom rank + Pearson implementation in `correlations.py`
+- **Alerts deduplicated** by date + type — same alert won't fire twice on the same day
+- **Race calendar separate from activities** — `race_calendar` stores official results/organizer, linked to Garmin activities via `activity_id`
+- **Goal CLI is a Click group** — `fit goal add/list/complete` subcommands
+- **Dashboard uses 3 vendored JS files** — Chart.js + annotation plugin + date-fns adapter, all inlined into the HTML
+- **Two-palette color system** — safety (green/yellow/red) for "is this good?" vs intensity (blue/amber/orange) for "how hard?"
+- **Coaching notes body validation** — `save_coaching_notes` rejects insights with missing/short body text (<20 chars)
 
 ## Zone Model
 
@@ -79,7 +98,28 @@ fit sync → Garmin API → health, activities, SpO2
          → Open-Meteo → daily weather + hourly per-activity weather
          → compute_weekly_agg() → ACWR, zone time distribution, consistency streak
          → auto-extract LTHR from races ≥ 10km
+         → weight CSV auto-import (if weight_csv_path configured)
+
+fit correlate → 5 predefined pairs (Spearman rank, lagged pairing)
+             → upsert into correlations table (skip if data unchanged)
+
+fit report → generator.py queries all tables
+           → Jinja2 template + inlined Chart.js/annotation/date-adapter
+           → self-contained HTML (dashboard.html + optional dated snapshots)
+
+fit doctor → schema version check
+           → table presence (14 expected)
+           → weekly_agg freshness
+           → calibration staleness
+           → data source health
+           → correlation count
 ```
+
+## Database Tables (14)
+
+`activities`, `daily_health`, `checkins`, `body_comp`, `weather`, `goals`, `training_phases`, `goal_log`, `calibration`, `weekly_agg`, `schema_version`, `correlations`, `alerts`, `import_log`, `race_calendar`
+
+Views: `v_run_days`, `v_all_training`
 
 ## Testing
 
@@ -103,6 +143,10 @@ Tests use in-memory SQLite with the full migration suite applied. Fixtures in `t
 - **MCP server** loads config from the repo root (parent of mcp/) — run from the repo directory
 - **activities.hr_zone** is an alias for the preferred zone model — use `hr_zone_maxhr` or `hr_zone_lthr` for specific models
 - **Weekly_agg can drift** after manual DB edits or backfill migrations — run `fit recompute` to fix
+- **race_calendar is manual** — races are inserted via SQL or MCP, not auto-detected from Garmin. `activity_id` links to Garmin data after matching.
+- **correlations skip recompute** when data count hasn't changed (`data_count_at_compute`) — run `fit correlate` after new data to update
+- **alerts deduplicate by date+type** — same alert won't fire twice on the same day, check `acknowledged` flag for dismissal
+- **Dashboard generator expects 3 JS files** in `fit/report/`: `chartjs.min.js`, `chartjs-annotation.min.js`, `chartjs-date-adapter.min.js`
 
 ## Public Repo Rules
 

@@ -313,3 +313,107 @@ Data sources to check:
 #### Scenario: Status with empty database
 - **WHEN** user runs `fit status` and the database is empty
 - **THEN** the system displays zero counts and suggests running `fit sync`
+
+### Requirement: Cross-domain correlation engine
+The system SHALL compute Spearman rank correlations between health, behavior, and performance metrics via `fit/correlations.py`. Five predefined correlation pairs are computed: alcohol→HRV (lag 1), alcohol→RHR (lag 1), sleep quality→readiness, temperature→efficiency, water→HRV (lag 1). Correlations use a zero-dependency implementation (no scipy). Results are stored in the `correlations` table with metric_pair as primary key. Recomputation is skipped when data count is unchanged (`data_count_at_compute`).
+
+#### Scenario: Correlation computed with sufficient data
+- **WHEN** `fit correlate` runs and a pair has ≥ 20 matched data points
+- **THEN** the system computes Spearman r, Pearson r, p-value, sample size, and confidence (high if n≥30 and p<0.05, moderate if n≥20, low otherwise), and upserts into the `correlations` table
+
+#### Scenario: Insufficient data for correlation
+- **WHEN** a correlation pair has fewer than 20 matched data points
+- **THEN** the result is stored with `status = 'insufficient_data'` and `spearman_r = NULL`
+
+#### Scenario: Correlation skipped when data unchanged
+- **WHEN** `fit correlate` runs and the data count matches `data_count_at_compute` from the last run
+- **THEN** the pair is skipped (no recomputation)
+
+#### Scenario: Lagged correlation pairing
+- **WHEN** a pair has `lag_days = 1` (e.g., alcohol→HRV)
+- **THEN** each x-value (alcohol on day D) is paired with the y-value (HRV on day D+1)
+
+### Requirement: Real-time coaching alerts
+The system SHALL evaluate threshold-based alert rules after each sync via `fit/alerts.py`. Alerts are stored in the `alerts` table with deduplication (same date + type = no duplicate). Four alert rules: (1) `all_runs_too_hard` — Z1+Z2 compliance < 50% over 2 weeks, (2) `volume_ramp` — >10% volume increase with <8 weeks consistency, (3) `readiness_gate` — readiness < 30, (4) `alcohol_hrv` — ≥2 drinks + HRV drop >15% from 7-day average. Alerts have an `acknowledged` flag for dismissal.
+
+#### Scenario: Volume ramp alert
+- **WHEN** this week's volume increased >10% over last week AND consistency streak < 8 weeks
+- **THEN** an alert is fired with type `volume_ramp` and a message showing the percentage increase and streak
+
+#### Scenario: Deduplication
+- **WHEN** the same alert type fires on the same date
+- **THEN** no duplicate row is inserted
+
+#### Scenario: Recent alerts retrieval
+- **WHEN** `get_recent_alerts(conn, days=7)` is called
+- **THEN** unacknowledged alerts from the last 7 days are returned
+
+### Requirement: Race calendar tracks official events
+The `race_calendar` table (migration 006) SHALL store planned and completed race events with: date, name, organizer, distance (text + numeric km), status (planned/registered/completed/dns/dnf), target_time, result_time, result_pace, and a foreign key `activity_id` to the matched Garmin activity. This separates race metadata (official results, organizer) from Garmin activity data.
+
+#### Scenario: Race with matched activity
+- **WHEN** a race is completed and matched to a Garmin activity
+- **THEN** `activity_id` links to the activities table, and both `result_time` (official) and the Garmin-recorded time are available
+
+#### Scenario: Unmatched completed race
+- **WHEN** a race was completed before the sync period began (no Garmin activity match)
+- **THEN** the race shows in `fit races` with a red X indicating no activity match
+
+#### Scenario: fit races command displays calendar
+- **WHEN** user runs `fit races`
+- **THEN** a formatted table shows all races with date, status, distance, official time, Garmin time, target time, and name, plus a warning count for unmatched completed races
+
+### Requirement: Goal tracking CLI
+`fit goal` SHALL be a Click command group with three subcommands: `fit goal add` (interactive goal creation supporting race, metric, and habit types), `fit goal list` (display active goals with progress), and `fit goal complete <id>` (mark a goal as achieved and log a `goal_completed` event). Goal progress is computed live: VO2max goals query the latest activity VO2max, weight goals query latest body_comp, habit goals query the consistency streak from weekly_agg.
+
+#### Scenario: Add a race goal
+- **WHEN** user runs `fit goal add` and selects type "race"
+- **THEN** the CLI prompts for name, target time, and race date, creates the goal, and logs a `goal_created` event
+
+#### Scenario: Add a metric goal
+- **WHEN** user runs `fit goal add` and selects type "metric"
+- **THEN** the CLI prompts for name, target value, unit, and optional target date
+
+#### Scenario: List goals with progress
+- **WHEN** user runs `fit goal list` and a VO2max goal exists with target 51
+- **THEN** the output shows the current VO2max value and percentage of target achieved
+
+#### Scenario: Complete a goal
+- **WHEN** user runs `fit goal complete 3`
+- **THEN** goal 3 is set to `active = 0` and a `goal_completed` event is logged
+
+### Requirement: fit doctor diagnostic command
+`fit doctor` SHALL validate the full data pipeline: schema version check, expected tables present (14 tables including correlations, alerts, import_log), weekly_agg freshness vs latest activity, calibration staleness, data source health, and correlation count. Returns a summary with issue count.
+
+#### Scenario: All healthy
+- **WHEN** `fit doctor` runs and all checks pass
+- **THEN** output shows green checkmarks for each check and "All healthy"
+
+#### Scenario: Missing tables detected
+- **WHEN** `fit doctor` runs and a table is missing
+- **THEN** output shows a red X with the list of missing tables
+
+#### Scenario: Stale weekly_agg detected
+- **WHEN** the latest activity `created_at` is newer than the latest weekly_agg `created_at`
+- **THEN** output shows a warning suggesting `fit recompute`
+
+### Requirement: fit recompute rebuilds derived data
+`fit recompute [--all]` SHALL re-enrich all activities with missing derived fields (zones, efficiency, run_type) via `enrich_existing_activities()`, then recompute `weekly_agg` for all weeks with activity data. This fixes drift after manual DB edits, config changes, or backfill migrations.
+
+#### Scenario: Default recompute
+- **WHEN** user runs `fit recompute`
+- **THEN** all activities are re-enriched and all weeks are recomputed
+
+### Requirement: Import log tracks CSV imports
+The `import_log` table (migration 005) SHALL track file imports with: filename, file_hash, row_count, rows_imported, source_type (weight_csv / runna_plan), and timestamp. This prevents duplicate imports and provides audit history.
+
+#### Scenario: Weight CSV import logged
+- **WHEN** a weight CSV is imported
+- **THEN** an import_log row records the filename, hash, row counts, and source_type 'weight_csv'
+
+### Requirement: Auto-import weight CSV on sync
+When `sync.weight_csv_path` is configured, `fit sync` SHALL check for the weight CSV file and import new rows into `body_comp`. The import_log table tracks which files have been processed to avoid duplicates.
+
+#### Scenario: Weight CSV configured and new data available
+- **WHEN** `fit sync` runs and `weight_csv_path` points to an existing CSV with new data
+- **THEN** new weight rows are imported into body_comp and an import_log entry is created
