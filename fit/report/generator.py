@@ -859,14 +859,48 @@ def _get_event_annotations(conn) -> dict:
     annotations = {}
 
     # Races — minimal labels, just markers
-    races = conn.execute("SELECT date, distance FROM race_calendar WHERE activity_id IS NOT NULL ORDER BY date").fetchall()
+    try:
+        races = conn.execute("SELECT date, distance FROM race_calendar WHERE activity_id IS NOT NULL ORDER BY date").fetchall()
+    except Exception:
+        races = conn.execute("SELECT date, name FROM activities WHERE run_type = 'race' ORDER BY date").fetchall()
     for i, r in enumerate(races):
+        label = r["distance"] if "distance" in r.keys() else (r["name"][:10] if "name" in r.keys() else "🏁")
         annotations[f"race_{i}"] = {
             "type": "line", "xMin": r["date"], "xMax": r["date"],
             "borderColor": ACCENT + "50", "borderWidth": 1,
-            "label": {"content": r["distance"] or "🏁", "display": True, "position": "start",
+            "label": {"content": label, "display": True, "position": "start",
                       "font": {"size": 7}, "color": ACCENT + "80"},
         }
+
+    # Calibration changes
+    try:
+        cals = conn.execute("SELECT date, metric, value FROM calibration ORDER BY date").fetchall()
+        for i, c in enumerate(cals):
+            annotations[f"cal_{i}"] = {
+                "type": "line", "xMin": c["date"], "xMax": c["date"],
+                "borderColor": CAUTION + "30", "borderWidth": 1, "borderDash": [2, 4],
+                "label": {"content": f"{c['metric']}", "display": True, "position": "end",
+                          "font": {"size": 6}, "color": CAUTION + "50"},
+            }
+    except Exception:
+        pass
+
+    # Goal milestones
+    try:
+        milestones = conn.execute("""
+            SELECT date, description FROM goal_log
+            WHERE type IN ('milestone_achieved', 'goal_completed', 'phase_completed')
+            ORDER BY date
+        """).fetchall()
+        for i, m in enumerate(milestones):
+            annotations[f"mile_{i}"] = {
+                "type": "line", "xMin": m["date"], "xMax": m["date"],
+                "borderColor": SAFE + "40", "borderWidth": 1,
+                "label": {"content": "🎯", "display": True, "position": "start",
+                          "font": {"size": 8}, "color": SAFE + "60"},
+            }
+    except Exception:
+        pass
 
     # Training gaps only (> 14 days — skip short gaps to reduce clutter)
     dates = conn.execute("SELECT DISTINCT date FROM activities ORDER BY date").fetchall()
