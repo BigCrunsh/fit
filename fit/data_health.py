@@ -71,6 +71,17 @@ def check_data_sources(conn: sqlite3.Connection) -> list[dict]:
     else:
         results.append({"source": "training_readiness", "status": "active", "last_date": None, "instruction": None})
 
+    # LTHR detection
+    from fit.calibration import get_active_calibration
+    lthr_cal = get_active_calibration(conn, "lthr")
+    if not lthr_cal:
+        results.append({
+            "source": "lthr_detection", "status": "missing", "last_date": None,
+            "instruction": GARMIN_INSTRUCTIONS["lthr_detection"],
+        })
+    else:
+        results.append({"source": "lthr_detection", "status": "active", "last_date": lthr_cal["date"], "instruction": None})
+
     # Move IQ
     moveiq_count = conn.execute(
         "SELECT COUNT(*) FROM activities WHERE subtype = 'auto_detected'"

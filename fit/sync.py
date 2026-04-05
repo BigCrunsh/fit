@@ -4,11 +4,16 @@ import logging
 import sqlite3
 from datetime import date, timedelta
 
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn
+
 from fit import garmin, weather
 from fit.analysis import enrich_activity, compute_weekly_agg
 from fit.calibration import get_active_calibration, extract_lthr_from_race
 
 logger = logging.getLogger(__name__)
+
+# Suppress console logging during progress bars (file logging continues)
+_console_suppressed = False
 
 
 def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool = False) -> dict:
@@ -31,90 +36,108 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     lthr_cal = get_active_calibration(conn, "lthr")
     lthr = int(lthr_cal["value"]) if lthr_cal else None
 
-    # 1. Health metrics
-    health_rows = garmin.fetch_health(api, start, end)
-    for h in health_rows:
-        _upsert_health(conn, h)
-    counts["health"] = len(health_rows)
+    total_days = (end - start).days + 1
 
-    # 2. Activities
-    activities = garmin.fetch_activities(api, start, end)
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        transient=True,
+    ) as progress:
 
-    # 3. Enrich new activities with derived metrics
-    for a in activities:
-        existing = conn.execute("SELECT hr_zone FROM activities WHERE id = ?", (a["id"],)).fetchone()
-        if existing and existing["hr_zone"] is not None:
-            # Already enriched — upsert raw fields only
-            _upsert_activity(conn, a)
-        else:
-            # New activity — enrich and insert
-            enriched = enrich_activity(a, config, lthr=lthr)
-            _upsert_enriched_activity(conn, enriched)
-            counts["enriched"] += 1
+        # 1. Health metrics
+        task_h = progress.add_task("Health", total=total_days)
+        health_rows = garmin.fetch_health(api, start, end)
+        for h in health_rows:
+            _upsert_health(conn, h)
+            progress.advance(task_h)
+        progress.update(task_h, completed=total_days)
+        counts["health"] = len(health_rows)
 
-            # Auto-extract and save LTHR from races >= 10km
-            if enriched.get("run_type") == "race":
-                candidate_lthr = extract_lthr_from_race(enriched)
-                if candidate_lthr:
-                    from fit.calibration import add_calibration
-                    add_calibration(
-                        conn, "lthr", candidate_lthr, "race_extract", "medium",
-                        date.fromisoformat(enriched["date"]),
-                        source_activity_id=enriched["id"],
-                        notes=f"Auto-extracted from {enriched.get('name')} ({enriched.get('distance_km', '?')}km)",
-                    )
-                    logger.info("LTHR auto-saved from race %s: %d bpm", enriched.get("name"), candidate_lthr)
-    counts["activities"] = len(activities)
+        # 2. Activities
+        task_a = progress.add_task("Activities", total=None)
+        activities = garmin.fetch_activities(api, start, end)
+        progress.update(task_a, total=len(activities), completed=0)
 
-    # 4. SpO2
-    spo2_data = garmin.fetch_spo2(api, start, end)
-    for d_str, avg_spo2 in spo2_data.items():
-        if avg_spo2 is not None:
-            conn.execute("UPDATE daily_health SET avg_spo2 = ? WHERE date = ?", (avg_spo2, d_str))
-            counts["spo2"] += 1
+        # 3. Enrich new activities
+        for i, a in enumerate(activities):
+            existing = conn.execute("SELECT hr_zone FROM activities WHERE id = ?", (a["id"],)).fetchone()
+            if existing and existing["hr_zone"] is not None:
+                _upsert_activity(conn, a)
+            else:
+                enriched = enrich_activity(a, config, lthr=lthr)
+                _upsert_enriched_activity(conn, enriched)
+                counts["enriched"] += 1
 
-    # 5. Weather: daily + hourly per-activity
-    lat = config.get("profile", {}).get("location", {}).get("lat")
-    lon = config.get("profile", {}).get("location", {}).get("lon")
-    if lat and lon:
-        activity_dates = {a["date"] for a in activities if a.get("date")}
-        for d_str in activity_dates:
-            existing = conn.execute("SELECT 1 FROM weather WHERE date = ?", (d_str,)).fetchone()
-            if existing and not full:
-                continue
-            d = date.fromisoformat(d_str)
-            w = weather.fetch_daily_weather(d, float(lat), float(lon))
-            if w:
-                _upsert_weather(conn, w)
-                counts["weather"] += 1
-
-        # Hourly weather per activity (for activities with start time/location)
-        for a in activities:
-            if a.get("start_lat") and a.get("start_lon") and a.get("date"):
-                existing_hw = conn.execute(
-                    "SELECT temp_at_start_c FROM activities WHERE id = ? AND temp_at_start_c IS NOT NULL",
-                    (a["id"],)
-                ).fetchone()
-                if existing_hw and not full:
-                    continue
-                try:
-                    d = date.fromisoformat(a["date"])
-                    hour = a.get("start_hour") or 8
-                    hw = weather.fetch_hourly_weather(d, hour, float(a["start_lat"]), float(a["start_lon"]))
-                    if hw:
-                        conn.execute(
-                            "UPDATE activities SET temp_at_start_c = ?, humidity_at_start_pct = ? WHERE id = ?",
-                            (hw["temp_at_start_c"], hw["humidity_at_start_pct"], a["id"]),
+                if enriched.get("run_type") == "race":
+                    candidate_lthr = extract_lthr_from_race(enriched)
+                    if candidate_lthr:
+                        from fit.calibration import add_calibration
+                        add_calibration(
+                            conn, "lthr", candidate_lthr, "race_extract", "medium",
+                            date.fromisoformat(enriched["date"]),
+                            source_activity_id=enriched["id"],
+                            notes=f"Auto-extracted from {enriched.get('name')} ({enriched.get('distance_km', '?')}km)",
                         )
-                except Exception as e:
-                    logger.debug("Hourly weather failed for %s: %s", a["id"], e)
+                        logger.info("LTHR auto-saved from race %s: %d bpm", enriched.get("name"), candidate_lthr)
+            progress.advance(task_a)
+        counts["activities"] = len(activities)
 
-    # 6. Recompute weekly_agg for affected weeks
-    affected_weeks = _get_affected_weeks(activities, start, end)
-    for week_str in affected_weeks:
-        agg = compute_weekly_agg(conn, week_str)
-        _upsert_weekly_agg(conn, agg)
-        counts["weekly_agg"] += 1
+        # 4. SpO2
+        task_s = progress.add_task("SpO2", total=total_days)
+        spo2_data = garmin.fetch_spo2(api, start, end)
+        for d_str, avg_spo2 in spo2_data.items():
+            if avg_spo2 is not None:
+                conn.execute("UPDATE daily_health SET avg_spo2 = ? WHERE date = ?", (avg_spo2, d_str))
+                counts["spo2"] += 1
+            progress.advance(task_s)
+
+        # 5. Weather
+        lat = config.get("profile", {}).get("location", {}).get("lat")
+        lon = config.get("profile", {}).get("location", {}).get("lon")
+        if lat and lon:
+            activity_dates = {a["date"] for a in activities if a.get("date")}
+            task_w = progress.add_task("Weather", total=len(activity_dates) + len(activities))
+            for d_str in activity_dates:
+                existing = conn.execute("SELECT 1 FROM weather WHERE date = ?", (d_str,)).fetchone()
+                if not existing or full:
+                    d = date.fromisoformat(d_str)
+                    w = weather.fetch_daily_weather(d, float(lat), float(lon))
+                    if w:
+                        _upsert_weather(conn, w)
+                        counts["weather"] += 1
+                progress.advance(task_w)
+
+            for a in activities:
+                if a.get("start_lat") and a.get("start_lon") and a.get("date"):
+                    existing_hw = conn.execute(
+                        "SELECT temp_at_start_c FROM activities WHERE id = ? AND temp_at_start_c IS NOT NULL",
+                        (a["id"],)
+                    ).fetchone()
+                    if not existing_hw or full:
+                        try:
+                            d = date.fromisoformat(a["date"])
+                            hour = a.get("start_hour") or 8
+                            hw = weather.fetch_hourly_weather(d, hour, float(a["start_lat"]), float(a["start_lon"]))
+                            if hw:
+                                conn.execute(
+                                    "UPDATE activities SET temp_at_start_c = ?, humidity_at_start_pct = ? WHERE id = ?",
+                                    (hw["temp_at_start_c"], hw["humidity_at_start_pct"], a["id"]),
+                                )
+                        except Exception as e:
+                            logger.debug("Hourly weather failed for %s: %s", a["id"], e)
+                progress.advance(task_w)
+
+        # 6. Weekly aggregation
+        affected_weeks = _get_affected_weeks(activities, start, end)
+        task_wk = progress.add_task("Weekly Agg", total=len(affected_weeks))
+        for week_str in affected_weeks:
+            agg = compute_weekly_agg(conn, week_str)
+            _upsert_weekly_agg(conn, agg)
+            counts["weekly_agg"] += 1
+            progress.advance(task_wk)
 
     conn.commit()
     logger.info("Sync complete: %s", counts)

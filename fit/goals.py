@@ -8,6 +8,20 @@ from datetime import date
 logger = logging.getLogger(__name__)
 
 
+def create_goal(conn, name: str, goal_type: str, target_value=None, target_unit=None,
+                target_time=None, target_pace=None, target_date=None) -> int:
+    """Create a goal and log its creation. Returns the goal ID."""
+    cursor = conn.execute("""
+        INSERT INTO goals (name, type, target_value, target_unit, target_time, target_pace, target_date, active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+    """, (name, goal_type, target_value, target_unit, target_time, target_pace, target_date))
+    goal_id = cursor.lastrowid
+    log_goal_event(conn, goal_id, None, "goal_created", f"{name} ({goal_type})")
+    conn.commit()
+    logger.info("Goal created: %s (id=%d)", name, goal_id)
+    return goal_id
+
+
 def get_active_phase(conn: sqlite3.Connection, goal_id: int = None) -> dict | None:
     """Get the current active training phase, optionally filtered by goal."""
     if goal_id:

@@ -20,6 +20,10 @@ mcp = FastMCP("fit-mcp", instructions="Personal fitness data platform. Query fit
 
 def _get_conn() -> sqlite3.Connection:
     """Get a read-only connection to fitness.db."""
+    if not db_path.exists():
+        raise FileNotFoundError(
+            f"fitness.db not found at {db_path}. Run `fit sync` first to create and populate the database."
+        )
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn

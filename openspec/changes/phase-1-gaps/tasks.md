@@ -14,22 +14,22 @@
 - [x] 2.3 LTHR auto-extraction: when a race candidate is detected in sync, prompt user or auto-save with method='race_extract', confidence='medium' (phase-1-gaps 1.4)
 - [x] 2.4 Add non-running guard to `compute_speed_per_bpm` — return None if activity type is not running (phase-1-gaps 1.5)
 - [x] 2.5 ACWR: require minimum 3 prior weeks (not 2) for computation, return None otherwise (phase-1-gaps 1.6)
-- [ ] 2.6 Replace print statements with Rich Progress bars — per-step tasks with item counts, suppress console logging during progress (phase-2-enrich 2.1)
-- [ ] 2.7 Add ETA display for `fit sync --full` based on date range and API response rate (phase-2-enrich 2.2)
-- [ ] 2.8 Test: progress bars render cleanly, no log interleave (phase-2-enrich 2.4)
+- [x] 2.6 Replace print statements with Rich Progress bars — per-step tasks with item counts, suppress console logging during progress (phase-2-enrich 2.1)
+- [x] 2.7 Add ETA display for `fit sync --full` based on date range and API response rate (phase-2-enrich 2.2)
+- [x] 2.8 Test: progress bars render cleanly, no log interleave (phase-2-enrich 2.4)
 
 ## 3. MCP Server
 
-- [ ] 3.1 Add DB existence check in MCP server startup — return "fitness.db not found. Run `fit sync` first." instead of raw OperationalError (phase-1-gaps 3.1)
-- [ ] 3.2 Add LTHR detection source check to `data_health.py` (phase-1-gaps 3.2)
-- [ ] 3.3 Add automated goal creation logging — when goals are inserted via seed scripts, log to goal_log (phase-1-gaps 3.3)
+- [x] 3.1 Add DB existence check in MCP server startup — return "fitness.db not found. Run `fit sync` first." instead of raw OperationalError (phase-1-gaps 3.1)
+- [x] 3.2 Add LTHR detection source check to `data_health.py` (phase-1-gaps 3.2)
+- [x] 3.3 Add automated goal creation logging — when goals are inserted via seed scripts, log to goal_log (phase-1-gaps 3.3)
 
 ## 4. fit status & CLI
 
-- [ ] 4.1 Wire `get_calibration_status()` into `fit status` — show max_hr, lthr, weight staleness + retest prompts (phase-1-gaps 2.1)
-- [ ] 4.2 Wire `check_data_sources()` into `fit status` — show active/stale/missing per source (phase-1-gaps 2.2)
-- [ ] 4.3 Show active training phase with compliance summary in `fit status` (phase-1-gaps 2.3)
-- [ ] 4.4 Show ACWR (with safety indicator) and consistency streak in `fit status` (phase-1-gaps 2.4)
+- [x] 4.1 Wire `get_calibration_status()` into `fit status` — show max_hr, lthr, weight staleness + retest prompts (phase-1-gaps 2.1)
+- [x] 4.2 Wire `check_data_sources()` into `fit status` — show active/stale/missing per source (phase-1-gaps 2.2)
+- [x] 4.3 Show active training phase with compliance summary in `fit status` (phase-1-gaps 2.3)
+- [x] 4.4 Show ACWR (with safety indicator) and consistency streak in `fit status` (phase-1-gaps 2.4)
 
 ## 5. Dashboard — Charts & Annotations
 

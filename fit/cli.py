@@ -32,13 +32,10 @@ def sync(days: int, full: bool):
     config = get_config()
     conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
 
-    console.print("[bold]Syncing Garmin Connect...[/bold]")
     try:
         counts = run_sync(conn, config, days=days, full=full)
-        console.print(f"  [green]✓[/green] {counts['health']} health days")
-        console.print(f"  [green]✓[/green] {counts['activities']} activities")
-        console.print(f"  [green]✓[/green] {counts['spo2']} SpO2 days")
-        console.print(f"  [green]✓[/green] {counts['weather']} weather days")
+        console.print(f"\n[green]✓[/green] Synced: {counts['health']} health, {counts['activities']} activities, "
+                       f"{counts['enriched']} enriched, {counts['weather']} weather, {counts['weekly_agg']} weeks")
         console.print("[bold green]Done.[/bold green]")
     except Exception as e:
         console.print(f"[bold red]Sync failed:[/bold red] {e}")
@@ -191,22 +188,57 @@ def status():
             row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
             counts[table] = row[0]
 
-        last_health = conn.execute(
-            "SELECT MAX(date) FROM daily_health"
-        ).fetchone()[0]
+        last_health = conn.execute("SELECT MAX(date) FROM daily_health").fetchone()[0]
 
         console.print(f"\n  [bold]fit[/bold] — {counts['daily_health']} health days, "
                        f"{counts['activities']} activities, {counts['checkins']} check-ins")
         console.print(f"  Last sync: {last_health or 'never'}")
 
+        # Calibration status
+        from fit.calibration import get_calibration_status
+        cal_status = get_calibration_status(conn)
+        console.print("  [bold]Calibration:[/bold]")
+        for c in cal_status:
+            icon = "[green]✓[/green]" if not c["stale"] and not c["missing"] else "[yellow]⚠[/yellow]" if c["stale"] else "[red]✗[/red]"
+            val = f"{c['value']} ({c['method']}, {c['date']})" if c["value"] else "not set"
+            prompt = f" — {c['retest_prompt']}" if c["retest_prompt"] else ""
+            console.print(f"    {icon} {c['metric']}: {val}{prompt}")
+
+        # Data source health
+        from fit.data_health import check_data_sources
+        sources = check_data_sources(conn)
+        stale_or_missing = [s for s in sources if s["status"] != "active"]
+        if stale_or_missing:
+            console.print(f"  [bold]Data Health:[/bold] {len(stale_or_missing)} warning(s)")
+            for s in stale_or_missing:
+                icon = "[yellow]⚠[/yellow]" if s["status"] == "stale" else "[red]✗[/red]"
+                console.print(f"    {icon} {s['source']}: {s['status']}"
+                               + (f" — {s['instruction']}" if s.get("instruction") else ""))
+
+        # Active phase
+        from fit.goals import get_active_phase
+        phase = get_active_phase(conn)
+        if phase:
+            console.print(f"  [bold]Phase:[/bold] {phase['phase']} — {phase['name']}")
+            if phase.get("z12_pct_target"):
+                console.print(f"    Z1+Z2 target: {phase['z12_pct_target']}%, km: {phase.get('weekly_km_min')}-{phase.get('weekly_km_max')}")
+
+        # ACWR + streak
+        acwr_row = conn.execute("SELECT acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
+        streak_row = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
+        if acwr_row and acwr_row["acwr"]:
+            v = acwr_row["acwr"]
+            safety = "[green]safe[/green]" if 0.8 <= v <= 1.3 else "[yellow]caution[/yellow]" if v <= 1.5 else "[red]DANGER[/red]"
+            console.print(f"  [bold]ACWR:[/bold] {v:.2f} ({safety})")
+        if streak_row and streak_row[0]:
+            console.print(f"  [bold]Streak:[/bold] {streak_row[0]} consecutive weeks with 3+ runs")
+
         # Active goals
         goals = conn.execute("SELECT name, type, target_date FROM goals WHERE active = 1").fetchall()
         if goals:
-            console.print("  Goals:")
+            console.print("  [bold]Goals:[/bold]")
             for g in goals:
                 console.print(f"    {g[0]} ({g[1]}) — {g[2] or 'no date'}")
-        else:
-            console.print("  No active goals.")
 
         console.print()
     finally:
