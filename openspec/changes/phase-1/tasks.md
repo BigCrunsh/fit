@@ -93,10 +93,10 @@
 
 ## 12. MCP Coaching Tools
 
-- [ ] 12.1 Implement `check_dashboard_freshness()` — returns last sync/report/coaching dates
-- [ ] 12.2 Implement `get_coaching_context()` — structured data summary (ACWR, calibration, data health, phase compliance, zones, run types, speed_per_bpm, cadence, RPE, sleep mismatches, race predictions, streak)
-- [ ] 12.3 Implement `save_coaching_notes(insights_json)` — atomic write to `reports/coaching.json` (temp file + rename)
-- [ ] 12.4 Test: 3-tool workflow, atomic write, context completeness
+- [x] 12.1 Implement `check_dashboard_freshness()` — returns last sync/report/coaching dates
+- [x] 12.2 Implement `get_coaching_context()` — structured data summary (ACWR, calibration, data health, phase compliance, zones, run types, speed_per_bpm, cadence, RPE, sleep mismatches, race predictions, streak)
+- [x] 12.3 Implement `save_coaching_notes(insights_json)` — atomic write to `reports/coaching.json` (temp file + rename)
+- [x] 12.4 Test: 3-tool workflow (context returns ACWR, zones, phases, calibration; save writes atomically), atomic write, context completeness
 
 ## 13. Basic Dashboard (3 tabs)
 
