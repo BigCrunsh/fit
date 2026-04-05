@@ -61,6 +61,7 @@ def run_checkin(conn: sqlite3.Connection) -> None:
     ).fetchone()
     if activity_today:
         console.print(f"  [dim]Today's run: {activity_today['name']} (HR {activity_today['avg_hr']}, {activity_today['hr_zone']})[/dim]")
+    console.print("  [dim]RPE: 1-2=rest day, 3-4=easy, 5-6=moderate, 7-8=hard, 9-10=race effort[/dim]")
     rpe_str = Prompt.ask("  RPE 1-10 (enter=skip)", default="").strip()
     data["rpe"] = int(rpe_str) if rpe_str and rpe_str.isdigit() and 1 <= int(rpe_str) <= 10 else None
 
