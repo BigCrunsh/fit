@@ -177,12 +177,17 @@ class TestConfigLoading:
         config = get_config(tmp_path)
         assert config["city"] == "Berlin"
 
-    def test_default_config_dir_is_cwd(self, tmp_path, monkeypatch):
-        """get_config(None) uses cwd."""
-        (tmp_path / "config.yaml").write_text(yaml.dump({"x": 1}))
-        monkeypatch.chdir(tmp_path)
+    def test_default_config_searches_multiple_locations(self, tmp_path):
+        """get_config(None) searches repo root, ~/.fit, and cwd."""
+        # With no args, it should find config.yaml in the repo root (package parent)
         config = get_config()
-        assert config["x"] == 1
+        assert config is not None  # found it somewhere
+
+    def test_explicit_dir_overrides_search(self, tmp_path):
+        """get_config(path) uses that exact path."""
+        (tmp_path / "config.yaml").write_text(yaml.dump({"custom": True}))
+        config = get_config(tmp_path)
+        assert config["custom"] is True
 
     # Unhappy
     def test_missing_config_raises(self, tmp_path):

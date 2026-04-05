@@ -11,6 +11,10 @@ from fit.logging_config import setup_logging
 console = Console()
 logger = logging.getLogger(__name__)
 
+# Repo root: parent of fit/ package
+REPO_ROOT = Path(__file__).parent.parent
+MIGRATIONS_DIR = REPO_ROOT / "migrations"
+
 
 @click.group()
 @click.version_option(version="0.1.0", prog_name="fit")
@@ -30,7 +34,7 @@ def sync(days: int, full: bool):
     from fit.sync import run_sync
 
     config = get_config()
-    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
 
     try:
         counts = run_sync(conn, config, days=days, full=full)
@@ -53,7 +57,7 @@ def checkin():
     from fit.db import get_db
 
     config = get_config()
-    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
     try:
         run_checkin(conn)
     finally:
@@ -72,7 +76,7 @@ def report(daily: bool, weekly: bool):
     from fit.report.generator import generate_dashboard
 
     config = get_config()
-    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
 
     reports_dir = Path(config["sync"]["db_path"]).expanduser().parent / "reports"
 
@@ -105,7 +109,7 @@ def races():
     from fit.db import get_db
 
     config = get_config()
-    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
     try:
         rows = conn.execute("""
             SELECT rc.date, rc.name, rc.distance, rc.status, rc.target_time, rc.result_time,
@@ -148,7 +152,7 @@ def goal_add():
     from fit.goals import create_goal
 
     config = get_config()
-    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
     try:
         name = Prompt.ask("  Goal name")
         goal_type = Prompt.ask("  Type", choices=["race", "metric", "habit"])
@@ -182,7 +186,7 @@ def goal_list():
     from fit.db import get_db
 
     config = get_config()
-    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
     try:
         goals = conn.execute("SELECT * FROM goals WHERE active = 1 ORDER BY id").fetchall()
         if not goals:
@@ -219,7 +223,7 @@ def goal_complete(goal_id: int):
     from fit.goals import log_goal_event
 
     config = get_config()
-    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
     try:
         conn.execute("UPDATE goals SET active = 0 WHERE id = ?", (goal_id,))
         log_goal_event(conn, goal_id, None, "goal_completed", "Goal marked as achieved")
@@ -238,7 +242,7 @@ def doctor():
     from fit.db import get_db
 
     config = get_config()
-    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
     try:
         issues = 0
         console.print("\n[bold]fit doctor[/bold]\n")
@@ -308,7 +312,7 @@ def correlate():
     from fit.db import get_db
 
     config = get_config()
-    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
     try:
         results = compute_all_correlations(conn)
         if not results:
@@ -336,7 +340,7 @@ def recompute(recompute_all: bool):
     from fit.sync import enrich_existing_activities
 
     config = get_config()
-    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
 
     try:
         console.print("[bold]Enriching activities with missing derived fields...[/bold]")
@@ -380,7 +384,7 @@ def calibrate(metric: str):
     from fit.db import get_db
 
     config = get_config()
-    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
 
     try:
         if metric == "max_hr":
@@ -409,7 +413,7 @@ def status():
     from fit.db import get_db
 
     config = get_config()
-    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
 
     try:
         counts = {}

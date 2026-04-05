@@ -61,7 +61,19 @@ def get_config(config_dir: Path | None = None) -> dict:
         Merged and resolved config dict.
     """
     if config_dir is None:
-        config_dir = Path.cwd()
+        # Search for config.yaml in multiple locations
+        candidates = [
+            Path(__file__).parent.parent,  # repo root (fit/ package parent)
+            Path.home() / ".fit",
+            Path.cwd(),
+        ]
+        config_dir = next((d for d in candidates if (d / "config.yaml").exists()), None)
+        if config_dir is None:
+            raise FileNotFoundError(
+                "config.yaml not found. Searched:\n"
+                + "\n".join(f"  {d}" for d in candidates)
+                + "\nRun from the fit repo directory or copy config.yaml to ~/.fit/"
+            )
 
     # Layer 1: template config (committed)
     config_path = config_dir / "config.yaml"
