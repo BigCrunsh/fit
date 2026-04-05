@@ -96,7 +96,8 @@ def extract_lthr_from_race(activity: dict) -> float | None:
     avg_hr = activity.get("avg_hr")
     run_type = activity.get("run_type")
 
-    if run_type != "race" or distance < 10 or not avg_hr:
+    activity_type = activity.get("type", "")
+    if activity_type != "running" or run_type != "race" or distance < 10 or not avg_hr:
         return None
 
     # For races >= 10km, overall avg HR approximates LTHR
