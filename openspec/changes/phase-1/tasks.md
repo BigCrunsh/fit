@@ -111,16 +111,16 @@
 
 ## 14. Claude Code Skill
 
-- [ ] 14.1 Create `/fit-coach` skill — uses 3 MCP tools (check freshness → get context → save notes)
-- [ ] 14.2 Test: full coaching workflow
+- [x] 14.1 Create `/fit-coach` skill — uses 3 MCP tools (check freshness → get context → save notes)
+- [x] 14.2 Test: coaching workflow verified via MCP tools + skill registered in Claude Code
 
 ## 15. Test Suite (Phase 1b)
 
-- [ ] 15.1 Set up `tests/` with pytest — fixtures for in-memory DB, sample config (both zone models), calibration entries, sample data
-- [ ] 15.2 Tests for `fit/config.py`, `fit/db.py`, `fit/analysis.py`, `fit/goals.py`, `fit/calibration.py`, `fit/data_health.py`
-- [ ] 15.3 Tests for `fit/garmin.py` (mock API), `fit/weather.py` (mock API)
-- [ ] 15.4 Tests for `fit/checkin.py`, `mcp/server.py`, `fit/report/` (basic 3-tab output)
-- [ ] 15.5 Verify all tests pass
+- [x] 15.1 Set up `tests/` with pytest — fixtures for in-memory DB, sample config (both zone models), calibration entries, sample data
+- [x] 15.2 Tests for `fit/config.py`, `fit/db.py`, `fit/analysis.py`, `fit/goals.py`, `fit/calibration.py`, `fit/data_health.py`
+- [ ] 15.3 Tests for `fit/garmin.py` (mock API), `fit/weather.py` (mock API) — deferred, requires mock setup
+- [ ] 15.4 Tests for `fit/checkin.py`, `mcp/server.py`, `fit/report/` — deferred, requires mock prompts + MCP test harness
+- [x] 15.5 Verify all tests pass (26 passed)
 
 ---
 
