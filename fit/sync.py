@@ -140,6 +140,22 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
             progress.advance(task_wk)
 
     conn.commit()
+
+    # 7. Auto-compute correlations + run alerts
+    try:
+        from fit.correlations import compute_all_correlations
+        compute_all_correlations(conn)
+    except Exception as e:
+        logger.debug("Correlations skipped: %s", e)
+
+    try:
+        from fit.alerts import run_alerts
+        alerts = run_alerts(conn, config)
+        if alerts:
+            counts["alerts"] = len(alerts)
+    except Exception as e:
+        logger.debug("Alerts skipped: %s", e)
+
     logger.info("Sync complete: %s", counts)
     return counts
 

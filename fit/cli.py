@@ -99,6 +99,33 @@ def report(daily: bool, weekly: bool):
 
 
 @main.command()
+def correlate():
+    """Compute cross-domain correlations and display results."""
+    from fit.config import get_config
+    from fit.correlations import compute_all_correlations
+    from fit.db import get_db
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    try:
+        results = compute_all_correlations(conn)
+        if not results:
+            console.print("No new correlations to compute (data unchanged).")
+            return
+        console.print(f"\n[bold]Correlations ({len(results)} pairs):[/bold]\n")
+        for r in sorted(results, key=lambda x: abs(x.get("spearman_r") or 0), reverse=True):
+            if r["status"] == "insufficient_data":
+                console.print(f"  [dim]{r['name']}: insufficient data (n={r['sample_size']})[/dim]")
+            else:
+                sr = r.get("spearman_r") or 0
+                color = "[green]" if abs(sr) >= 0.3 else "[yellow]" if abs(sr) >= 0.15 else "[dim]"
+                console.print(f"  {color}r={sr:+.3f}[/] {r['name']} (n={r['sample_size']}, p={r.get('p_value', '?')}, {r['confidence']})")
+        console.print()
+    finally:
+        conn.close()
+
+
+@main.command()
 @click.option("--all", "recompute_all", is_flag=True, help="Recompute all weeks, not just recent.")
 def recompute(recompute_all: bool):
     """Recompute derived metrics and weekly aggregations."""

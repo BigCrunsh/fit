@@ -55,6 +55,8 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "definitions": _definitions(conn),
         "race_prediction": _race_prediction(conn),
         "coaching": _coaching(conn),
+        "recent_alerts": _recent_alerts(conn),
+        "correlation_bars": _correlation_bars(conn),
         "phase_compliance": _phase_compliance(conn),
         "calibration_panel": _calibration_panel(conn),
         "data_health": _data_health_panel(conn),
@@ -641,6 +643,41 @@ def _coaching(conn):
     insights = [{**styles.get(i.get("type", "info"), styles["info"]), "title": i.get("title", ""), "body": i.get("body", "")}
                 for i in data.get("insights", [])]
     return {"generated_at": data.get("generated_at", ""), "stale": stale, "insights": insights}
+
+
+# ── Recent Alerts ──
+
+def _recent_alerts(conn):
+    try:
+        from fit.alerts import get_recent_alerts
+        return get_recent_alerts(conn, days=7)
+    except Exception:
+        return []
+
+
+# ── Correlation Bars ──
+
+def _correlation_bars(conn):
+    try:
+        rows = conn.execute("""
+            SELECT metric_pair, spearman_r, sample_size, confidence
+            FROM correlations WHERE status = 'computed' AND spearman_r IS NOT NULL
+            ORDER BY ABS(spearman_r) DESC LIMIT 8
+        """).fetchall()
+        results = []
+        for r in rows:
+            sr = r["spearman_r"]
+            label = r["metric_pair"].replace("_", " ").replace("lag1", "(next day)")
+            color = SAFE if sr > 0 else DANGER
+            width = min(abs(sr) * 100, 50)  # scale to max 50% bar width
+            results.append({
+                "label": label, "r": f"{sr:+.2f}", "n": r["sample_size"],
+                "confidence": r["confidence"], "color": color, "width": int(width),
+                "direction": "positive" if sr > 0 else "negative",
+            })
+        return results
+    except Exception:
+        return []
 
 
 # ── Event Annotations (W5) ──

@@ -68,6 +68,15 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
 <div id="tab-today" class="tab-content active">
   <div class="headline">{{ headline }}</div>
 
+  {% if recent_alerts %}
+  {% for alert in recent_alerts %}
+  <div style="background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.15);border-radius:8px;padding:8px 12px;margin:6px 0;font-size:11px">
+    <span style="color:var(--danger);font-weight:700">⚠ {{ alert.type | replace('_', ' ') | title }}:</span>
+    <span style="color:#94a3b8">{{ alert.message }}</span>
+  </div>
+  {% endfor %}
+  {% endif %}
+
   <div class="cards">
   {% for card in status_cards %}
     <div class="card">
@@ -237,6 +246,19 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
 
 <!-- ═══ COACH ═══ -->
 <div id="tab-coach" class="tab-content">
+
+  {% if correlation_bars %}
+  <div class="sec"><h2>Correlations</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Cross-domain correlations using Spearman rank. Bar length = effect strength. Green = positive (more X → more Y). Red = negative (more X → less Y). Min sample: 20 for display, 30 for high confidence.</div><div class="line"></div></div>
+  {% for c in correlation_bars %}
+  <div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:10px">
+    <span style="width:180px;color:var(--text-muted)">{{ c.label }}</span>
+    <div style="width:{{ c.width }}%;min-width:4px;height:14px;background:{{ c.color }};border-radius:3px;opacity:0.6"></div>
+    <span style="color:{{ c.color }};font-family:var(--mono);font-weight:600">{{ c.r }}</span>
+    <span style="color:var(--text-dim);font-size:9px">n={{ c.n }} {{ c.confidence }}</span>
+  </div>
+  {% endfor %}
+  {% endif %}
+
   {% if coaching %}
     <div style="font-size:10px;color:var(--text-muted);margin-bottom:12px">Generated: {{ coaching.generated_at }} {% if coaching.stale %}<span class="stale-badge">STALE</span>{% endif %}</div>
     {% for insight in coaching.insights %}

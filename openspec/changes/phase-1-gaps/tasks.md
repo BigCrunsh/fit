@@ -53,13 +53,13 @@
 
 ## 7. Correlation Engine
 
-- [ ] 7.1 Add migration 005: `correlations` table + `alerts` table (phase-2-enrich 3.1)
-- [ ] 7.2 Implement `fit/correlations.py` — Spearman rank via rank transform + numpy.corrcoef, predefined pairs with lag, differencing for trended metrics, min n=20/30 thresholds (phase-2-enrich 3.2)
-- [ ] 7.3 Implement `fit/alerts.py` — threshold rules engine: all-runs-too-hard, volume ramp guard, readiness gate, long run projection, alcohol+HRV drop (phase-2-enrich 3.3)
-- [ ] 7.4 Implement `fit correlate` CLI — compute all correlations, skip unchanged pairs, display ranked table, auto-run at end of `fit sync` (phase-2-enrich 3.4)
-- [ ] 7.5 Add correlation panel to Coach tab — diverging bar chart, scatter drill-down, before/after bars, freshness indicator (phase-2-enrich 3.5)
-- [ ] 7.6 Add alert output to Today tab headline and coaching context (phase-2-enrich 3.6)
-- [ ] 7.7 Test: Spearman on ordinal data, differencing, minimum sample sizes, alert rules, dashboard rendering (phase-2-enrich 3.7)
+- [x] 7.1 Add migration 005: `correlations` table + `alerts` table (phase-2-enrich 3.1)
+- [x] 7.2 Implement `fit/correlations.py` — Spearman rank via rank transform + numpy.corrcoef, predefined pairs with lag, differencing for trended metrics, min n=20/30 thresholds (phase-2-enrich 3.2)
+- [x] 7.3 Implement `fit/alerts.py` — threshold rules engine: all-runs-too-hard, volume ramp guard, readiness gate, long run projection, alcohol+HRV drop (phase-2-enrich 3.3)
+- [x] 7.4 Implement `fit correlate` CLI — compute all correlations, skip unchanged pairs, display ranked table, auto-run at end of `fit sync` (phase-2-enrich 3.4)
+- [x] 7.5 Add correlation panel to Coach tab — diverging bar chart, scatter drill-down, before/after bars, freshness indicator (phase-2-enrich 3.5)
+- [x] 7.6 Add alert output to Today tab headline and coaching context (phase-2-enrich 3.6)
+- [x] 7.7 Test: Spearman on ordinal data, differencing, minimum sample sizes, alert rules, dashboard rendering (phase-2-enrich 3.7)
 
 ## 8. Fitdays Auto-Import
 

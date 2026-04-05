@@ -309,6 +309,30 @@ def _ctx_training(conn) -> list[str]:
     return s
 
 
+def _ctx_correlations(conn) -> list[str]:
+    """Top correlations + recent alerts."""
+    s = []
+    try:
+        corrs = conn.execute("""
+            SELECT metric_pair, spearman_r, sample_size, confidence
+            FROM correlations WHERE status = 'computed' AND spearman_r IS NOT NULL
+            ORDER BY ABS(spearman_r) DESC LIMIT 5
+        """).fetchall()
+        if corrs:
+            s.append("Top correlations: " + ", ".join(
+                f"{c['metric_pair']} r={c['spearman_r']:+.2f} (n={c['sample_size']}, {c['confidence']})" for c in corrs))
+    except Exception:
+        pass
+    try:
+        from fit.alerts import get_recent_alerts
+        alerts = get_recent_alerts(conn, days=7)
+        if alerts:
+            s.append(f"Active alerts ({len(alerts)}): " + "; ".join(a["message"][:80] for a in alerts[:3]))
+    except Exception:
+        pass
+    return s
+
+
 def _ctx_goals(conn) -> list[str]:
     """Active goals."""
     s = []
@@ -327,6 +351,7 @@ def get_coaching_context() -> str:
         sections.extend(_ctx_profile(conn))
         sections.extend(_ctx_health(conn))
         sections.extend(_ctx_training(conn))
+        sections.extend(_ctx_correlations(conn))
         sections.extend(_ctx_goals(conn))
         return "Coaching Context:\n" + "\n".join(f"  {s}" for s in sections)
     finally:
