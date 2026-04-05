@@ -185,6 +185,9 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div class="sec"><h2>Stress vs Body Battery</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.stress_battery | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-stress" height="130"></canvas></div>
 
+  <div class="sec"><h2>ACWR Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.acwr | safe }}</div><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-acwr" height="140"></canvas></div>
+
   <div class="sec"><h2>Weight</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.weight | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-weight" height="130"></canvas></div>
 

@@ -385,6 +385,30 @@ def _all_charts(conn):
                                    "y": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}, "title": {"display": True, "text": "minutes"}}}}
         })})
 
+    # ACWR trend (Body tab)
+    acwr_data = conn.execute("""
+        SELECT week, acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week
+    """).fetchall()
+    if acwr_data:
+        acwr_colors = [SAFE if 0.8 <= (a["acwr"] or 0) <= 1.3 else CAUTION if (a["acwr"] or 0) <= 1.5 else DANGER for a in acwr_data]
+        charts.append({"id": "chart-acwr", "config": json.dumps({
+            "type": "bar",
+            "data": {"labels": [a["week"] for a in acwr_data],
+                     "datasets": [{"label": "ACWR", "data": [a["acwr"] for a in acwr_data],
+                                   "backgroundColor": acwr_colors, "borderRadius": 3}]},
+            "options": {"responsive": True, "plugins": {"legend": {"display": False},
+                        "annotation": {"annotations": {
+                            "safe_lo": {"type": "line", "yMin": 0.8, "yMax": 0.8, "borderColor": SAFE + "40", "borderDash": [4, 3],
+                                        "label": {"content": "0.8", "display": True, "position": "start", "font": {"size": 8}}},
+                            "safe_hi": {"type": "line", "yMin": 1.3, "yMax": 1.3, "borderColor": SAFE + "40", "borderDash": [4, 3],
+                                        "label": {"content": "1.3 safe", "display": True, "position": "end", "font": {"size": 8}}},
+                            "danger": {"type": "line", "yMin": 1.5, "yMax": 1.5, "borderColor": DANGER + "60", "borderDash": [6, 3],
+                                       "label": {"content": "1.5 danger", "display": True, "position": "end", "font": {"size": 8}}},
+                        }}},
+                        "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
+                                   "y": {"min": 0, "max": 2.5, "grid": {"color": "rgba(255,255,255,0.03)"}}}}
+        })})
+
     # Cadence trend (Fitness tab — W3)
     cadence = conn.execute("""
         SELECT date, avg_cadence FROM activities
