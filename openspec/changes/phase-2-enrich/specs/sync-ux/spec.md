@@ -1,34 +1,49 @@
 ## ADDED Requirements
 
 ### Requirement: Rich progress bar for fit sync
-`fit sync` SHALL display a Rich progress bar showing: current step (health/activities/SpO2/weather/enrichment/weekly_agg), items processed vs total, elapsed time, ETA for `--full`. Each step shows a sub-progress bar.
+`fit sync` SHALL display Rich progress bars per step (health/activities/SpO2/weather/enrichment/weekly_agg), with item counts and ETA for `--full`. Progress bars SHALL not interleave with logging output (suppress console logging during progress, buffer to file).
 
 #### Scenario: Normal sync with progress
 - **WHEN** user runs `fit sync --days 7`
-- **THEN** a progress bar shows: "Health [====    ] 4/7 days" → "Activities [========] 3/3" → etc.
+- **THEN** progress bar shows per-step: "Health [====    ] 4/7 days" → "Activities [========] 3/3" → etc.
 
 #### Scenario: Full sync with ETA
 - **WHEN** user runs `fit sync --full`
 - **THEN** progress bar shows estimated time remaining based on API response rate
 
-### Requirement: Better error messages
-Sync errors SHALL include clear context: what was being fetched, which date failed, and whether the error is transient (retry) or permanent (fix config).
+#### Scenario: No interleave with logs
+- **WHEN** progress bars are active
+- **THEN** Python logging output goes to file only (not console), avoiding garbled output
 
-#### Scenario: Auth token expired
-- **WHEN** garth token refresh fails
-- **THEN** error shows: "Garmin auth expired. Run: python -c 'import garth; garth.login(email, pw); garth.save(path)'"
+### Requirement: Shared retry/backoff utility
+`fit/garmin.py` SHALL have a `_request_with_retry(func, max_retries=3)` wrapper that handles: 429 (rate limit) with countdown timer, 401 (re-auth prompt), transient 5xx with exponential backoff. All Garmin API calls use this wrapper.
 
-#### Scenario: API rate limit
+#### Scenario: Rate limit with countdown
 - **WHEN** Garmin API returns 429
-- **THEN** sync pauses with: "Rate limited. Waiting 60s..." and retries
+- **THEN** sync shows "Rate limited. Waiting 60s..." with countdown, then retries
 
-### Requirement: ioBroker integration (optional)
-The system SHALL optionally expose daily metrics via a JSON file or MQTT endpoint for ioBroker home automation dashboards. Metrics: readiness, ACWR, last run summary, weight, streak. Configured via `config.yaml` `iobroker` section.
+#### Scenario: Auth expired with instructions
+- **WHEN** garth token refresh fails with 401
+- **THEN** error: "Garmin auth expired. Run: python -c 'import garth; garth.login(email, pw); garth.save(path)'"
 
-#### Scenario: JSON export for ioBroker
-- **WHEN** `iobroker.enabled: true` in config and `fit sync` completes
-- **THEN** a `~/.fit/iobroker.json` file is written with key daily metrics
+### Requirement: Post-sync hook system
+The system SHALL support a `post_sync_hooks` config list. After sync completes, each hook is called. ioBroker JSON export is one hook (`fit.hooks.iobroker_json`), not hardcoded in sync.py.
 
-#### Scenario: ioBroker not configured
-- **WHEN** no `iobroker` section in config
-- **THEN** no JSON file is written (no impact on normal operation)
+#### Scenario: ioBroker hook configured
+- **WHEN** config has `hooks.post_sync: ["fit.hooks.iobroker_json"]` and sync completes
+- **THEN** `~/.fit/iobroker.json` is written with: readiness, ACWR, last run, weight, streak, headline
+
+#### Scenario: No hooks configured
+- **WHEN** no `hooks` section in config
+- **THEN** sync completes normally, no hooks run
+
+### Requirement: fit doctor diagnostic command
+`fit doctor` SHALL validate the entire data pipeline: DB schema version matches code, all expected tables exist, no orphaned splits without activities, correlation freshness, plan import recency, weight staleness, calibration status, data source health.
+
+#### Scenario: All healthy
+- **WHEN** everything is in order
+- **THEN** `fit doctor` shows all green checks
+
+#### Scenario: Issues detected
+- **WHEN** weekly_agg is stale or correlations are outdated
+- **THEN** `fit doctor` shows warnings with remediation commands

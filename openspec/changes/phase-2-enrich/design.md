@@ -1,96 +1,91 @@
 ## Context
 
-Phase 1 delivered the complete ingest → store → analyze → visualize loop. The database has 400+ health days, 100+ activities with parallel zones and derived metrics, weekly aggregations with ACWR, and a 5-tab dashboard. Claude can query via MCP and generate coaching notes.
+Phase 1 delivered the complete ingest → store → analyze → visualize loop with 362 tests, 10 tables, 5-tab dashboard, 8 MCP tools, and coaching workflow. Phase 2 adds depth: correlations, plan adherence, .fit analysis, and automated integrations.
 
-Phase 2 adds depth: cross-domain correlations, training plan integration, automated weight sync, per-km run analysis, and UX improvements.
+Tech debt from Phase 1: `executescript` auto-commit in migration runner, monolithic `get_coaching_context()`, non-functional zoom toggle, no retry/backoff in garmin.py.
 
 ## Goals / Non-Goals
 
 **Goals:**
 - Answer "why was this run slow?" with cross-domain evidence
-- Close the gap between planned and executed training (Runna)
-- Automate weight data ingestion
+- Detect coaching signals proactively (not just dashboard)
+- Close planned vs executed training gap (Runna)
 - Enable per-km analysis from .fit files
+- Set and track individual goals
 - Make `fit sync` pleasant to use
 
 **Non-Goals:**
 - Real-time streaming / live dashboards
-- Multi-user support
 - Training plan generation (Runna generates, we track adherence)
 - Garmin watch face or widget
+- Multi-user support
 
 ## Decisions
 
-### 1. Correlation engine: precomputed + on-demand
+### 1. Sub-phase: 2a (quick wins + data story) → 2b (deep analysis + plan)
 
-Correlations are precomputed by `fit correlate` (or as part of sync) and stored in a `correlations` table. This avoids recomputing on every dashboard render. Claude can also compute ad-hoc correlations via SQL.
+**Phase 2a**: tech debt fixes, sync UX, correlation engine + alerts, Fitdays auto-import, goal tracking, `fit doctor`.
+**Phase 2b**: .fit file analysis, Runna plan integration, Run Story narrative, milestones, ioBroker hooks.
 
-Predefined correlation pairs:
-- alcohol (drinks) → next-day HRV (lag 1)
-- alcohol → next-day readiness (lag 1)
-- sleep_quality → readiness (lag 0)
-- weight (weekly avg) → pace (weekly avg, lag 0)
-- temp_at_start_c → speed_per_bpm (lag 0, same run)
-- water_liters → next-day HRV (lag 1)
+This mirrors Phase 1's successful sub-phasing. 2a delivers the "data story" promise fast; 2b adds heavier I/O and external dependencies.
 
-Uses scipy.stats.pearsonr or a simple numpy correlation. Minimum sample size: 10. Stored with coefficient, p-value, sample size, and last_computed timestamp.
+### 2. Fix `executescript` auto-commit (Phase 1 tech debt)
 
-### 2. Runna plan: manual import, structured storage
+SQLite's `executescript()` issues an implicit COMMIT, making the explicit BEGIN/COMMIT wrapping in `db.py` ineffective. Fix: parse SQL file into individual statements and execute each with `conn.execute()`, keeping the explicit transaction control working.
 
-Runna doesn't have a public API. Plan import via CSV or JSON file that the user exports/creates from the Runna app. Format:
+### 3. Spearman rank correlation (not Pearson)
 
-```csv
-date,workout_type,target_distance_km,target_zone,target_pace_min_km,notes
-2026-04-07,easy,5,Z2,,
-2026-04-09,easy,6,Z2,,
-2026-04-12,long,10,Z2,,Build gradually
-```
+Most correlation pairs involve ordinal (sleep_quality: Poor/OK/Good) or skewed (alcohol: mostly 0, occasionally 1-3) data. Pearson assumes normality and linearity. Spearman rank is appropriate for these distributions and robust to outliers.
 
-`planned_workouts` table with: date, workout_type, target_distance_km, target_zone, target_pace_range, notes. Plan adherence computed by joining activities with planned_workouts on date.
+For continuous-continuous pairs (temp→drift), compute both and display whichever has higher |r|.
 
-### 3. Fitdays: Apple Health CSV with auto-detection
+Avoid scipy dependency: implement Spearman via rank transformation + numpy.corrcoef (~15 lines). P-value via t-distribution (~10 lines). No heavy dependency needed.
 
-The Fitdays app syncs to Apple Health. Apple Health can export to CSV. The system auto-detects weight CSVs in `~/Downloads/` or a configured path during `fit sync`. More sophisticated: use the Apple Health XML export, or investigate the Fitdays API directly.
+### 4. Differenced values for trended metrics
 
-For Phase 2: start with CSV auto-detection (simplest). Weight calibration auto-updated on new measurements.
+HRV is autocorrelated (today's HRV correlates with yesterday's regardless of alcohol). Weekly pace trends have serial dependence from fitness progression. Use differenced values: correlate *change* in HRV with alcohol, not raw HRV with alcohol. This prevents spurious correlations from shared trends.
 
-### 4. .fit files: garminconnect download + fitparse library
+### 5. Alerts engine separate from correlation engine
 
-The `garminconnect` library can download .fit files via `api.download_activity(activity_id)`. Parse with the `fitparse` Python library. Extract per-km records from `record` messages, aggregate into splits by distance milestones.
+Correlations answer "over the last N weeks, does X predict Y?" — batch analysis.
+Alerts answer "right now, based on today's data, should I change my plan?" — real-time rules.
 
-New `activity_splits` table:
-```
-activity_id TEXT, split_num INTEGER, distance_km REAL, time_sec REAL,
-pace_sec_per_km REAL, avg_hr INTEGER, avg_cadence REAL,
-elevation_gain_m REAL, PRIMARY KEY (activity_id, split_num)
-```
+`fit/alerts.py` runs after each sync, checks threshold rules, stores fired alerts in an `alerts` table. Alerts surface in Today tab headline and coaching context. This is more actionable day-to-day than stored r-values.
 
-Cardiac drift = (avg_hr_second_half - avg_hr_first_half) / avg_hr_first_half * 100.
+### 6. Runna plan: versioned import with structure JSON
 
-New dependency: `fitparse>=0.6.0`.
+Plans change weekly. Old plans are not deleted — superseded rows preserve history. Structure JSON supports multi-segment workouts (intervals can't be described by distance+zone alone).
 
-### 5. Sync UX: Rich progress with Live display
+Plan compliance computed as weekly score + systematic override detection. The system connects readiness data with planned workouts for readiness-gated recommendations.
 
-Replace print statements with `rich.progress.Progress` context manager. Each sync step (health, activities, SpO2, weather, enrichment, weekly_agg) as a separate task with progress bar.
+### 7. .fit files: opt-in, cached, fail-safe
 
-For `--full`: estimate total days from date range, update progress per day fetched. Show ETA.
+Not downloaded on every sync (too slow, hits API limits). Gated behind config toggle or `--splits` flag. Cached locally in `~/.fit/fit-files/`. Per-file failures don't crash sync. Max downloads per sync capped.
 
-API rate limit: catch 429 responses, wait with countdown timer, retry.
+Rolling 1km drift detection identifies the exact km where HR decouples — "drift onset km" is the aerobic ceiling distance. More actionable than first/second half comparison.
 
-### 6. ioBroker: simple JSON file export
+### 8. Coaching context refactored into composable sections
 
-Write `~/.fit/iobroker.json` after each sync with key metrics. ioBroker reads this via the JSON adapter or a custom script. No MQTT needed for v1 — file-based is simpler and sufficient.
+`get_coaching_context()` is split into: `_ctx_health()`, `_ctx_training()`, `_ctx_correlations()`, `_ctx_plan()`, `_ctx_splits()`, `_ctx_goals()`. Each returns a list of context lines. This keeps the function maintainable as Phase 2 adds more data dimensions.
+
+### 9. Post-sync hook system for ioBroker
+
+Generic `hooks.post_sync` config list. Each hook is a Python callable path. ioBroker JSON export is one hook, not hardcoded. Allows future integrations (Home Assistant, webhooks) without modifying sync.py.
+
+### 10. Individual goal lifecycle
+
+Goals table already exists from Phase 1. Phase 2 adds: `fit goal add/list/complete` CLI commands, progress tracking against current data (VO2max vs target, weight vs target, streak vs target), habit goals (consecutive weeks), display on Today tab and `fit status`.
 
 ## Risks / Trade-offs
 
-**[Runna plan maintenance]** Plans change weekly. Manual CSV import means re-importing when Runna adjusts the plan.
-→ Mitigation: Simple import command, overwrite existing future dates. Investigate Runna API for automation later.
+**[Correlation validity with small samples]** n=20 minimum still produces unreliable coefficients.
+→ Mitigation: Display confidence level, p-value, sample size. Flag n<30 as "preliminary". Note confounders.
 
-**[.fit file download volume]** Downloading .fit files for all historical activities could be slow and hit API limits.
-→ Mitigation: Only download for runs (not Move IQ), only process new activities, cache .fit files locally.
+**[Runna plan maintenance]** Manual CSV re-import when plans change.
+→ Mitigation: `fit plan validate` before import, versioned storage. Investigate API later.
 
-**[fitparse dependency]** Adds a new C-extension dependency.
-→ Mitigation: fitparse is well-maintained, pure Python fallback available.
+**[.fit download volume]** Historical backfill could be slow.
+→ Mitigation: Opt-in, capped per sync, separate `fit splits --backfill` command.
 
-**[Correlation validity]** With small samples (10-20), correlations can be spurious.
-→ Mitigation: Display sample size and p-value alongside coefficient. Flag low-confidence correlations.
+**[fitparse dependency]** Adds ~5MB dependency.
+→ Mitigation: Well-maintained, fallback to skip split analysis if not installed.
