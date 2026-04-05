@@ -625,11 +625,9 @@ def _definitions(conn):
 
 def _race_prediction(conn):
     races = conn.execute("""
-        SELECT rc.date, rc.name, rc.distance, rc.distance_km, rc.result_time,
-               a.duration_min, a.distance_km as actual_km
+        SELECT rc.date, rc.name, rc.distance, rc.distance_km, rc.result_time
         FROM race_calendar rc
-        LEFT JOIN activities a ON rc.activity_id = a.id
-        WHERE rc.status = 'completed' AND rc.activity_id IS NOT NULL
+        WHERE rc.status = 'completed' AND rc.result_time IS NOT NULL
         ORDER BY rc.date DESC LIMIT 8
     """).fetchall()
     vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
@@ -640,8 +638,18 @@ def _race_prediction(conn):
     target_str = target["target_time"] if target and target["target_time"] else "3:59:59"
 
     from fit.analysis import predict_marathon_time
-    race_data = [{"distance_km": r["actual_km"] or r["distance_km"], "time_seconds": (r["duration_min"] or 0) * 60,
-                  "name": r["name"], "date": r["date"]} for r in races if (r["actual_km"] or r["distance_km"]) and r["duration_min"]]
+
+    def _parse_time_to_seconds(t):
+        parts = t.split(":")
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        elif len(parts) == 2:
+            return int(parts[0]) * 60 + int(parts[1])
+        return 0
+
+    race_data = [{"distance_km": r["distance_km"], "time_seconds": _parse_time_to_seconds(r["result_time"]),
+                  "name": r["name"], "date": r["date"]}
+                 for r in races if r["distance_km"] and r["result_time"]]
     preds = predict_marathon_time(race_data, vo2max=vo2["vo2max"] if vo2 else None)
 
     def _fmt_time(secs):
