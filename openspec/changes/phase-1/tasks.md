@@ -78,10 +78,10 @@
 
 ## 10. Goals & Training Phases
 
-- [ ] 10.1 Implement `fit/goals.py` — `get_active_phase()`, `complete_phase()` (auto-compute actuals), `revise_phase()`, `log_goal_event()`, `get_phase_compliance()` (multi-dimensional)
-- [ ] 10.2 Seed goals + training phases with comprehensive targets (denormalized z12/z45/km + JSON for full picture)
-- [ ] 10.3 Add phase transition calibration prompt
-- [ ] 10.4 Test: phase lifecycle, compliance, revision history
+- [x] 10.1 Implement `fit/goals.py` — `get_active_phase()`, `complete_phase()` (auto-compute actuals), `revise_phase()`, `log_goal_event()`, `get_phase_compliance()` (multi-dimensional)
+- [x] 10.2 Seed goals + training phases with comprehensive targets (denormalized z12/z45/km + JSON for full picture)
+- [x] 10.3 Add phase transition calibration prompt
+- [x] 10.4 Test: phase lifecycle, compliance, revision history
 
 ## 11. Enhanced Sync + Check-in
 
