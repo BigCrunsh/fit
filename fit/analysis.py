@@ -320,6 +320,7 @@ def predict_marathon_time(races: list[dict], vo2max: float | None = None) -> dic
             riegel_preds.append({
                 "from_race": race.get("name", f"{d1:.1f}km"),
                 "from_date": race.get("date"),
+                "distance_km": d1,
                 "predicted_seconds": round(t2),
                 "predicted_pace_sec_km": round(t2 / marathon_km),
             })

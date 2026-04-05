@@ -626,7 +626,7 @@ def _definitions(conn):
 def _race_prediction(conn):
     races = conn.execute("""
         SELECT date, name, distance_km, duration_min FROM activities
-        WHERE run_type = 'race' AND distance_km >= 5 ORDER BY date DESC LIMIT 5
+        WHERE run_type = 'race' AND distance_km >= 5 ORDER BY date DESC LIMIT 8
     """).fetchall()
     vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
     if not races and not vo2:
@@ -659,11 +659,12 @@ def _race_prediction(conn):
         t = r["predicted_seconds"]
         # Extract short race name
         name = r["from_race"] or ""
-        if "half marathon" in name.lower() or "hm" in name.lower():
+        dist = r.get("distance_km") or 0
+        if dist > 18:
             short = "Half Marathon"
-        elif "10k" in name.lower() or "10km" in name.lower():
+        elif dist > 8:
             short = "10K"
-        elif "5k" in name.lower():
+        elif dist > 3:
             short = "5K"
         else:
             short = name[:20]
