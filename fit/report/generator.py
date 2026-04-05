@@ -626,49 +626,80 @@ def _definitions(conn):
 def _race_prediction(conn):
     races = conn.execute("""
         SELECT date, name, distance_km, duration_min FROM activities
-        WHERE run_type = 'race' AND distance_km >= 5 ORDER BY date DESC LIMIT 3
+        WHERE run_type = 'race' AND distance_km >= 5 ORDER BY date DESC LIMIT 5
     """).fetchall()
     vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
     if not races and not vo2:
         return None
 
+    target = conn.execute("SELECT target_time FROM goals WHERE type = 'marathon' AND active = 1 LIMIT 1").fetchone()
+    target_str = target["target_time"] if target and target["target_time"] else "3:59:59"
+
     from fit.analysis import predict_marathon_time
     race_data = [{"distance_km": r["distance_km"], "time_seconds": (r["duration_min"] or 0) * 60,
-                  "name": r["name"][:30] if r["name"] else f"{r['distance_km']:.0f}km",
-                  "date": r["date"]} for r in races if r["distance_km"] and r["duration_min"]]
+                  "name": r["name"], "date": r["date"]} for r in races if r["distance_km"] and r["duration_min"]]
     preds = predict_marathon_time(race_data, vo2max=vo2["vo2max"] if vo2 else None)
 
+    def _fmt_time(secs):
+        return f"{secs // 3600}:{(secs % 3600) // 60:02d}"
+
+    def _fmt_pace(secs):
+        pace = secs / 42.195
+        return f"{int(pace // 60)}:{int(pace % 60):02d}/km"
+
     parts = []
+    parts.append(f"<div style='text-align:center;margin-bottom:10px'>"
+                 f"<div style='font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em'>Target</div>"
+                 f"<div style='font-size:28px;font-weight:700;color:var(--accent);font-family:var(--mono)'>sub-{target_str[:4]}</div>"
+                 f"</div>")
+
+    # Build prediction rows as a clean table
+    rows = []
     for r in preds.get("riegel", []):
         t = r["predicted_seconds"]
-        parts.append(f"<div style='margin:3px 0'><strong>Riegel ({r['from_race']}, {r.get('from_date', '')[:7]}):</strong> "
-                     f"{t // 3600}:{(t % 3600) // 60:02d} ({r['predicted_pace_sec_km'] // 60}:{r['predicted_pace_sec_km'] % 60:02d}/km)</div>")
+        # Extract short race name
+        name = r["from_race"] or ""
+        if "half marathon" in name.lower() or "hm" in name.lower():
+            short = "Half Marathon"
+        elif "10k" in name.lower() or "10km" in name.lower():
+            short = "10K"
+        elif "5k" in name.lower():
+            short = "5K"
+        else:
+            short = name[:20]
+        race_date = (r.get("from_date") or "")[:7]
+        delta = t - 14400  # seconds vs 4:00
+        delta_str = f"{'−' if delta < 0 else '+'}{abs(delta) // 60} min" if delta != 0 else "= target"
+        color = "var(--safe)" if delta < 0 else "var(--danger)"
+        rows.append(f"<tr><td style='color:var(--text-muted);font-size:10px'>{short}<br>{race_date}</td>"
+                    f"<td style='font-family:var(--mono);font-size:16px;font-weight:600'>{_fmt_time(t)}</td>"
+                    f"<td style='font-size:10px;color:var(--text-dim)'>{_fmt_pace(t)}</td>"
+                    f"<td style='font-size:10px;color:{color};font-weight:600'>{delta_str}</td></tr>")
+
     if preds.get("vdot"):
         t = preds["vdot"]["predicted_seconds"]
-        parts.append(f"<div style='margin:3px 0'><strong>VDOT (VO2max {preds['vdot']['vo2max']}):</strong> {t // 3600}:{(t % 3600) // 60:02d}</div>")
+        delta = t - 14400
+        delta_str = f"{'−' if delta < 0 else '+'}{abs(delta) // 60} min" if delta != 0 else "= target"
+        color = "var(--safe)" if delta < 0 else "var(--danger)"
+        rows.append(f"<tr><td style='color:var(--text-muted);font-size:10px'>VO2max<br>{preds['vdot']['vo2max']}</td>"
+                    f"<td style='font-family:var(--mono);font-size:16px;font-weight:600'>{_fmt_time(t)}</td>"
+                    f"<td style='font-size:10px;color:var(--text-dim)'>{_fmt_pace(t)}</td>"
+                    f"<td style='font-size:10px;color:{color};font-weight:600'>{delta_str}</td></tr>")
 
-    # VDOT trend — sample monthly (not every data point) to avoid clutter
-    vo2_monthly = conn.execute("""
-        SELECT substr(date, 1, 7) as month, ROUND(AVG(vo2max), 1) as avg_vo2
-        FROM activities WHERE vo2max IS NOT NULL
-        GROUP BY month ORDER BY month
-    """).fetchall()
-    if len(vo2_monthly) >= 2:
-        parts.append("<div style='margin-top:8px;font-size:10px;color:var(--text-muted)'><strong>Monthly VO2max → predicted marathon:</strong> ")
-        trend_pts = []
-        for v in vo2_monthly[-8:]:
-            p = predict_marathon_time([], vo2max=v["avg_vo2"])
-            if p.get("vdot"):
-                t = p["vdot"]["predicted_seconds"]
-                trend_pts.append(f"{v['month']}: {t // 3600}:{(t % 3600) // 60:02d}")
-        parts.append(" → ".join(trend_pts))
-        parts.append("</div>")
+    if rows:
+        parts.append("<table style='width:100%;border-collapse:collapse;margin:8px 0'>"
+                     "<thead><tr style='border-bottom:1px solid rgba(255,255,255,0.06)'>"
+                     "<th style='text-align:left;font-size:9px;color:var(--text-dim);padding:4px'>Source</th>"
+                     "<th style='text-align:left;font-size:9px;color:var(--text-dim);padding:4px'>Time</th>"
+                     "<th style='text-align:left;font-size:9px;color:var(--text-dim);padding:4px'>Pace</th>"
+                     "<th style='text-align:left;font-size:9px;color:var(--text-dim);padding:4px'>vs Target</th>"
+                     "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
 
-    if parts:
-        parts.append("<div style='font-size:10px;color:var(--text-muted);margin-top:6px'>"
-                     "Riegel: from race times. VDOT: from Daniels' tables. "
-                     "Post-detraining, add 5-10 min for a conservative target.</div>")
-    return "\n".join(parts) if parts else None
+    parts.append("<div style='font-size:10px;color:var(--text-dim);margin-top:6px'>"
+                 "Riegel extrapolates from race times. VDOT from Daniels' tables. "
+                 "After a training gap, actual fitness is likely 5-10 min slower than peak predictions.</div>")
+
+    return "\n".join(parts)
 
 
 # ── Coaching ──
