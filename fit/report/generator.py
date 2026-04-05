@@ -516,27 +516,31 @@ def _all_charts(conn):
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
-    # RPE predicted vs actual (Fitness tab — W4)
-    rpe_data = conn.execute("""
+    # RPE chart (Fitness tab) — show actual RPE even without predicted
+    rpe_actual = conn.execute("""
         SELECT a.date, a.rpe as actual_rpe, a.hr_zone,
                CASE a.hr_zone
                    WHEN 'Z1' THEN 2 WHEN 'Z2' THEN 3 WHEN 'Z3' THEN 5
                    WHEN 'Z4' THEN 7 WHEN 'Z5' THEN 9 ELSE NULL
                END as predicted_rpe
         FROM activities a
-        WHERE a.type='running' AND a.rpe IS NOT NULL AND a.hr_zone IS NOT NULL
+        WHERE a.type='running' AND a.rpe IS NOT NULL
         ORDER BY a.date
     """).fetchall()
-    if len(rpe_data) >= 3:
+    if len(rpe_actual) >= 1:
+        datasets = [
+            {"label": "Actual RPE", "data": [r["actual_rpe"] for r in rpe_actual],
+             "borderColor": Z45, "borderWidth": 2, "pointRadius": 4, "fill": False},
+        ]
+        # Add predicted line only if HR zone data available
+        has_predicted = any(r["predicted_rpe"] is not None for r in rpe_actual)
+        if has_predicted:
+            datasets.insert(0, {"label": "Predicted (from HR)", "data": [r["predicted_rpe"] for r in rpe_actual],
+                                "borderColor": Z12, "borderWidth": 1.5, "borderDash": [4, 2], "pointRadius": 2, "fill": False})
         charts.append({"id": "chart-rpe", "config": json.dumps({
             "type": "line",
-            "data": {"labels": [r["date"] for r in rpe_data],
-                     "datasets": [
-                         {"label": "Predicted (from HR)", "data": [r["predicted_rpe"] for r in rpe_data],
-                          "borderColor": Z12, "borderWidth": 1.5, "borderDash": [4, 2], "pointRadius": 2, "fill": False},
-                         {"label": "Actual RPE", "data": [r["actual_rpe"] for r in rpe_data],
-                          "borderColor": Z45, "borderWidth": 2, "pointRadius": 4, "fill": False},
-                     ]},
+            "data": {"labels": [r["date"] for r in rpe_actual],
+                     "datasets": datasets},
             "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
                         "scales": {"y": {"min": 1, "max": 10, "grid": {"color": "rgba(255,255,255,0.03)"},
                                          "title": {"display": True, "text": "RPE (gap = fatigue)"}},
