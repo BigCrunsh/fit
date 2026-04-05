@@ -39,11 +39,39 @@ Goal-agnostic personal fitness data platform. Ingests from Garmin, Fitdays, Appl
 | Update physiological baseline | `fit calibrate max_hr` or `lthr` | After a race or time trial |
 | Fix derived metrics after changes | `fit recompute` | Re-enriches all activities, rebuilds weekly aggregations |
 
+### First-time setup (init)
+
+After installation and config, run the full pipeline once to populate everything:
+
+```bash
+fit sync --full       # pull ALL Garmin history (may take a few minutes)
+fit recompute         # enrich all activities with zones, efficiency, run types + rebuild weekly_agg
+fit calibrate max_hr  # enter your known max HR (from a race or lab test)
+fit calibrate lthr    # optional: enter LTHR if you've done a 30-min time trial
+fit report --daily    # generate first dashboard + daily snapshot
+open ~/.fit/reports/dashboard.html
+```
+
+Then in Claude Chat: "Use get_coaching_context and give me a full coaching analysis." Ask Claude to save the insights. Regenerate the dashboard to see the Coach tab: `fit report`.
+
 ### Daily workflow
 
-1. **`fit sync`** — run daily (or cron it). Pulls health metrics, activities, SpO2, enriches with weather, computes zones/efficiency/run types/ACWR, updates weekly aggregations.
-2. **`fit checkin`** — run after training (or in the morning). Captures hydration, alcohol, legs, eating, energy, sleep quality, RPE, weight. RPE auto-writes to today's activity.
-3. **`fit report`** — generates dashboard. The **Today tab** gives you the headline ("Ready for training" or "Recovery day recommended") plus status cards, ACWR safety, phase compliance, and a journey timeline.
+```
+Morning:   fit sync                    ← 30 seconds
+           fit checkin                 ← 1 minute (after training or on waking)
+           fit report                  ← generates dashboard
+           open dashboard              ← check Today tab headline
+
+Weekly:    Ask Claude Chat for coaching ← deep analysis + save to Coach tab
+           fit report                  ← regenerate with coaching insights
+
+After races: fit calibrate lthr        ← LTHR auto-extracted, confirm or manual TT
+Monthly:   fit calibrate max_hr        ← if new max observed in race
+```
+
+1. **`fit sync`** — run daily (or cron it). Pulls health metrics, activities, SpO2, enriches with weather, computes zones/efficiency/run types/ACWR, updates weekly aggregations. Incremental by default (last 7 days). Use `--days 30` to catch up after a break.
+2. **`fit checkin`** — run after training (or in the morning). Captures hydration, alcohol, legs, eating, energy, sleep quality, RPE, weight. RPE auto-writes to today's activity. Includes an RPE scale guide.
+3. **`fit report`** — generates dashboard. The **Today tab** gives you the headline ("Ready for training" or "Recovery day recommended") plus status cards, ACWR safety, phase compliance, and a journey timeline. Use `--daily` for date-stamped snapshots.
 4. **Claude Chat** — for questions the dashboard can't answer. "Why was my efficiency worse this week?", "Compare my alcohol vs next-day HRV", "What should my long run target be?" Claude has full SQL access via MCP.
 5. **`/fit-coach`** (in Claude Code) or ask Claude Chat — generates coaching insights that persist to the dashboard Coach tab.
 
