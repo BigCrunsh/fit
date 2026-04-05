@@ -279,12 +279,7 @@ def _upsert_enriched_activity(conn: sqlite3.Connection, a: dict) -> None:
             calories = excluded.calories, vo2max = excluded.vo2max,
             aerobic_te = excluded.aerobic_te, training_load = excluded.training_load,
             avg_stride_m = excluded.avg_stride_m, avg_speed = excluded.avg_speed,
-            start_lat = excluded.start_lat, start_lon = excluded.start_lon,
-            hr_zone_maxhr = excluded.hr_zone_maxhr, hr_zone_lthr = excluded.hr_zone_lthr,
-            hr_zone = excluded.hr_zone, speed_per_bpm = excluded.speed_per_bpm,
-            speed_per_bpm_z2 = excluded.speed_per_bpm_z2,
-            effort_class = excluded.effort_class, run_type = excluded.run_type,
-            max_hr_used = excluded.max_hr_used, lthr_used = excluded.lthr_used
+            start_lat = excluded.start_lat, start_lon = excluded.start_lon
     """, a)
 
 
