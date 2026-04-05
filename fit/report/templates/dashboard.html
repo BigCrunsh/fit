@@ -246,12 +246,12 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div class="sec"><h2>Cadence</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Running cadence (steps per minute). Below 165 spm often indicates overstriding. Target: 170-180 for most runners.</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-cadence" height="130"></canvas></div>
 
-  {% if rpe_count >= 1 %}
+  {% if rpe_garmin_count >= 3 or rpe_checkin_count >= 1 %}
   <div class="sec"><h2>RPE: Predicted vs Actual</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Predicted RPE from HR zone (Z2→3, Z4→7) vs actual RPE from check-in. A widening gap where actual exceeds predicted = accumulating fatigue.</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-rpe" height="140"></canvas></div>
   {% else %}
   <div class="sec"><h2>RPE: Predicted vs Actual</h2><div class="line"></div></div>
-  <div style="color:var(--text-muted);font-size:11px;padding:10px 0">RPE data: {{ rpe_count }}/{{ run_count }} runs. Run <code>fit checkin</code> with RPE after each workout to build this chart.</div>
+  <div style="color:var(--text-muted);font-size:11px;padding:10px 0">Garmin effort: {{ rpe_garmin_count }} runs. Your RPE: {{ rpe_checkin_count }}/{{ run_count }} runs. Run <code>fit checkin</code> with RPE to add your subjective line.</div>
   {% endif %}
 
   {% if race_prediction %}
