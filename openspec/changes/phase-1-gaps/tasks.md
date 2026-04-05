@@ -5,7 +5,7 @@
 - [x] 1.3 Add user-friendly auth error in `garmin.py` — catch garth auth failures, show exact re-auth command (merges phase-1-gaps 1.1 + phase-2-enrich 2.3)
 - [x] 1.4 Design MCP response schema for Phase 2 additions upfront — correlations, plan adherence, splits in coaching context (phase-2-enrich 1.5)
 - [x] 1.5 Refactor `get_coaching_context()` into composable sections: `_ctx_health()`, `_ctx_training()`, `_ctx_correlations()`, `_ctx_plan()`, `_ctx_splits()`, `_ctx_goals()` (phase-2-enrich 1.3, enables dashboard fixes)
-- [ ] 1.6 Test: migration runner transaction safety verified, retry works on mock 429 (phase-2-enrich 1.6)
+- [x] 1.6 Test: migration runner transaction safety verified, retry works on mock 429 (phase-2-enrich 1.6)
 
 ## 2. Sync & Data Pipeline
 
@@ -39,17 +39,17 @@
 - [x] 5.4 Extend event annotations to all time-series charts — weight, cadence, volume, not just efficiency + VO2 (phase-1-gaps 4.3)
 - [x] 5.5 Add calibration change and goal milestone events to `_get_event_annotations()` (phase-1-gaps 4.4)
 - [x] 5.6 Zone distribution chart: overlay active phase z12_pct_target and z45_pct_target as reference lines (phase-1-gaps 4.6)
-- [ ] 5.7 Journey timeline: add current vs target metrics below each phase segment (phase-1-gaps 4.7)
-- [ ] 5.8 Sleep chart: add average annotation lines for total sleep and deep sleep (phase-1-gaps 4.8)
-- [ ] 5.9 Weight chart: add race target reference line from goals table and event annotations (phase-1-gaps 4.9)
+- [x] 5.7 Journey timeline: add current vs target metrics below each phase segment (phase-1-gaps 4.7)
+- [x] 5.8 Sleep chart: add average annotation lines for total sleep and deep sleep (phase-1-gaps 4.8)
+- [x] 5.9 Weight chart: add race target reference line from goals table and event annotations (phase-1-gaps 4.9)
 
 ## 6. Dashboard — Status Cards & Headlines
 
-- [ ] 6.1 Status cards: add VO2max peak reference + 4-week delta, weight race target + 4-week delta, sleep card REM hours (phase-1-gaps 4.5)
+- [x] 6.1 Status cards: add VO2max peak reference + 4-week delta, weight race target + 4-week delta, sleep card REM hours (phase-1-gaps 4.5)
 - [x] 6.2 Headline engine: check sleep_quality='Poor' as recovery trigger alongside readiness < 50 (phase-1-gaps 4.10)
 - [x] 6.3 Week-over-week card: detect incomplete current week (today != Sunday), label "Week in progress" (phase-1-gaps 4.11)
-- [ ] 6.4 Race prediction: add confidence explanation and note about post-gap fitness adjustment (phase-1-gaps 4.12)
-- [ ] 6.5 Metric definitions: make remaining generic definitions contextual — sleep, stress, cadence reference actual values (phase-1-gaps 4.13)
+- [x] 6.4 Race prediction: add confidence explanation and note about post-gap fitness adjustment (phase-1-gaps 4.12)
+- [x] 6.5 Metric definitions: make remaining generic definitions contextual — sleep, stress, cadence reference actual values (phase-1-gaps 4.13)
 
 ## 7. Correlation Engine
 

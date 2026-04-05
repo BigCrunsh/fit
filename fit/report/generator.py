@@ -112,18 +112,39 @@ def _status_cards(conn):
                   "color": SAFE if rhr and rhr <= 58 else CAUTION,
                   "sub": delta(rhr, h4["resting_heart_rate"] if h4 else None, invert=True) + " 4wk" if h4 else ""})
 
+    sleep_sub = []
+    if h["deep_sleep_hours"]:
+        sleep_sub.append(f"D{h['deep_sleep_hours']:.1f}")
+    try:
+        if h["rem_sleep_hours"]:
+            sleep_sub.append(f"R{h['rem_sleep_hours']:.1f}")
+    except (IndexError, KeyError):
+        pass
     cards.append({"label": "Sleep", "value": f"{h['sleep_duration_hours']:.1f}" if h["sleep_duration_hours"] else "—",
-                  "unit": "h", "color": SAFE, "sub": f"D{h['deep_sleep_hours']:.1f}" if h["deep_sleep_hours"] else ""})
+                  "unit": "h", "color": SAFE, "sub": " ".join(sleep_sub)})
 
     hrv = h["hrv_last_night"]
     cards.append({"label": "HRV", "value": hrv or "—", "unit": "ms", "color": ACCENT,
                   "sub": delta(hrv, h4["hrv_last_night"] if h4 else None) + " 4wk" if h4 else ""})
 
     vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
-    cards.append({"label": "VO2max", "value": vo2["vo2max"] if vo2 else "—", "unit": "", "color": ACCENT, "sub": ""})
+    vo2_peak = conn.execute("SELECT MAX(vo2max) as peak FROM activities WHERE vo2max IS NOT NULL").fetchone()
+    vo2_4wk = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL AND date <= date('now', '-28 days') ORDER BY date DESC LIMIT 1").fetchone()
+    vo2_sub = []
+    if vo2_peak and vo2_peak["peak"]:
+        vo2_sub.append(f"peak {vo2_peak['peak']}")
+    if vo2 and vo2_4wk:
+        vo2_sub.append(delta(vo2["vo2max"], vo2_4wk["vo2max"]) + " 4wk")
+    cards.append({"label": "VO2max", "value": vo2["vo2max"] if vo2 else "—", "unit": "", "color": ACCENT,
+                  "sub": " · ".join(vo2_sub)})
 
     w = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
-    cards.append({"label": "Weight", "value": f"{w['weight_kg']:.1f}" if w else "—", "unit": "kg", "color": CAUTION, "sub": ""})
+    w_target = conn.execute("SELECT target_value FROM goals WHERE type = 'metric' AND name LIKE '%eight%' AND active = 1 LIMIT 1").fetchone()
+    w_sub = []
+    if w_target and w_target["target_value"]:
+        w_sub.append(f"→ {w_target['target_value']}kg")
+    cards.append({"label": "Weight", "value": f"{w['weight_kg']:.1f}" if w else "—", "unit": "kg", "color": CAUTION,
+                  "sub": " · ".join(w_sub)})
 
     acwr = conn.execute("SELECT acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
     if acwr and acwr["acwr"]:
@@ -183,10 +204,19 @@ def _journey(conn):
     segments = []
     position = ""
     for p in phases:
-        seg = {"label": p["name"][:12], "width": 1, "color": colors.get(p["status"], colors["planned"])}
-        segments.append(seg)
-        if p["status"] == "active":
+        # Build metric subtitle for each phase
+        metric = ""
+        if p["status"] == "completed" and p["actuals"]:
+            import json as _json
+            actuals = _json.loads(p["actuals"]) if isinstance(p["actuals"], str) else (p["actuals"] or {})
+            metric = f" ({actuals.get('weekly_km_avg', '?')}km/wk)" if actuals else ""
+        elif p["status"] == "active":
+            metric = f" ({p['weekly_km_min'] or '?'}-{p['weekly_km_max'] or '?'}km)"
             position = f"You are here — {p['phase']}: {p['name']}"
+        elif p["status"] == "planned":
+            metric = f" ({p['weekly_km_min'] or '?'}-{p['weekly_km_max'] or '?'}km)"
+        seg = {"label": f"{p['name'][:10]}{metric}", "width": 1, "color": colors.get(p["status"], colors["planned"])}
+        segments.append(seg)
 
     return {"goal_name": f"{goal['name']} → {goal['target_date']}", "segments": segments, "position": position or "No active phase"}
 
@@ -302,7 +332,15 @@ def _all_charts(conn):
                          {"label": "REM", "data": [s["rem_sleep_hours"] for s in sleep], "backgroundColor": "#6366f1", "stack": "s"},
                          {"label": "Light", "data": [s["light_sleep_hours"] for s in sleep], "backgroundColor": "#1e293b", "stack": "s"},
                      ]},
-            "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
+            "options": {"responsive": True,
+                        "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}},
+                                    "annotation": {"annotations": {
+                                        "avg_total": {"type": "line",
+                                                      "yMin": sum((s["deep_sleep_hours"] or 0) + (s["rem_sleep_hours"] or 0) + (s["light_sleep_hours"] or 0) for s in sleep) / max(len(sleep), 1),
+                                                      "yMax": sum((s["deep_sleep_hours"] or 0) + (s["rem_sleep_hours"] or 0) + (s["light_sleep_hours"] or 0) for s in sleep) / max(len(sleep), 1),
+                                                      "borderColor": SAFE + "40", "borderDash": [4, 3],
+                                                      "label": {"content": "avg", "display": True, "position": "end", "font": {"size": 8}}},
+                                    }}},
                         "scales": {"x": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}},
                                    "y": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
@@ -328,15 +366,23 @@ def _all_charts(conn):
                                    "x": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
-    # Weight (Body tab)
+    # Weight (Body tab) with race target
     weight = conn.execute("SELECT date, weight_kg FROM body_comp ORDER BY date").fetchall()
     if weight:
+        weight_target = conn.execute("SELECT target_value FROM goals WHERE type = 'metric' AND name LIKE '%eight%' AND active = 1 LIMIT 1").fetchone()
+        weight_annots = dict(event_annots)
+        if weight_target and weight_target["target_value"]:
+            weight_annots["target"] = {
+                "type": "line", "yMin": weight_target["target_value"], "yMax": weight_target["target_value"],
+                "borderColor": SAFE + "60", "borderDash": [6, 3],
+                "label": {"content": f"Target {weight_target['target_value']}kg", "display": True, "position": "end", "font": {"size": 8}},
+            }
         charts.append({"id": "chart-weight", "config": json.dumps({
             "type": "line",
             "data": {"labels": [w["date"] for w in weight],
                      "datasets": [{"label": "Weight", "data": [w["weight_kg"] for w in weight],
                                    "borderColor": Z3, "backgroundColor": Z3 + "15", "fill": True, "borderWidth": 2, "pointRadius": 3}]},
-            "options": {"responsive": True, "plugins": {"legend": {"display": False}, "annotation": {"annotations": event_annots}},
+            "options": {"responsive": True, "plugins": {"legend": {"display": False}, "annotation": {"annotations": weight_annots}},
                         "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
@@ -504,17 +550,27 @@ def _definitions(conn):
     acwr_val = f"{acwr_row['acwr']:.2f}" if acwr_row else "?"
     weight_row = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
     weight_val = f"{weight_row['weight_kg']:.1f}" if weight_row else "?"
+    # Get actual values for contextual definitions
+    avg_sleep = conn.execute("SELECT ROUND(AVG(sleep_duration_hours), 1) as v FROM daily_health WHERE date >= date('now', '-14 days')").fetchone()
+    avg_sleep_val = avg_sleep["v"] if avg_sleep and avg_sleep["v"] else "?"
+    avg_deep = conn.execute("SELECT ROUND(AVG(deep_sleep_hours), 2) as v FROM daily_health WHERE date >= date('now', '-14 days')").fetchone()
+    avg_deep_val = avg_deep["v"] if avg_deep and avg_deep["v"] else "?"
+    avg_cadence = conn.execute("SELECT ROUND(AVG(avg_cadence), 0) as v FROM activities WHERE type='running' AND avg_cadence IS NOT NULL AND date >= date('now', '-30 days')").fetchone()
+    avg_cadence_val = avg_cadence["v"] if avg_cadence and avg_cadence["v"] else "?"
+    avg_stress = conn.execute("SELECT ROUND(AVG(avg_stress_level), 0) as v FROM daily_health WHERE date >= date('now', '-7 days')").fetchone()
+    avg_stress_val = avg_stress["v"] if avg_stress and avg_stress["v"] else "?"
+
     return {
         "speed_per_bpm": "Speed per heartbeat: (meters/min) ÷ avg HR. Higher = more efficient. The Z2-filtered line (bold) shows pure aerobic fitness at controlled effort — the most honest fitness signal.",
         "vo2max": f"Maximum oxygen uptake (ml/kg/min). Current: {vo2_val}. For sub-4:00 marathon at ~75kg, you need ≥50. Declines ~3-5% per month of inactivity, recovers ~1/month with consistent training.",
         "training_load": "Garmin's EPOC-based measure of physiological stress per session. <strong style='color:var(--z12)'>< 150 = easy</strong>, <strong style='color:var(--z3)'>150-250 = moderate</strong>, <strong style='color:var(--z45)'>250-350 = hard</strong>, <strong style='color:var(--danger)'>> 350 = overload risk</strong>. A typical well-trained week sums to 400-800 across all sessions.",
         "readiness": "Garmin's composite 0-100 score combining sleep quality, recovery time, HRV status, stress, and recent training load. <strong style='color:var(--safe)'>≥75 = ready for quality sessions</strong>, <strong style='color:var(--caution)'>50-74 = easy day</strong>, <strong style='color:var(--danger)'>< 50 = rest</strong>.",
-        "sleep": "Deep sleep: physical recovery + muscle repair. REM: cognitive recovery + motor consolidation. For runners: ≥1h deep + ≥1.5h REM is good. Total ≥7.5h supports adaptation. Post-hard-effort, deep sleep often collapses — a key recovery signal.",
-        "stress_battery": "Body Battery: Garmin's energy reserve (0-100), charged by rest, drained by activity and stress. Stress: 0-100, from HRV analysis. When stress rises and battery drops simultaneously, your body is under load.",
+        "sleep": f"Your 14d avg: {avg_sleep_val}h total, {avg_deep_val}h deep. For runners: ≥1h deep + ≥1.5h REM is good. Total ≥7.5h supports adaptation. Post-hard-effort, deep sleep often collapses — a key recovery signal.",
+        "stress_battery": f"Your 7d avg stress: {avg_stress_val}. Body Battery: energy reserve (0-100), charged by rest, drained by activity. Stress: 0-100 from HRV. When stress rises and battery drops simultaneously, your body is under load.",
         "weight": f"Current: {weight_val} kg. Each kg lost saves ~2-3 sec/km at the same effort. Over 42.2 km, 3 kg = ~7-10 min faster. Target weight through training volume (not dieting).",
         "zones": "HR zones by training TIME (minutes per week), not run count. Compared to your active training phase targets. Blue = Z1+Z2 (easy), amber = Z3 (moderate), orange = Z4+Z5 (hard). Phase 1 targets ~90% easy.",
         "volume": "Total running km per week. The darker segment shows the longest single run. For marathon training: long run should build gradually to 30-32 km, weekly volume to 50-60 km at peak.",
-        "cadence": "Running cadence (steps per minute). Below 165 often indicates overstriding, which increases braking forces and injury risk. Target: 170-180 for most recreational runners. Tends to improve with fatigue resilience and form work.",
+        "cadence": f"Your 30d avg cadence: {avg_cadence_val} spm. Below 165 often indicates overstriding. Target: 170-180. Tends to improve with fatigue resilience and form work.",
         "rpe": "Predicted RPE from HR zone (Z2→3, Z4→7) vs actual RPE from check-in. A widening gap where actual exceeds predicted signals accumulating fatigue — your body is working harder than your heart rate suggests.",
         "race_prediction": "Riegel formula: extrapolates from shorter race times using T2 = T1 × (D2/D1)^1.06. VDOT: from Daniels' tables using VO2max. Both are estimates — actual performance depends on training specificity, fueling, and conditions.",
         "acwr": f"Acute:Chronic Workload Ratio. Current: {acwr_val}. This week's load ÷ avg of previous 4 weeks. <strong style='color:var(--safe)'>0.8-1.3 = safe</strong>, <strong style='color:var(--caution)'>1.3-1.5 = caution</strong>, <strong style='color:var(--danger)'>> 1.5 = injury risk (spike)</strong>, < 0.6 = detraining. Critical for comeback training.",
@@ -541,6 +597,25 @@ def _race_prediction(conn):
     if preds.get("vdot"):
         t = preds["vdot"]["predicted_seconds"]
         parts.append(f"<div><strong>VDOT (VO2max {preds['vdot']['vo2max']}):</strong> {t // 3600}:{(t % 3600) // 60:02d}</div>")
+    # VDOT trend over time (from VO2max history)
+    vo2_history = conn.execute("SELECT date, vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date").fetchall()
+    if len(vo2_history) >= 2:
+        parts.append("<div style='margin-top:8px;font-size:10px;color:var(--text-muted)'><strong>Prediction trend (from VO2max):</strong> ")
+        trend_pts = []
+        for v in vo2_history[-6:]:  # last 6 data points
+            from fit.analysis import predict_marathon_time as _pmt
+            p = _pmt([], vo2max=v["vo2max"])
+            if p.get("vdot"):
+                t = p["vdot"]["predicted_seconds"]
+                trend_pts.append(f"{v['date'][:7]}: {t // 3600}:{(t % 3600) // 60:02d}")
+        parts.append(" → ".join(trend_pts))
+        parts.append("</div>")
+
+    if parts:
+        parts.append("<div style='font-size:10px;color:var(--text-muted);margin-top:6px'>"
+                     "Riegel extrapolates from race times (more reliable with recent races). "
+                     "VDOT uses Daniels' tables from VO2max. Post-detraining, actual fitness is likely "
+                     "below both estimates — add 5-10 min for a conservative target.</div>")
     return "\n".join(parts) if parts else None
 
 
