@@ -9,11 +9,11 @@
 
 ## 2. Sync & Data Pipeline
 
-- [ ] 2.1 Expand activity type fetch list — add "strength_training", "elliptical", "yoga" or use a catch-all approach (phase-1-gaps 1.2)
-- [ ] 2.2 Extract actual start hour from activity `startTimeLocal` in `garmin.py` and pass to hourly weather instead of hardcoded hour=8 (phase-1-gaps 1.3)
-- [ ] 2.3 LTHR auto-extraction: when a race candidate is detected in sync, prompt user or auto-save with method='race_extract', confidence='medium' (phase-1-gaps 1.4)
-- [ ] 2.4 Add non-running guard to `compute_speed_per_bpm` — return None if activity type is not running (phase-1-gaps 1.5)
-- [ ] 2.5 ACWR: require minimum 3 prior weeks (not 2) for computation, return None otherwise (phase-1-gaps 1.6)
+- [x] 2.1 Expand activity type fetch list — add "strength_training", "elliptical", "yoga" or use a catch-all approach (phase-1-gaps 1.2)
+- [x] 2.2 Extract actual start hour from activity `startTimeLocal` in `garmin.py` and pass to hourly weather instead of hardcoded hour=8 (phase-1-gaps 1.3)
+- [x] 2.3 LTHR auto-extraction: when a race candidate is detected in sync, prompt user or auto-save with method='race_extract', confidence='medium' (phase-1-gaps 1.4)
+- [x] 2.4 Add non-running guard to `compute_speed_per_bpm` — return None if activity type is not running (phase-1-gaps 1.5)
+- [x] 2.5 ACWR: require minimum 3 prior weeks (not 2) for computation, return None otherwise (phase-1-gaps 1.6)
 - [ ] 2.6 Replace print statements with Rich Progress bars — per-step tasks with item counts, suppress console logging during progress (phase-2-enrich 2.1)
 - [ ] 2.7 Add ETA display for `fit sync --full` based on date range and API response rate (phase-2-enrich 2.2)
 - [ ] 2.8 Test: progress bars render cleanly, no log interleave (phase-2-enrich 2.4)

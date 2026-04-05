@@ -656,8 +656,16 @@ class TestACWR:
         result = _compute_acwr(db, "2026-W14", 200)
         assert result is None
 
-    def test_acwr_two_weeks_history(self, db):
-        """2 previous weeks is the minimum for ACWR."""
+    def test_acwr_two_weeks_insufficient(self, db):
+        """2 previous weeks is NOT enough — minimum is 3."""
+        self._insert_weekly_agg(db, "2026-W12", 200)
+        self._insert_weekly_agg(db, "2026-W13", 200)
+        result = _compute_acwr(db, "2026-W14", 200)
+        assert result is None
+
+    def test_acwr_three_weeks_minimum(self, db):
+        """3 previous weeks is the minimum for ACWR."""
+        self._insert_weekly_agg(db, "2026-W11", 200)
         self._insert_weekly_agg(db, "2026-W12", 200)
         self._insert_weekly_agg(db, "2026-W13", 200)
         result = _compute_acwr(db, "2026-W14", 200)

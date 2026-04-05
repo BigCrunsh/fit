@@ -155,12 +155,17 @@ def enrich_activity(activity: dict, config: dict, lthr: int | None = None,
     activity.update(zones)
 
     z2_range = config.get("analysis", {}).get("speed_per_bpm_hr_range", [115, 134])
-    activity["speed_per_bpm"] = compute_speed_per_bpm(
-        activity.get("distance_km"), activity.get("duration_min"), activity.get("avg_hr")
-    )
-    activity["speed_per_bpm_z2"] = compute_speed_per_bpm_z2(
-        activity.get("distance_km"), activity.get("duration_min"), activity.get("avg_hr"), z2_range
-    )
+    # Speed per BPM only for running activities
+    if activity.get("type") == "running":
+        activity["speed_per_bpm"] = compute_speed_per_bpm(
+            activity.get("distance_km"), activity.get("duration_min"), activity.get("avg_hr")
+        )
+        activity["speed_per_bpm_z2"] = compute_speed_per_bpm_z2(
+            activity.get("distance_km"), activity.get("duration_min"), activity.get("avg_hr"), z2_range
+        )
+    else:
+        activity["speed_per_bpm"] = None
+        activity["speed_per_bpm_z2"] = None
     activity["run_type"] = classify_run_type(activity, config, recent_long_run_avg)
     activity["max_hr_used"] = config["profile"]["max_hr"]
     activity["lthr_used"] = lthr
@@ -353,7 +358,7 @@ def _compute_acwr(conn: sqlite3.Connection, week_str: str, current_load: float) 
         if row and row["total_load"] is not None:
             prev_loads.append(row["total_load"])
 
-    if len(prev_loads) < 2:
+    if len(prev_loads) < 3:
         return None
 
     chronic = sum(prev_loads) / len(prev_loads)

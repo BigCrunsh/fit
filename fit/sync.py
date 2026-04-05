@@ -52,11 +52,18 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
             _upsert_enriched_activity(conn, enriched)
             counts["enriched"] += 1
 
-            # Auto-extract LTHR from races
+            # Auto-extract and save LTHR from races >= 10km
             if enriched.get("run_type") == "race":
                 candidate_lthr = extract_lthr_from_race(enriched)
                 if candidate_lthr:
-                    logger.info("LTHR candidate from race %s: %d bpm", enriched.get("name"), candidate_lthr)
+                    from fit.calibration import add_calibration
+                    add_calibration(
+                        conn, "lthr", candidate_lthr, "race_extract", "medium",
+                        date.fromisoformat(enriched["date"]),
+                        source_activity_id=enriched["id"],
+                        notes=f"Auto-extracted from {enriched.get('name')} ({enriched.get('distance_km', '?')}km)",
+                    )
+                    logger.info("LTHR auto-saved from race %s: %d bpm", enriched.get("name"), candidate_lthr)
     counts["activities"] = len(activities)
 
     # 4. SpO2
@@ -92,8 +99,7 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
                     continue
                 try:
                     d = date.fromisoformat(a["date"])
-                    # Estimate start hour from pace/distance or default to 8am
-                    hour = 8
+                    hour = a.get("start_hour") or 8
                     hw = weather.fetch_hourly_weather(d, hour, float(a["start_lat"]), float(a["start_lon"]))
                     if hw:
                         conn.execute(

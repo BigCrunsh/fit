@@ -209,7 +209,10 @@ def fetch_activities(api: Garmin, start: date, end: date) -> list[dict]:
     s, e = start.isoformat(), end.isoformat()
     all_activities = []
 
-    for activity_type in ("running", "cycling", "swimming", "hiking", "walking"):
+    # Fetch all common activity types. Garmin API returns 400 for unsupported types,
+    # which is caught by the try/except below.
+    for activity_type in ("running", "cycling", "swimming", "hiking", "walking",
+                          "fitness_equipment", "training", "other"):
         try:
             acts = api.get_activities_by_date(s, e, activity_type)
             all_activities.extend(acts)
@@ -239,6 +242,7 @@ def fetch_activities(api: Garmin, start: date, end: date) -> list[dict]:
         results.append({
             "id": aid,
             "date": (a.get("startTimeLocal") or "")[:10],
+            "start_hour": int((a.get("startTimeLocal") or "00:00:00")[11:13]) if len(a.get("startTimeLocal") or "") > 13 else None,
             "type": atype or "other",
             "subtype": subtype,
             "name": a.get("activityName"),
