@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 CHARTJS_PATH = Path(__file__).parent / "chartjs.min.js"
 ANNOTATION_PATH = Path(__file__).parent / "chartjs-annotation.min.js"
+DATE_ADAPTER_PATH = Path(__file__).parent / "chartjs-date-adapter.min.js"
 
 SAFE = "#22c55e"
 CAUTION = "#eab308"
@@ -31,6 +32,7 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
 
     chartjs_code = CHARTJS_PATH.read_text() if CHARTJS_PATH.exists() else ""
     annotation_code = ANNOTATION_PATH.read_text() if ANNOTATION_PATH.exists() else ""
+    date_adapter_code = DATE_ADAPTER_PATH.read_text() if DATE_ADAPTER_PATH.exists() else ""
 
     context = {
         "title": "fit — Dashboard",
@@ -38,6 +40,7 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "chartjs_code": chartjs_code,
         "annotation_code": annotation_code,
+        "date_adapter_code": date_adapter_code,
         "tabs": [
             {"id": "today", "label": "Today"},
             {"id": "training", "label": "Training"},

@@ -319,6 +319,7 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
 <div class="footer">fit v0.1.0 · Generated {{ generated_at }}</div>
 
 <script>{{ chartjs_code }}</script>
+<script>{{ date_adapter_code }}</script>
 <script>{{ annotation_code }}</script>
 <script>
 function showTab(id, btn) {
@@ -330,9 +331,24 @@ function showTab(id, btn) {
 Chart.defaults.color = '#475569';
 Chart.defaults.font.family = "'JetBrains Mono', monospace";
 Chart.defaults.font.size = 10;
+// Date-based charts: list of IDs that should use time scale
+const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-sleep','chart-stress','chart-weight','chart-efficiency','chart-vo2','chart-cadence','chart-rpe']);
 const chartInstances = {};
 {% for chart in charts %}
-chartInstances['{{ chart.id }}'] = new Chart(document.getElementById('{{ chart.id }}'), {{ chart.config | safe }});
+{
+  const cfg = {{ chart.config | safe }};
+  // Apply time scale for date-based charts
+  if (timeScaleCharts.has('{{ chart.id }}')) {
+    if (!cfg.options) cfg.options = {};
+    if (!cfg.options.scales) cfg.options.scales = {};
+    if (!cfg.options.scales.x) cfg.options.scales.x = {};
+    cfg.options.scales.x.type = 'time';
+    cfg.options.scales.x.time = { unit: 'day', displayFormats: { day: 'MMM d' }, tooltipFormat: 'yyyy-MM-dd' };
+    cfg.options.scales.x.grid = { color: 'rgba(255,255,255,0.03)' };
+  }
+  const el = document.getElementById('{{ chart.id }}');
+  if (el) chartInstances['{{ chart.id }}'] = new Chart(el, cfg);
+}
 {% endfor %}
 function setZoom(range, btn) {
   btn.parentElement.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
