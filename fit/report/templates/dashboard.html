@@ -79,7 +79,7 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
 
   <div class="cards">
   {% for card in status_cards %}
-    <div class="card" {% if card.tooltip %}title="{{ card.tooltip }}"{% endif %} style="cursor:{% if card.tooltip %}help{% else %}default{% endif %}">
+    <div class="card" {% if card.tooltip %}title="{{ card.tooltip }}"{% endif %}>
       <div class="card-label">{{ card.label }}</div>
       <div class="card-value" style="color:{{ card.color }}">{{ card.value }}<span style="font-size:11px;font-weight:400;color:var(--text-dim);margin-left:2px">{{ card.unit }}</span></div>
       {% if card.sub %}<div class="card-sub">{{ card.sub }}</div>{% endif %}
@@ -99,7 +99,7 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   {% if goal_progress %}
   <div class="cards" style="margin-top:12px">
   {% for g in goal_progress %}
-    <div class="card" style="min-width:100px;text-align:center;cursor:help" {% if g.tooltip %}title="{{ g.tooltip }}"{% endif %}>
+    <div class="card" style="min-width:100px;text-align:center" {% if g.tooltip %}title="{{ g.tooltip }}"{% endif %}>
       <div style="font-size:14px">{{ g.icon }}</div>
       <div style="font-size:18px;font-weight:700;color:{{ g.color }};font-family:var(--mono)">{{ g.current }}<span style="font-size:10px;font-weight:400;color:var(--text-dim)">{% if g.target %}/{{ g.target }}{% endif %}{{ g.unit }}</span></div>
       <div style="font-size:9px;color:var(--text-dim);margin-top:2px">{{ g.label }}</div>
@@ -234,34 +234,45 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
     <button class="tab-btn{% if r == '3mo' %} active{% endif %}" style="font-size:9px;padding:2px 8px" onclick="setZoom('{{ r }}',this)">{{ r }}</button>
     {% endfor %}
   </div>
-  <div class="sec"><h2>Aerobic Efficiency (Speed / BPM)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.speed_per_bpm }}</div><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-efficiency" height="170"></canvas></div>
 
-  <div class="sec"><h2>VO2max</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.vo2max }}</div><div class="line"></div></div>
+  <!-- SECTION 1: Aerobic Engine -->
+  <div class="sec"><h2>Your Aerobic Engine</h2><div class="line"></div></div>
+  <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">Can your body deliver enough oxygen to sustain marathon pace? VO2max is the ceiling, efficiency is how much you use, zones determine if your training builds it.</div>
+
+  <div class="sec" style="margin-top:8px"><h2>VO2max</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.vo2max }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-vo2" height="140"></canvas></div>
 
-  <div class="sec"><h2>Zone Distribution (by time)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.zones | safe }}</div><div class="line"></div></div>
+  <div class="sec"><h2>Aerobic Efficiency</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.speed_per_bpm }}</div><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-efficiency" height="160"></canvas></div>
+
+  <div class="sec"><h2>Zone Distribution</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.zones | safe }}</div><div class="line"></div></div>
+  <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px">How you're training that engine — time in each HR zone per week</div>
   <div class="chart-box"><canvas id="chart-zones" height="130"></canvas></div>
 
-  <div class="sec"><h2>Cadence</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Running cadence (steps per minute). Below 165 spm often indicates overstriding. Target: 170-180 for most runners.</div><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-cadence" height="130"></canvas></div>
+  <!-- SECTION 2: Execution -->
+  <div class="sec" style="margin-top:28px"><h2>Race Execution Signals</h2><div class="line"></div></div>
+  <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">Running economy and perceived effort — the gap between what the watch says and what your body feels.</div>
 
   {% if rpe_garmin_count >= 3 or rpe_checkin_count >= 1 %}
-  <div class="sec"><h2>RPE: Predicted vs Actual</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Predicted RPE from HR zone (Z2→3, Z4→7) vs actual RPE from check-in. A widening gap where actual exceeds predicted = accumulating fatigue.</div><div class="line"></div></div>
+  <div class="sec" style="margin-top:8px"><h2>Effort</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.rpe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-rpe" height="140"></canvas></div>
   {% else %}
-  <div class="sec"><h2>RPE: Predicted vs Actual</h2><div class="line"></div></div>
-  <div style="color:var(--text-muted);font-size:11px;padding:10px 0">Garmin effort: {{ rpe_garmin_count }} runs. Your RPE: {{ rpe_checkin_count }}/{{ run_count }} runs. Run <code>fit checkin</code> with RPE to add your subjective line.</div>
+  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">Effort tracking: {{ rpe_garmin_count }} Garmin, {{ rpe_checkin_count }} check-in RPE. Need ≥3 to chart.</div>
   {% endif %}
 
-  <div class="sec"><h2>Race Readiness</h2><div class="line"></div></div>
-  <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px">Effort tracking, marathon prediction, and race results — how ready are you?</div>
+  <div class="sec"><h2>Cadence</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.cadence }}</div><div class="line"></div></div>
+  <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px">Drops often signal fatigue or overstriding</div>
+  <div class="chart-box"><canvas id="chart-cadence" height="120"></canvas></div>
 
-  <div class="sec" style="margin-top:10px"><h2>Marathon Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Monthly marathon time prediction from VO2max using VDOT tables. Lower = faster. Green line = sub-4:00 target (240 min). Tracks how race readiness changes over time.</div><div class="line"></div></div>
+  <!-- SECTION 3: Forecast -->
+  <div class="sec" style="margin-top:28px"><h2>Marathon Forecast</h2><div class="line"></div></div>
+  <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">Given your engine, execution, and training — what can you run in Berlin?</div>
+
+  <div class="sec" style="margin-top:8px"><h2>Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Monthly marathon time prediction from VO2max. Lower = faster. Green line = sub-4:00 (240 min).</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-marathon-pred" height="150"></canvas></div>
 
   {% if race_prediction %}
-  <div class="sec"><h2>Race Prediction Detail</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.race_prediction | safe }}</div><div class="line"></div></div>
+  <div class="sec"><h2>Race Results vs Predictions</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.race_prediction | safe }}</div><div class="line"></div></div>
   <div style="background:rgba(167,139,250,0.04);border:1px solid rgba(167,139,250,0.12);border-radius:12px;padding:15px">
     {{ race_prediction | safe }}
   </div>
@@ -327,19 +338,32 @@ function setZoom(range, btn) {
   btn.parentElement.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   const now = new Date();
-  let minDate = null;
-  if (range === '3mo') minDate = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
-  else if (range === '6mo') minDate = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
-  else if (range === '1yr') minDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
-  // Update all charts in the same tab
+  let minLabel = null;
+  if (range === '3mo') minLabel = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate()).toISOString().slice(0, 10);
+  else if (range === '6mo') minLabel = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate()).toISOString().slice(0, 10);
+  else if (range === '1yr') minLabel = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString().slice(0, 10);
+  // Filter by hiding data points before minLabel (category axis doesn't support min/max natively)
   const tab = btn.closest('.tab-content');
   if (!tab) return;
   tab.querySelectorAll('canvas').forEach(canvas => {
     const chart = chartInstances[canvas.id];
-    if (chart && chart.options.scales && chart.options.scales.x) {
-      chart.options.scales.x.min = minDate ? minDate.toISOString().slice(0, 10) : undefined;
-      chart.update();
+    if (!chart || !chart.data || !chart.data.labels) return;
+    const origLabels = chart._origLabels || [...chart.data.labels];
+    const origDatasets = chart._origDatasets || chart.data.datasets.map(ds => ({...ds, data: [...ds.data]}));
+    if (!chart._origLabels) { chart._origLabels = origLabels; chart._origDatasets = origDatasets; }
+    if (!minLabel) {
+      // Reset to full data
+      chart.data.labels = [...origLabels];
+      chart.data.datasets.forEach((ds, i) => { ds.data = [...origDatasets[i].data]; });
+    } else {
+      // Filter labels + data to those >= minLabel
+      const startIdx = origLabels.findIndex(l => l >= minLabel);
+      if (startIdx >= 0) {
+        chart.data.labels = origLabels.slice(startIdx);
+        chart.data.datasets.forEach((ds, i) => { ds.data = origDatasets[i].data.slice(startIdx); });
+      }
     }
+    chart.update();
   });
 }
 </script>

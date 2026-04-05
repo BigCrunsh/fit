@@ -432,8 +432,8 @@ def _all_charts(conn):
             "type": "line",
             "data": {"labels": [e["date"] for e in eff],
                      "datasets": [
-                         {"label": "All runs", "data": [e["speed_per_bpm"] for e in eff], "borderColor": Z3 + "80", "borderWidth": 1.5, "pointRadius": 2, "fill": False},
-                         {"label": "Z2 only", "data": [e["speed_per_bpm_z2"] for e in eff], "borderColor": ACCENT, "borderWidth": 2.5, "pointRadius": 4, "fill": False},
+                         {"label": "All runs", "data": [e["speed_per_bpm"] for e in eff], "borderColor": Z3 + "20", "borderWidth": 1, "pointRadius": 0, "fill": False},
+                         {"label": "Z2 only (key signal)", "data": [e["speed_per_bpm_z2"] for e in eff], "borderColor": ACCENT, "borderWidth": 2.5, "pointRadius": 4, "fill": False, "spanGaps": True},
                      ]},
             "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}},
                                                          "annotation": {"annotations": event_annots}},
