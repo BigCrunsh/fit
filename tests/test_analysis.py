@@ -276,28 +276,15 @@ class TestSpeedPerBPMZ2:
 class TestRunType:
     # ── Happy: all 7 types ──
 
-    def test_race_detection_half_marathon_event(self):
-        assert classify_run_type({"type": "running", "name": "GENERALI Berlin Half Marathon (event)", "distance_km": 21}) == "race"
+    def test_no_name_based_race_detection(self):
+        """Classifier does NOT detect races from names — race_calendar handles that."""
+        assert classify_run_type({"type": "running", "name": "Half Marathon Race", "distance_km": 21}) != "race"
 
-    def test_race_detection_parkrun(self):
-        assert classify_run_type({"type": "running", "name": "parkrun", "distance_km": 5}) == "race"
-
-    def test_race_detection_10k_race(self):
-        assert classify_run_type({"type": "running", "name": "10km Race with Runna", "distance_km": 10}) == "race"
-
-    def test_race_detection_city_night(self):
-        assert classify_run_type({"type": "running", "name": "adidas Runners City Night (10K)", "distance_km": 10}) == "race"
-
-    def test_race_detection_marathon_race(self):
-        assert classify_run_type({"type": "running", "name": "Berlin Marathon Race", "distance_km": 42.2}) == "race"
-
-    def test_not_race_easy_run_10km(self):
-        """Runna '10km Easy Run' should NOT be classified as race."""
-        assert classify_run_type({"type": "running", "name": "W5 Wed Easy Run - 10km Easy Run", "distance_km": 10}) != "race"
-
-    def test_not_race_long_run_race_pace(self):
-        """Runna 'Race Pace' long run should NOT be classified as race."""
-        assert classify_run_type({"type": "running", "name": "W21 Sun Long Run - 15km Race Practice", "distance_km": 15}) != "race"
+    def test_race_name_classified_as_training(self):
+        """Even 'Race' in name → classified as training (easy/tempo/long), not race."""
+        result = classify_run_type({"type": "running", "name": "10km Race", "distance_km": 10, "hr_zone": "Z4"})
+        assert result != "race"
+        assert result in ("easy", "tempo", "long", "intervals", "recovery", "progression")
 
     def test_progression_run(self):
         assert classify_run_type({"type": "running", "name": "Progression Run", "distance_km": 10}) == "progression"
@@ -379,13 +366,15 @@ class TestRunType:
         result = classify_run_type({"type": "running", "name": "Quick", "distance_km": 4, "hr_zone": "Z4"})
         assert result == "easy"
 
-    def test_race_keyword_priority_over_distance(self):
-        """Race keyword takes priority even with short distance."""
-        assert classify_run_type({"type": "running", "name": "5k race", "distance_km": 3}) == "race"
+    def test_short_distance_not_race(self):
+        """Short run with race-like name is NOT race (race_calendar handles that)."""
+        result = classify_run_type({"type": "running", "name": "5k race", "distance_km": 3})
+        assert result != "race"
 
-    def test_half_marathon_with_event_name(self):
-        """Half marathon event name should detect race."""
-        assert classify_run_type({"type": "running", "name": "Half Marathon Race with Runna", "distance_km": 21}) == "race"
+    def test_half_marathon_name_not_race(self):
+        """HM name is NOT auto-race (race_calendar handles that)."""
+        result = classify_run_type({"type": "running", "name": "Half Marathon Race", "distance_km": 21, "hr_zone": "Z4"})
+        assert result != "race"
 
 
 # ════════════════════════════════════════════════════════════════

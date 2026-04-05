@@ -98,6 +98,37 @@ def report(daily: bool, weekly: bool):
         conn.close()
 
 
+@main.command("races")
+def races():
+    """Show race calendar with match status."""
+    from fit.config import get_config
+    from fit.db import get_db
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    try:
+        rows = conn.execute("""
+            SELECT rc.date, rc.name, rc.distance, rc.status, rc.target_time, rc.result_time,
+                   rc.activity_id, rc.organizer
+            FROM race_calendar rc ORDER BY rc.date
+        """).fetchall()
+        console.print(f"\n[bold]Race Calendar ({len(rows)} races)[/bold]\n")
+        for r in rows:
+            matched = "[green]✓[/green]" if r["activity_id"] else "[red]✗[/red]"
+            status_color = {"completed": "green", "registered": "cyan", "planned": "dim", "dns": "red", "dnf": "red"}
+            sc = status_color.get(r["status"], "dim")
+            result = r["result_time"] or "—"
+            target = f" → {r['target_time']}" if r["target_time"] else ""
+            console.print(f"  {matched} {r['date']}  [{sc}]{r['status']:10s}[/]  {r['distance']:12s}  {result:>8s}{target}  {r['name']}")
+        # Show unmatched warning
+        unmatched = [r for r in rows if r["status"] == "completed" and not r["activity_id"]]
+        if unmatched:
+            console.print(f"\n  [yellow]⚠ {len(unmatched)} completed race(s) without matching activity (pre-sync period)[/yellow]")
+        console.print()
+    finally:
+        conn.close()
+
+
 @main.group()
 def goal():
     """Manage training goals."""

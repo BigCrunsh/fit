@@ -111,16 +111,9 @@ def classify_run_type(activity: dict, config: dict = None, recent_long_run_avg: 
     distance = activity.get("distance_km") or 0
     zone = activity.get("hr_zone")
 
-    # Race detection — strict: actual race events, not Runna "Race Pace" or "10km Easy Run"
-    # Exclude names containing training qualifiers (easy run, long run, tempo, intervals, taper, time trial)
-    training_qualifiers = ("easy run", "long run", "tempo", "interval", "taper", "time trial", "block", "progressive")
-    is_training = any(q in name for q in training_qualifiers)
-    if not is_training:
-        # Actual race names: "Half Marathon Race", "10K Race", "parkrun", "Tierparklauf", "City Night"
-        race_indicators = ("race with runna", "parkrun", "half marathon (", "tierparklauf", "city night",
-                           " race", "marathon race")
-        if any(kw in name for kw in race_indicators):
-            return "race"
+    # Race detection: ONLY via race_calendar table match (not name-based).
+    # Activities are tagged run_type='race' by matching against race_calendar.date.
+    # The classifier does NOT detect races — it classifies training runs only.
 
     # Progression detection
     if "prog" in name or "negative split" in name:

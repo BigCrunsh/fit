@@ -142,7 +142,10 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
 
     conn.commit()
 
-    # 7. Auto-import weight CSV if configured
+    # 7. Match activities to race calendar
+    _match_race_calendar(conn)
+
+    # 8. Auto-import weight CSV if configured
     weight_csv = config.get("sync", {}).get("weight_csv_path", "")
     if weight_csv:
         try:
@@ -167,6 +170,28 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
 
     logger.info("Sync complete: %s", counts)
     return counts
+
+
+def _match_race_calendar(conn: sqlite3.Connection) -> None:
+    """Match race_calendar entries to activities by date. Tag matched activities as run_type='race'."""
+    unmatched = conn.execute("""
+        SELECT rc.id, rc.date, rc.distance_km FROM race_calendar rc
+        WHERE rc.status = 'completed' AND rc.activity_id IS NULL
+    """).fetchall()
+    for rc in unmatched:
+        activity = conn.execute("""
+            SELECT id, distance_km, duration_min FROM activities
+            WHERE date = ? AND type = 'running' ORDER BY distance_km DESC LIMIT 1
+        """, (rc["date"],)).fetchone()
+        if activity:
+            result_min = activity["duration_min"] or 0
+            result_time = f"{int(result_min // 60)}:{int(result_min % 60):02d}:00"
+            pace = (result_min * 60) / activity["distance_km"] if activity["distance_km"] else None
+            conn.execute("UPDATE race_calendar SET activity_id = ?, result_time = ?, result_pace = ? WHERE id = ?",
+                         (activity["id"], result_time, pace, rc["id"]))
+            conn.execute("UPDATE activities SET run_type = 'race' WHERE id = ?", (activity["id"],))
+            logger.info("Race matched: %s → activity %s", rc["date"], activity["id"])
+    conn.commit()
 
 
 def _auto_import_weight(conn: sqlite3.Connection, csv_path: Path) -> None:

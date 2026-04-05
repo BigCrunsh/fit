@@ -625,8 +625,12 @@ def _definitions(conn):
 
 def _race_prediction(conn):
     races = conn.execute("""
-        SELECT date, name, distance_km, duration_min FROM activities
-        WHERE run_type = 'race' AND distance_km >= 5 ORDER BY date DESC LIMIT 8
+        SELECT rc.date, rc.name, rc.distance, rc.distance_km, rc.result_time,
+               a.duration_min, a.distance_km as actual_km
+        FROM race_calendar rc
+        LEFT JOIN activities a ON rc.activity_id = a.id
+        WHERE rc.status = 'completed' AND rc.activity_id IS NOT NULL
+        ORDER BY rc.date DESC LIMIT 8
     """).fetchall()
     vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
     if not races and not vo2:
@@ -636,8 +640,8 @@ def _race_prediction(conn):
     target_str = target["target_time"] if target and target["target_time"] else "3:59:59"
 
     from fit.analysis import predict_marathon_time
-    race_data = [{"distance_km": r["distance_km"], "time_seconds": (r["duration_min"] or 0) * 60,
-                  "name": r["name"], "date": r["date"]} for r in races if r["distance_km"] and r["duration_min"]]
+    race_data = [{"distance_km": r["actual_km"] or r["distance_km"], "time_seconds": (r["duration_min"] or 0) * 60,
+                  "name": r["name"], "date": r["date"]} for r in races if (r["actual_km"] or r["distance_km"]) and r["duration_min"]]
     preds = predict_marathon_time(race_data, vo2max=vo2["vo2max"] if vo2 else None)
 
     def _fmt_time(secs):
@@ -804,8 +808,8 @@ def _get_event_annotations(conn) -> dict:
     """Build Chart.js annotation config for key events."""
     annotations = {}
 
-    # Races
-    races = conn.execute("SELECT date, name FROM activities WHERE run_type = 'race' ORDER BY date").fetchall()
+    # Races (from race_calendar, not activity names)
+    races = conn.execute("SELECT date, name FROM race_calendar WHERE activity_id IS NOT NULL ORDER BY date").fetchall()
     for i, r in enumerate(races):
         annotations[f"race_{i}"] = {
             "type": "line", "xMin": r["date"], "xMax": r["date"],
