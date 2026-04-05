@@ -2,15 +2,18 @@
 
 
 def generate_headline(readiness: int | None, acwr: float | None, phase: dict | None,
-                      last_checkin_date: str | None, today: str = None) -> str:
+                      last_checkin_date: str | None, today: str = None,
+                      sleep_quality: str | None = None) -> str:
     """Generate a daily headline sentence based on current state.
 
     Returns a single actionable sentence for the Today tab.
     """
     parts = []
 
-    # Recovery signal
-    if readiness is not None:
+    # Recovery signal (readiness OR poor sleep quality)
+    if sleep_quality == "Poor":
+        parts.append("Recovery day recommended (sleep quality Poor).")
+    elif readiness is not None:
         if readiness < 50:
             parts.append(f"Recovery day recommended (readiness {readiness}).")
         elif readiness >= 75:

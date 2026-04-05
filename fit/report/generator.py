@@ -73,13 +73,14 @@ def _headline(conn):
     latest = conn.execute("SELECT training_readiness FROM daily_health ORDER BY date DESC LIMIT 1").fetchone()
     acwr_row = conn.execute("SELECT acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
     phase = conn.execute("SELECT * FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
-    last_ci = conn.execute("SELECT MAX(date) FROM checkins").fetchone()[0]
+    last_ci = conn.execute("SELECT date, sleep_quality FROM checkins ORDER BY date DESC LIMIT 1").fetchone()
     return generate_headline(
         readiness=latest["training_readiness"] if latest else None,
         acwr=acwr_row["acwr"] if acwr_row else None,
         phase=dict(phase) if phase else None,
-        last_checkin_date=last_ci,
+        last_checkin_date=last_ci["date"] if last_ci else None,
         today=date.today().isoformat(),
+        sleep_quality=last_ci["sleep_quality"] if last_ci else None,
     )
 
 
@@ -206,6 +207,9 @@ def _week_over_week(conn):
         parts.append(f"Z1+Z2: {last['z12_pct']:.0f}%→{this['z12_pct']:.0f}%")
     if this["acwr"] is not None:
         parts.append(f"ACWR {this['acwr']:.2f}")
+    # Check if current week is incomplete
+    if date.today().weekday() < 6:  # Not Sunday
+        parts.append("(week in progress)")
     return " · ".join(parts)
 
 
@@ -238,6 +242,9 @@ def _run_timeline(conn):
 
 def _all_charts(conn):
     charts = []
+
+    # Event annotations for all time-series charts
+    event_annots = _get_event_annotations(conn)
 
     # Volume (Training tab)
     weeks = conn.execute("SELECT week, run_km, longest_run_km FROM weekly_agg WHERE run_km > 0 ORDER BY week").fetchall()
@@ -329,13 +336,10 @@ def _all_charts(conn):
             "data": {"labels": [w["date"] for w in weight],
                      "datasets": [{"label": "Weight", "data": [w["weight_kg"] for w in weight],
                                    "borderColor": Z3, "backgroundColor": Z3 + "15", "fill": True, "borderWidth": 2, "pointRadius": 3}]},
-            "options": {"responsive": True, "plugins": {"legend": {"display": False}},
+            "options": {"responsive": True, "plugins": {"legend": {"display": False}, "annotation": {"annotations": event_annots}},
                         "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
-
-    # Get event annotations for time-series charts (W5)
-    event_annots = _get_event_annotations(conn)
 
     # Speed per BPM (Fitness tab — hero chart)
     eff = conn.execute("SELECT date, speed_per_bpm, speed_per_bpm_z2 FROM activities WHERE type='running' AND speed_per_bpm IS NOT NULL AND date >= date('now','-90 days') ORDER BY date").fetchall()
@@ -367,15 +371,18 @@ def _all_charts(conn):
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
-    # Zone distribution (Fitness tab)
+    # Zone distribution (Fitness tab) with phase target
     zone_weeks = conn.execute("SELECT week, z1_min, z2_min, z3_min, z4_min, z5_min FROM weekly_agg WHERE (z1_min+z2_min+z3_min+z4_min+z5_min) > 0 ORDER BY week DESC LIMIT 8").fetchall()
     if zone_weeks:
         zone_weeks = list(reversed(zone_weeks))
+        # Get phase target for subtitle
+        phase = conn.execute("SELECT z12_pct_target, z45_pct_target, name FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
+        phase_note = f" (Phase target: Z1+Z2 ≥{phase['z12_pct_target']}%)" if phase and phase["z12_pct_target"] else ""
         charts.append({"id": "chart-zones", "config": json.dumps({
             "type": "bar",
             "data": {"labels": [w["week"] for w in zone_weeks],
                      "datasets": [
-                         {"label": "Z1+Z2", "data": [(w["z1_min"] or 0) + (w["z2_min"] or 0) for w in zone_weeks], "backgroundColor": Z12 + "80", "stack": "s"},
+                         {"label": f"Z1+Z2{phase_note}", "data": [(w["z1_min"] or 0) + (w["z2_min"] or 0) for w in zone_weeks], "backgroundColor": Z12 + "80", "stack": "s"},
                          {"label": "Z3", "data": [w["z3_min"] or 0 for w in zone_weeks], "backgroundColor": Z3 + "80", "stack": "s"},
                          {"label": "Z4+Z5", "data": [(w["z4_min"] or 0) + (w["z5_min"] or 0) for w in zone_weeks], "backgroundColor": Z45 + "80", "stack": "s"},
                      ]},
@@ -408,6 +415,36 @@ def _all_charts(conn):
                                    "y": {"min": 0, "max": 2.5, "grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
+    # Run type breakdown stacked (Training tab)
+    type_weeks = conn.execute("""
+        SELECT strftime('%Y-W', date, 'weekday 0', '-6 days') ||
+               substr('0' || (cast(strftime('%W', date) as integer)), -2) as week,
+               run_type, COUNT(*) as n
+        FROM activities WHERE type = 'running' AND run_type IS NOT NULL
+        GROUP BY week, run_type ORDER BY week
+    """).fetchall()
+    if type_weeks:
+        weeks_set = sorted({r["week"] for r in type_weeks})[-12:]  # last 12 weeks
+        type_names = ["easy", "long", "tempo", "intervals", "recovery", "race"]
+        type_colors = {"easy": Z12, "long": Z12 + "CC", "tempo": Z3, "intervals": Z45, "recovery": Z12 + "66", "race": Z45 + "CC"}
+        datasets = []
+        for t in type_names:
+            data = []
+            for w in weeks_set:
+                count = sum(r["n"] for r in type_weeks if r["week"] == w and r["run_type"] == t)
+                data.append(count)
+            if any(d > 0 for d in data):
+                datasets.append({"label": t, "data": data, "backgroundColor": type_colors.get(t, Z12), "stack": "s"})
+        if datasets:
+            charts.append({"id": "chart-runtypes", "config": json.dumps({
+                "type": "bar",
+                "data": {"labels": weeks_set, "datasets": datasets},
+                "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
+                            "scales": {"x": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}},
+                                       "y": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"},
+                                             "title": {"display": True, "text": "runs"}}}}
+            })})
+
     # Cadence trend (Fitness tab — W3)
     cadence = conn.execute("""
         SELECT date, avg_cadence FROM activities
@@ -421,7 +458,7 @@ def _all_charts(conn):
                      "datasets": [{"label": "Cadence (spm)", "data": [c["avg_cadence"] for c in cadence],
                                    "borderColor": Z12, "borderWidth": 2, "pointRadius": 3, "fill": False}]},
             "options": {"responsive": True, "plugins": {"legend": {"display": False},
-                        "annotation": {"annotations": {"threshold": {"type": "line", "yMin": 165, "yMax": 165,
+                        "annotation": {"annotations": {**event_annots, "threshold": {"type": "line", "yMin": 165, "yMax": 165,
                                        "borderColor": CAUTION + "60", "borderDash": [6, 3],
                                        "label": {"content": "Low threshold 165", "display": True, "position": "end", "font": {"size": 8}}}}}},
                         "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
@@ -571,6 +608,16 @@ def _get_event_annotations(conn) -> dict:
                 "label": {"content": f"{gap_days}d gap", "display": True, "position": "center",
                           "font": {"size": 8}, "color": DANGER + "80"},
             }
+
+    # Calibration changes
+    cals = conn.execute("SELECT date, metric, value, method FROM calibration ORDER BY date").fetchall()
+    for i, c in enumerate(cals):
+        annotations[f"cal_{i}"] = {
+            "type": "line", "xMin": c["date"], "xMax": c["date"],
+            "borderColor": CAUTION + "50", "borderWidth": 1, "borderDash": [2, 4],
+            "label": {"content": f"{c['metric']}={c['value']}", "display": True, "position": "end",
+                      "font": {"size": 7}, "color": CAUTION + "80"},
+        }
 
     return annotations
 

@@ -33,12 +33,12 @@
 
 ## 5. Dashboard — Charts & Annotations
 
-- [ ] 5.1 Implement or remove dashboard zoom toggle — currently no-op at line 270 of dashboard.html (merges phase-1-gaps dashboard scope + phase-2-enrich 1.4)
-- [ ] 5.2 Inline or remove Google Fonts @import — vendor fonts or use system fallback for offline support (phase-1-gaps 4.1)
-- [ ] 5.3 Add run type breakdown stacked chart to Training tab — easy/long/tempo/intervals/recovery per week, intensity palette (phase-1-gaps 4.2)
-- [ ] 5.4 Extend event annotations to all time-series charts — weight, cadence, volume, not just efficiency + VO2 (phase-1-gaps 4.3)
-- [ ] 5.5 Add calibration change and goal milestone events to `_get_event_annotations()` (phase-1-gaps 4.4)
-- [ ] 5.6 Zone distribution chart: overlay active phase z12_pct_target and z45_pct_target as reference lines (phase-1-gaps 4.6)
+- [x] 5.1 Implement or remove dashboard zoom toggle — currently no-op at line 270 of dashboard.html (merges phase-1-gaps dashboard scope + phase-2-enrich 1.4)
+- [x] 5.2 Inline or remove Google Fonts @import — vendor fonts or use system fallback for offline support (phase-1-gaps 4.1)
+- [x] 5.3 Add run type breakdown stacked chart to Training tab — easy/long/tempo/intervals/recovery per week, intensity palette (phase-1-gaps 4.2)
+- [x] 5.4 Extend event annotations to all time-series charts — weight, cadence, volume, not just efficiency + VO2 (phase-1-gaps 4.3)
+- [x] 5.5 Add calibration change and goal milestone events to `_get_event_annotations()` (phase-1-gaps 4.4)
+- [x] 5.6 Zone distribution chart: overlay active phase z12_pct_target and z45_pct_target as reference lines (phase-1-gaps 4.6)
 - [ ] 5.7 Journey timeline: add current vs target metrics below each phase segment (phase-1-gaps 4.7)
 - [ ] 5.8 Sleep chart: add average annotation lines for total sleep and deep sleep (phase-1-gaps 4.8)
 - [ ] 5.9 Weight chart: add race target reference line from goals table and event annotations (phase-1-gaps 4.9)
@@ -46,8 +46,8 @@
 ## 6. Dashboard — Status Cards & Headlines
 
 - [ ] 6.1 Status cards: add VO2max peak reference + 4-week delta, weight race target + 4-week delta, sleep card REM hours (phase-1-gaps 4.5)
-- [ ] 6.2 Headline engine: check sleep_quality='Poor' as recovery trigger alongside readiness < 50 (phase-1-gaps 4.10)
-- [ ] 6.3 Week-over-week card: detect incomplete current week (today != Sunday), label "Week in progress" (phase-1-gaps 4.11)
+- [x] 6.2 Headline engine: check sleep_quality='Poor' as recovery trigger alongside readiness < 50 (phase-1-gaps 4.10)
+- [x] 6.3 Week-over-week card: detect incomplete current week (today != Sunday), label "Week in progress" (phase-1-gaps 4.11)
 - [ ] 6.4 Race prediction: add confidence explanation and note about post-gap fitness adjustment (phase-1-gaps 4.12)
 - [ ] 6.5 Metric definitions: make remaining generic definitions contextual — sleep, stress, cadence reference actual values (phase-1-gaps 4.13)
 

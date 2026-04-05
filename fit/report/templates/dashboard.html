@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>fit — Dashboard</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+/* Fonts: system fallback for offline support. Google Fonts removed for self-contained operation. */
 :root {
   --bg: #07070c; --surface: rgba(255,255,255,0.025); --border: rgba(255,255,255,0.06);
   --text: #e2e8f0; --text-muted: #64748b; --text-dim: #475569; --text-faint: #334155;
@@ -164,6 +164,9 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div class="sec"><h2>Training Load Per Run</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.training_load | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-load" height="150"></canvas></div>
 
+  <div class="sec"><h2>Run Type Breakdown</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Weekly run count by type. Blue=easy/recovery, amber=tempo, orange=intervals/race. A healthy base-building phase should be mostly blue.</div><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-runtypes" height="120"></canvas></div>
+
   <div class="sec"><h2>Run Timeline</h2><div class="line"></div></div>
   {% for run in run_timeline %}
   <div class="run-bar">
@@ -270,9 +273,21 @@ chartInstances['{{ chart.id }}'] = new Chart(document.getElementById('{{ chart.i
 function setZoom(range, btn) {
   btn.parentElement.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  // Zoom is a UI affordance — actual filtering would require re-querying data.
-  // For now, this provides the toggle UI. Full implementation needs data slicing per range.
-  console.log('Zoom set to', range);
+  const now = new Date();
+  let minDate = null;
+  if (range === '3mo') minDate = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
+  else if (range === '6mo') minDate = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
+  else if (range === '1yr') minDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+  // Update all charts in the same tab
+  const tab = btn.closest('.tab-content');
+  if (!tab) return;
+  tab.querySelectorAll('canvas').forEach(canvas => {
+    const chart = chartInstances[canvas.id];
+    if (chart && chart.options.scales && chart.options.scales.x) {
+      chart.options.scales.x.min = minDate ? minDate.toISOString().slice(0, 10) : undefined;
+      chart.update();
+    }
+  });
 }
 </script>
 </body>
