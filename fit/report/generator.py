@@ -285,12 +285,23 @@ def _all_charts(conn):
     # Volume (Training tab)
     weeks = conn.execute("SELECT week, run_km, longest_run_km FROM weekly_agg WHERE run_km > 0 ORDER BY week").fetchall()
     if weeks:
+        # Get phase volume target for annotation
+        phase_vol = conn.execute("SELECT weekly_km_min, weekly_km_max FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
+        vol_annots = {}
+        if phase_vol and phase_vol["weekly_km_min"]:
+            vol_annots["target_lo"] = {"type": "line", "yMin": phase_vol["weekly_km_min"], "yMax": phase_vol["weekly_km_min"],
+                                       "borderColor": SAFE + "30", "borderDash": [4, 4], "borderWidth": 1}
+            vol_annots["target_hi"] = {"type": "line", "yMin": phase_vol["weekly_km_max"], "yMax": phase_vol["weekly_km_max"],
+                                       "borderColor": SAFE + "30", "borderDash": [4, 4], "borderWidth": 1,
+                                       "label": {"content": f"target {phase_vol['weekly_km_min']}-{phase_vol['weekly_km_max']}km",
+                                                 "display": True, "position": "end", "font": {"size": 7}, "color": SAFE + "60"}}
         charts.append({"id": "chart-volume", "config": json.dumps({
             "type": "bar",
             "data": {"labels": [w["week"] for w in weeks],
                      "datasets": [{"label": "km/week", "data": [w["run_km"] for w in weeks],
                                    "backgroundColor": "rgba(56,189,248,0.5)", "borderRadius": 4}]},
-            "options": {"responsive": True, "plugins": {"legend": {"display": False}},
+            "options": {"responsive": True, "plugins": {"legend": {"display": False},
+                                                         "annotation": {"annotations": vol_annots} if vol_annots else {}},
                         "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
@@ -304,7 +315,15 @@ def _all_charts(conn):
             "data": {"labels": [r["date"] for r in runs],
                      "datasets": [{"label": "Load", "data": [r["training_load"] for r in runs],
                                    "backgroundColor": colors, "borderRadius": 3}]},
-            "options": {"responsive": True, "plugins": {"legend": {"display": False}},
+            "options": {"responsive": True, "plugins": {"legend": {"display": False},
+                        "annotation": {"annotations": {
+                            "easy": {"type": "line", "yMin": 150, "yMax": 150,
+                                     "borderColor": SAFE + "25", "borderDash": [4, 4], "borderWidth": 1,
+                                     "label": {"content": "easy <150", "display": True, "position": "start", "font": {"size": 7}, "color": SAFE + "50"}},
+                            "hard": {"type": "line", "yMin": 350, "yMax": 350,
+                                     "borderColor": DANGER + "25", "borderDash": [4, 4], "borderWidth": 1,
+                                     "label": {"content": "overload >350", "display": True, "position": "end", "font": {"size": 7}, "color": DANGER + "50"}},
+                        }}},
                         "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
@@ -321,7 +340,13 @@ def _all_charts(conn):
                          {"label": "RHR", "data": [h["resting_heart_rate"] for h in health], "type": "line", "borderColor": DANGER, "borderWidth": 2, "pointRadius": 2.5, "yAxisID": "y1", "order": 1},
                          {"label": "HRV", "data": [h["hrv_last_night"] for h in health], "type": "line", "borderColor": ACCENT, "borderWidth": 1.5, "borderDash": [4, 2], "pointRadius": 2, "yAxisID": "y", "order": 1},
                      ]},
-            "options": {"responsive": True, "scales": {
+            "options": {"responsive": True,
+                        "plugins": {"annotation": {"annotations": {
+                            "good": {"type": "line", "yMin": 75, "yMax": 75, "yScaleID": "y",
+                                     "borderColor": SAFE + "30", "borderDash": [4, 4], "borderWidth": 1,
+                                     "label": {"content": "Ready ≥75", "display": True, "position": "start", "font": {"size": 7}, "color": SAFE + "60"}},
+                        }}},
+                        "scales": {
                 "y": {"position": "left", "min": 0, "max": 100, "grid": {"color": "rgba(255,255,255,0.03)"}},
                 "y1": {"position": "right", "min": 45, "max": 75, "grid": {"drawOnChartArea": False}},
                 "x": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
@@ -341,6 +366,9 @@ def _all_charts(conn):
             "options": {"responsive": True,
                         "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}},
                                     "annotation": {"annotations": {
+                                        "target": {"type": "line", "yMin": 7.5, "yMax": 7.5,
+                                                   "borderColor": SAFE + "30", "borderDash": [4, 4], "borderWidth": 1,
+                                                   "label": {"content": "≥7.5h", "display": True, "position": "end", "font": {"size": 7}, "color": SAFE + "60"}},
                                         "avg_total": {"type": "line",
                                                       "yMin": sum((s["deep_sleep_hours"] or 0) + (s["rem_sleep_hours"] or 0) + (s["light_sleep_hours"] or 0) for s in sleep) / max(len(sleep), 1),
                                                       "yMax": sum((s["deep_sleep_hours"] or 0) + (s["rem_sleep_hours"] or 0) + (s["light_sleep_hours"] or 0) for s in sleep) / max(len(sleep), 1),
@@ -742,36 +770,38 @@ def _coaching(conn):
 # ── Goal Progress ──
 
 def _goal_progress(conn):
-    goals = conn.execute("SELECT * FROM goals WHERE active = 1").fetchall()
     results = []
-    for g in goals:
-        current = None
-        pct = None
-        if g["type"] == "metric" and g["target_value"]:
-            if "vo2" in (g["name"] or "").lower():
-                row = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
-                if row:
-                    current = row["vo2max"]
-                    pct = current / g["target_value"] * 100
-            elif "weight" in (g["name"] or "").lower():
-                row = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
-                if row:
-                    current = row["weight_kg"]
-                    # For weight, lower is better — invert progress
-                    start_weight = 78.3  # approximate start
-                    target = g["target_value"]
-                    if start_weight > target:
-                        pct = max(0, (start_weight - current) / (start_weight - target) * 100)
-        elif g["type"] == "habit" and g["target_value"]:
-            streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
-            if streak:
-                current = streak[0] or 0
-                pct = current / g["target_value"] * 100
-        results.append({
-            "name": g["name"], "type": g["type"], "current": current, "target": g["target_value"],
-            "target_date": g["target_date"], "pct": min(pct or 0, 100),
-            "color": SAFE if pct and pct >= 80 else CAUTION if pct and pct >= 50 else DANGER,
-        })
+
+    # Metric goals with clear current/target
+    vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
+    if vo2:
+        results.append({"icon": "📈", "label": "VO2max", "current": f"{vo2['vo2max']:.0f}", "target": "51", "unit": "",
+                        "pct": min(vo2["vo2max"] / 51 * 100, 100), "color": SAFE if vo2["vo2max"] >= 50 else CAUTION})
+
+    weight = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
+    if weight:
+        w = weight["weight_kg"]
+        pct = max(0, (78.3 - w) / (78.3 - 75) * 100)  # progress from start toward target
+        results.append({"icon": "⚖️", "label": "Weight", "current": f"{w:.1f}", "target": "75", "unit": "kg",
+                        "pct": min(pct, 100), "color": SAFE if w <= 76 else CAUTION if w <= 78 else DANGER})
+
+    streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
+    if streak:
+        s = streak[0] or 0
+        results.append({"icon": "🔥", "label": "Streak", "current": str(s), "target": "8", "unit": "wk",
+                        "pct": min(s / 8 * 100, 100), "color": SAFE if s >= 6 else CAUTION if s >= 3 else DANGER})
+
+    # Next race countdown
+    next_race = conn.execute("""
+        SELECT name, date, distance, target_time FROM race_calendar
+        WHERE status = 'registered' ORDER BY date LIMIT 1
+    """).fetchone()
+    if next_race:
+        from datetime import date as d
+        days_left = (d.fromisoformat(next_race["date"]) - d.today()).days
+        results.append({"icon": "🏁", "label": next_race["name"][:15], "current": str(days_left), "target": "", "unit": "days",
+                        "pct": None, "color": ACCENT})
+
     return results
 
 
@@ -816,50 +846,30 @@ def _get_event_annotations(conn) -> dict:
     """Build Chart.js annotation config for key events."""
     annotations = {}
 
-    # Races (from race_calendar, not activity names)
-    races = conn.execute("SELECT date, name FROM race_calendar WHERE activity_id IS NOT NULL ORDER BY date").fetchall()
+    # Races — minimal labels, just markers
+    races = conn.execute("SELECT date, distance FROM race_calendar WHERE activity_id IS NOT NULL ORDER BY date").fetchall()
     for i, r in enumerate(races):
         annotations[f"race_{i}"] = {
             "type": "line", "xMin": r["date"], "xMax": r["date"],
-            "borderColor": ACCENT + "80", "borderWidth": 1, "borderDash": [3, 3],
-            "label": {"content": r["name"] or "Race", "display": True, "position": "start",
-                      "font": {"size": 8}, "color": ACCENT},
+            "borderColor": ACCENT + "50", "borderWidth": 1,
+            "label": {"content": r["distance"] or "🏁", "display": True, "position": "start",
+                      "font": {"size": 7}, "color": ACCENT + "80"},
         }
 
-    # Phase transitions
-    phases = conn.execute("SELECT start_date, name FROM training_phases WHERE status != 'revised' AND start_date IS NOT NULL ORDER BY start_date").fetchall()
-    for i, p in enumerate(phases):
-        annotations[f"phase_{i}"] = {
-            "type": "line", "xMin": p["start_date"], "xMax": p["start_date"],
-            "borderColor": SAFE + "60", "borderWidth": 1, "borderDash": [6, 3],
-            "label": {"content": p["name"] or "", "display": True, "position": "start",
-                      "font": {"size": 7}, "color": SAFE + "AA"},
-        }
-
-    # Training gaps (> 7 days without activity)
+    # Training gaps only (> 14 days — skip short gaps to reduce clutter)
     dates = conn.execute("SELECT DISTINCT date FROM activities ORDER BY date").fetchall()
     date_list = [d["date"] for d in dates]
     for i in range(1, len(date_list)):
         d1 = date.fromisoformat(date_list[i - 1])
         d2 = date.fromisoformat(date_list[i])
         gap_days = (d2 - d1).days
-        if gap_days > 7:
+        if gap_days > 14:
             annotations[f"gap_{i}"] = {
                 "type": "box", "xMin": date_list[i - 1], "xMax": date_list[i],
-                "backgroundColor": "rgba(239,68,68,0.05)", "borderWidth": 0,
-                "label": {"content": f"{gap_days}d gap", "display": True, "position": "center",
-                          "font": {"size": 8}, "color": DANGER + "80"},
+                "backgroundColor": "rgba(239,68,68,0.03)", "borderWidth": 0,
+                "label": {"content": f"{gap_days}d", "display": True, "position": "center",
+                          "font": {"size": 7}, "color": DANGER + "60"},
             }
-
-    # Calibration changes
-    cals = conn.execute("SELECT date, metric, value, method FROM calibration ORDER BY date").fetchall()
-    for i, c in enumerate(cals):
-        annotations[f"cal_{i}"] = {
-            "type": "line", "xMin": c["date"], "xMax": c["date"],
-            "borderColor": CAUTION + "50", "borderWidth": 1, "borderDash": [2, 4],
-            "label": {"content": f"{c['metric']}={c['value']}", "display": True, "position": "end",
-                      "font": {"size": 7}, "color": CAUTION + "80"},
-        }
 
     return annotations
 

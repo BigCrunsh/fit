@@ -97,16 +97,16 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   {% endif %}
 
   {% if goal_progress %}
-  <div class="sec"><h2>Goals</h2><div class="line"></div></div>
+  <div class="cards" style="margin-top:12px">
   {% for g in goal_progress %}
-  <div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:10px">
-    <span style="width:140px;color:var(--text-muted)">{{ g.name }}</span>
-    <div style="flex:1;height:10px;background:rgba(255,255,255,0.05);border-radius:5px;overflow:hidden">
-      <div style="width:{{ g.pct }}%;height:100%;background:{{ g.color }};border-radius:5px"></div>
+    <div class="card" style="min-width:100px;text-align:center">
+      <div style="font-size:14px">{{ g.icon }}</div>
+      <div style="font-size:18px;font-weight:700;color:{{ g.color }};font-family:var(--mono)">{{ g.current }}<span style="font-size:10px;font-weight:400;color:var(--text-dim)">{% if g.target %}/{{ g.target }}{% endif %}{{ g.unit }}</span></div>
+      <div style="font-size:9px;color:var(--text-dim);margin-top:2px">{{ g.label }}</div>
+      {% if g.pct is not none %}<div style="height:3px;background:rgba(255,255,255,0.05);border-radius:2px;margin-top:4px"><div style="height:100%;width:{{ g.pct }}%;background:{{ g.color }};border-radius:2px"></div></div>{% endif %}
     </div>
-    <span style="color:var(--text-dim);font-family:var(--mono);font-size:9px">{{ g.current or '?' }}/{{ g.target or '?' }}{% if g.target_date %} ({{ g.target_date }}){% endif %}</span>
-  </div>
   {% endfor %}
+  </div>
   {% endif %}
 
   {% if journey %}
@@ -254,7 +254,10 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div style="color:var(--text-muted);font-size:11px;padding:10px 0">Garmin effort: {{ rpe_garmin_count }} runs. Your RPE: {{ rpe_checkin_count }}/{{ run_count }} runs. Run <code>fit checkin</code> with RPE to add your subjective line.</div>
   {% endif %}
 
-  <div class="sec"><h2>Marathon Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Monthly marathon time prediction from VO2max using VDOT tables. Lower = faster. Green line = sub-4:00 target (240 min). Tracks how race readiness changes over time.</div><div class="line"></div></div>
+  <div class="sec"><h2>Race Readiness</h2><div class="line"></div></div>
+  <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px">Effort tracking, marathon prediction, and race results — how ready are you?</div>
+
+  <div class="sec" style="margin-top:10px"><h2>Marathon Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Monthly marathon time prediction from VO2max using VDOT tables. Lower = faster. Green line = sub-4:00 target (240 min). Tracks how race readiness changes over time.</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-marathon-pred" height="150"></canvas></div>
 
   {% if race_prediction %}
@@ -269,24 +272,31 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
 <div id="tab-coach" class="tab-content">
 
   {% if correlation_bars %}
-  <div class="sec"><h2>Correlations</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Cross-domain correlations using Spearman rank. Bar length = effect strength. Green = positive (more X → more Y). Red = negative (more X → less Y). Min sample: 20 for display, 30 for high confidence.</div><div class="line"></div></div>
+  <div class="sec"><h2>What Affects Your Performance?</h2><div class="line"></div></div>
+  <div style="margin-bottom:14px">
   {% for c in correlation_bars %}
-  <div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:10px">
-    <span style="width:180px;color:var(--text-muted)">{{ c.label }}</span>
-    <div style="width:{{ c.width }}%;min-width:4px;height:14px;background:{{ c.color }};border-radius:3px;opacity:0.6"></div>
-    <span style="color:{{ c.color }};font-family:var(--mono);font-weight:600">{{ c.r }}</span>
-    <span style="color:var(--text-dim);font-size:9px">n={{ c.n }} {{ c.confidence }}</span>
+  <div style="display:flex;align-items:center;gap:10px;margin:6px 0;padding:6px 10px;background:var(--surface);border-radius:8px">
+    <div style="width:{{ c.width + 10 }}%;min-width:20px;height:20px;background:{{ c.color }};border-radius:4px;opacity:0.5"></div>
+    <div style="flex:1">
+      <div style="font-size:12px;font-weight:600;color:var(--text)">{{ c.label }}</div>
+      <div style="font-size:9px;color:var(--text-dim)">{% if c.direction == 'negative' %}Negative effect{% else %}Positive effect{% endif %} · {{ c.confidence }} confidence · {{ c.n }} data points</div>
+    </div>
+    <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:{{ c.color }}">{{ c.r }}</div>
   </div>
   {% endfor %}
+  <div style="font-size:9px;color:var(--text-dim);margin-top:6px">Spearman rank correlation. Bars show effect strength. Build more data through daily <code>fit checkin</code> to unlock alcohol→HRV, sleep→readiness correlations.</div>
+  </div>
   {% endif %}
 
   {% if coaching %}
     <div style="font-size:10px;color:var(--text-muted);margin-bottom:12px">Generated: {{ coaching.generated_at }} {% if coaching.stale %}<span class="stale-badge">STALE</span>{% endif %}</div>
     {% for insight in coaching.insights %}
-    <div class="insight-box" style="background:{{ insight.bg }};border:1px solid {{ insight.border }}">
-      <div class="insight-title" style="color:{{ insight.color }}">{{ insight.icon }} {{ insight.title }}</div>
-      <div class="insight-body">{{ insight.body }}</div>
-    </div>
+    <details class="insight-box" style="background:{{ insight.bg }};border:1px solid {{ insight.border }}" {% if loop.first %}open{% endif %}>
+      <summary style="cursor:pointer;list-style:none">
+        <div style="font-size:14px;font-weight:700;color:{{ insight.color }};padding:2px 0">{{ insight.icon }} {{ insight.title }}</div>
+      </summary>
+      {% if insight.body %}<div class="insight-body" style="margin-top:6px">{{ insight.body }}</div>{% endif %}
+    </details>
     {% endfor %}
   {% else %}
     <div style="color:var(--text-muted);padding:40px 0;text-align:center">
