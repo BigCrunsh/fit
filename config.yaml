@@ -24,7 +24,7 @@ profile:
     lon: "${FIT_LON}"
 
 sync:
-  garmin_token_dir: "~/.garmy/"
+  garmin_token_dir: "~/.fit/garmin-tokens/"
   db_path: "~/.fit/fitness.db"
   weather_api: open-meteo
   sync_days_default: 7

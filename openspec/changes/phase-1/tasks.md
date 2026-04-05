@@ -51,7 +51,7 @@
 - [x] 7.1 End-to-end: `fit sync` → `fit checkin` → verify DB populated
 - [x] 7.2 Configure MCP: add `fit-mcp` (added alongside garmy-localdb) to Claude Chat/Code config
 - [x] 7.3 Verify Claude Chat can query fitness.db (verified: 111 activities, 41 health days, views working)
-- [ ] 7.4 Retire: remove `garmy-localdb` from claude_desktop_config.json, `mv ~/.garmy ~/.garmy.bak`, uninstall garmy-mcp from MCP config, `mv ~/.garmy ~/.garmy.bak`
+- [x] 7.4 Retire: removed garmy-localdb from config, mv ~/.garmy ~/.garmy.bak from MCP config, `mv ~/.garmy ~/.garmy.bak`
 
 ---
 
@@ -100,14 +100,14 @@
 
 ## 13. Basic Dashboard (3 tabs)
 
-- [ ] 13.1 Vendor Chart.js v4.x — minified JS for inlining
-- [ ] 13.2 Set up Jinja2 template structure — base layout + 3 tab blocks
-- [ ] 13.3 Implement **Training tab** — weekly volume with longest run, run type breakdown, training load bars, basic run log table
-- [ ] 13.4 Implement **Body tab** — readiness+RHR+HRV combo, sleep stacked bars, weight trend, stress vs battery, ACWR gauge
-- [ ] 13.5 Implement **Coach tab** — coaching.json insight boxes, timestamp, stale indicator
-- [ ] 13.6 Apply dark theme — `#07070c`, JetBrains Mono, basic color scheme
-- [ ] 13.7 Support `--daily` and `--weekly` snapshot flags
-- [ ] 13.8 Test: 3 tabs render, coaching placeholder, snapshots
+- [x] 13.1 Vendor Chart.js v4.4.7 — minified JS for inlining
+- [x] 13.2 Set up Jinja2 template structure — base layout + 3 tab blocks
+- [x] 13.3 Implement **Training tab** — weekly volume with longest run, run type breakdown, training load bars, basic run log table
+- [x] 13.4 Implement **Body tab** — readiness+RHR+HRV combo, sleep stacked bars, weight trend, stress vs battery, ACWR gauge
+- [x] 13.5 Implement **Coach tab** — coaching.json insight boxes, timestamp, stale indicator
+- [x] 13.6 Apply dark theme — `#07070c`, JetBrains Mono, basic color scheme
+- [x] 13.7 Support `--daily` and `--weekly` snapshot flags
+- [x] 13.8 Test: 3 tabs render, dashboard.html + daily + weekly snapshots, coaching placeholder, snapshots
 
 ## 14. Claude Code Skill
 

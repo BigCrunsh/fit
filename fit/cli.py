@@ -64,6 +64,44 @@ def checkin():
 
 
 @main.command()
+@click.option("--daily", is_flag=True, help="Save a daily snapshot (YYYY-MM-DD.html).")
+@click.option("--weekly", is_flag=True, help="Save a weekly snapshot (YYYY-WNN.html).")
+def report(daily: bool, weekly: bool):
+    """Generate HTML dashboard."""
+    from datetime import date, datetime
+
+    from fit.config import get_config
+    from fit.db import get_db
+    from fit.report.generator import generate_dashboard
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+
+    reports_dir = Path(config["sync"]["db_path"]).expanduser().parent / "reports"
+
+    try:
+        # Always generate the current dashboard
+        dashboard_path = reports_dir / "dashboard.html"
+        generate_dashboard(conn, dashboard_path)
+        console.print(f"  [green]✓[/green] {dashboard_path}")
+
+        if daily:
+            snapshot = reports_dir / f"{date.today().isoformat()}.html"
+            generate_dashboard(conn, snapshot)
+            console.print(f"  [green]✓[/green] {snapshot}")
+
+        if weekly:
+            iso = date.today().isocalendar()
+            snapshot = reports_dir / f"{iso.year}-W{iso.week:02d}.html"
+            generate_dashboard(conn, snapshot)
+            console.print(f"  [green]✓[/green] {snapshot}")
+
+        console.print("[bold green]Done.[/bold green]")
+    finally:
+        conn.close()
+
+
+@main.command()
 @click.option("--all", "recompute_all", is_flag=True, help="Recompute all weeks, not just recent.")
 def recompute(recompute_all: bool):
     """Recompute derived metrics and weekly aggregations."""
