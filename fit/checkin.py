@@ -102,14 +102,14 @@ def run_checkin(conn: sqlite3.Connection) -> None:
 
 
 def _parse_alcohol(s: str) -> tuple[float, str | None]:
-    """Parse alcohol input: '0' → (0, None), '2 beers' → (2.0, '2 beers')."""
+    """Parse alcohol input: '0' → (0, None), '2 beers' → (2.0, '2 beers'), 'small glass wine' → (1.0, 'small glass wine')."""
     if not s or s == "0":
         return 0, None
     # Try to extract leading number
     parts = s.split(None, 1)
     try:
         count = float(parts[0])
-        detail = s if len(parts) > 1 else None
-        return count, detail
+        return count, s
     except ValueError:
-        return 0, s
+        # No leading number — text describes a drink, assume 1 serving
+        return 1.0, s
