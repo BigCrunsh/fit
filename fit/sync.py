@@ -6,6 +6,8 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from fit import garmin, weather
+from fit.analysis import enrich_activity, compute_weekly_agg
+from fit.calibration import get_active_calibration, extract_lthr_from_race, add_calibration
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,11 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
         start = date.today() - timedelta(days=days)
     end = date.today()
 
-    counts = {"health": 0, "activities": 0, "spo2": 0, "weather": 0}
+    counts = {"health": 0, "activities": 0, "spo2": 0, "weather": 0, "enriched": 0, "weekly_agg": 0}
+
+    # Get LTHR calibration for zone computation
+    lthr_cal = get_active_calibration(conn, "lthr")
+    lthr = int(lthr_cal["value"]) if lthr_cal else None
 
     # 1. Health metrics
     health_rows = garmin.fetch_health(api, start, end)
@@ -34,21 +40,34 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
 
     # 2. Activities
     activities = garmin.fetch_activities(api, start, end)
+
+    # 3. Enrich new activities with derived metrics
     for a in activities:
-        _upsert_activity(conn, a)
+        existing = conn.execute("SELECT hr_zone FROM activities WHERE id = ?", (a["id"],)).fetchone()
+        if existing and existing["hr_zone"] is not None:
+            # Already enriched — upsert raw fields only
+            _upsert_activity(conn, a)
+        else:
+            # New activity — enrich and insert
+            enriched = enrich_activity(a, config, lthr=lthr)
+            _upsert_enriched_activity(conn, enriched)
+            counts["enriched"] += 1
+
+            # Auto-extract LTHR from races
+            if enriched.get("run_type") == "race":
+                candidate_lthr = extract_lthr_from_race(enriched)
+                if candidate_lthr:
+                    logger.info("LTHR candidate from race %s: %d bpm", enriched.get("name"), candidate_lthr)
     counts["activities"] = len(activities)
 
-    # 3. SpO2
+    # 4. SpO2
     spo2_data = garmin.fetch_spo2(api, start, end)
     for d_str, avg_spo2 in spo2_data.items():
         if avg_spo2 is not None:
-            conn.execute(
-                "UPDATE daily_health SET avg_spo2 = ? WHERE date = ?",
-                (avg_spo2, d_str),
-            )
+            conn.execute("UPDATE daily_health SET avg_spo2 = ? WHERE date = ?", (avg_spo2, d_str))
             counts["spo2"] += 1
 
-    # 4. Weather for activity dates
+    # 5. Weather for activity dates
     lat = config.get("profile", {}).get("location", {}).get("lat")
     lon = config.get("profile", {}).get("location", {}).get("lon")
     if lat and lon:
@@ -63,9 +82,56 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
                 _upsert_weather(conn, w)
                 counts["weather"] += 1
 
+    # 6. Recompute weekly_agg for affected weeks
+    affected_weeks = _get_affected_weeks(activities, start, end)
+    for week_str in affected_weeks:
+        agg = compute_weekly_agg(conn, week_str)
+        _upsert_weekly_agg(conn, agg)
+        counts["weekly_agg"] += 1
+
     conn.commit()
     logger.info("Sync complete: %s", counts)
     return counts
+
+
+def enrich_existing_activities(conn: sqlite3.Connection, config: dict) -> int:
+    """Enrich all activities that have NULL hr_zone (e.g., from backfill migration).
+
+    Returns count of enriched activities.
+    """
+    lthr_cal = get_active_calibration(conn, "lthr")
+    lthr = int(lthr_cal["value"]) if lthr_cal else None
+
+    rows = conn.execute("""
+        SELECT id, date, type, subtype, name, distance_km, duration_min,
+               pace_sec_per_km, avg_hr, max_hr, avg_cadence, elevation_gain_m,
+               calories, vo2max, aerobic_te, training_load, avg_stride_m,
+               avg_speed, start_lat, start_lon
+        FROM activities WHERE hr_zone IS NULL
+    """).fetchall()
+
+    count = 0
+    for row in rows:
+        a = dict(row)
+        enriched = enrich_activity(a, config, lthr=lthr)
+        conn.execute("""
+            UPDATE activities SET
+                hr_zone_maxhr = ?, hr_zone_lthr = ?, hr_zone = ?,
+                effort_class = ?, speed_per_bpm = ?, speed_per_bpm_z2 = ?,
+                run_type = ?, max_hr_used = ?, lthr_used = ?
+            WHERE id = ?
+        """, (
+            enriched.get("hr_zone_maxhr"), enriched.get("hr_zone_lthr"),
+            enriched.get("hr_zone"), enriched.get("effort_class"),
+            enriched.get("speed_per_bpm"), enriched.get("speed_per_bpm_z2"),
+            enriched.get("run_type"), enriched.get("max_hr_used"),
+            enriched.get("lthr_used"), enriched["id"],
+        ))
+        count += 1
+
+    conn.commit()
+    logger.info("Enriched %d existing activities", count)
+    return count
 
 
 def _upsert_health(conn: sqlite3.Connection, h: dict) -> None:
@@ -180,6 +246,69 @@ def _upsert_activity(conn: sqlite3.Connection, a: dict) -> None:
             start_lat = excluded.start_lat,
             start_lon = excluded.start_lon
     """, a)
+
+
+def _upsert_enriched_activity(conn: sqlite3.Connection, a: dict) -> None:
+    """Insert a new enriched activity with all derived fields."""
+    conn.execute("""
+        INSERT INTO activities (
+            id, date, type, subtype, name,
+            distance_km, duration_min, pace_sec_per_km,
+            avg_hr, max_hr, avg_cadence, elevation_gain_m,
+            calories, vo2max, aerobic_te, training_load,
+            avg_stride_m, avg_speed, start_lat, start_lon,
+            hr_zone_maxhr, hr_zone_lthr, hr_zone,
+            speed_per_bpm, speed_per_bpm_z2,
+            effort_class, run_type, max_hr_used, lthr_used
+        ) VALUES (
+            :id, :date, :type, :subtype, :name,
+            :distance_km, :duration_min, :pace_sec_per_km,
+            :avg_hr, :max_hr, :avg_cadence, :elevation_gain_m,
+            :calories, :vo2max, :aerobic_te, :training_load,
+            :avg_stride_m, :avg_speed, :start_lat, :start_lon,
+            :hr_zone_maxhr, :hr_zone_lthr, :hr_zone,
+            :speed_per_bpm, :speed_per_bpm_z2,
+            :effort_class, :run_type, :max_hr_used, :lthr_used
+        )
+        ON CONFLICT(id) DO UPDATE SET
+            date = excluded.date, type = excluded.type, name = excluded.name,
+            distance_km = excluded.distance_km, duration_min = excluded.duration_min,
+            pace_sec_per_km = excluded.pace_sec_per_km,
+            avg_hr = excluded.avg_hr, max_hr = excluded.max_hr,
+            avg_cadence = excluded.avg_cadence, elevation_gain_m = excluded.elevation_gain_m,
+            calories = excluded.calories, vo2max = excluded.vo2max,
+            aerobic_te = excluded.aerobic_te, training_load = excluded.training_load,
+            avg_stride_m = excluded.avg_stride_m, avg_speed = excluded.avg_speed,
+            start_lat = excluded.start_lat, start_lon = excluded.start_lon,
+            hr_zone_maxhr = excluded.hr_zone_maxhr, hr_zone_lthr = excluded.hr_zone_lthr,
+            hr_zone = excluded.hr_zone, speed_per_bpm = excluded.speed_per_bpm,
+            speed_per_bpm_z2 = excluded.speed_per_bpm_z2,
+            effort_class = excluded.effort_class, run_type = excluded.run_type,
+            max_hr_used = excluded.max_hr_used, lthr_used = excluded.lthr_used
+    """, a)
+
+
+def _upsert_weekly_agg(conn: sqlite3.Connection, agg: dict) -> None:
+    """Upsert a weekly_agg row."""
+    cols = list(agg.keys())
+    placeholders = ", ".join(f":{c}" for c in cols)
+    updates = ", ".join(f"{c} = excluded.{c}" for c in cols if c != "week")
+    conn.execute(f"""
+        INSERT INTO weekly_agg ({', '.join(cols)})
+        VALUES ({placeholders})
+        ON CONFLICT(week) DO UPDATE SET {updates}
+    """, agg)
+
+
+def _get_affected_weeks(activities: list[dict], start: date, end: date) -> set[str]:
+    """Get ISO week strings for all dates in the sync range."""
+    weeks = set()
+    current = start
+    while current <= end:
+        iso = current.isocalendar()
+        weeks.add(f"{iso.year}-W{iso.week:02d}")
+        current += timedelta(days=1)
+    return weeks
 
 
 def _upsert_weather(conn: sqlite3.Connection, w: dict) -> None:

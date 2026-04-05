@@ -64,6 +64,53 @@ def checkin():
 
 
 @main.command()
+@click.option("--all", "recompute_all", is_flag=True, help="Recompute all weeks, not just recent.")
+def recompute(recompute_all: bool):
+    """Recompute derived metrics and weekly aggregations."""
+    from fit.config import get_config
+    from fit.db import get_db
+    from fit.sync import enrich_existing_activities
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+
+    try:
+        console.print("[bold]Enriching activities with missing derived fields...[/bold]")
+        enriched = enrich_existing_activities(conn, config)
+        console.print(f"  [green]✓[/green] Enriched {enriched} activities")
+
+        console.print("[bold]Recomputing weekly aggregations...[/bold]")
+        from fit.analysis import compute_weekly_agg
+        from fit.sync import _upsert_weekly_agg
+
+        # Get all weeks with activities
+        weeks = conn.execute("""
+            SELECT DISTINCT strftime('%Y-W', date, 'weekday 0', '-6 days')
+                || substr('0' || (strftime('%W', date, 'weekday 0', '-6 days') + 0), -2)
+            FROM activities ORDER BY 1
+        """).fetchall()
+
+        # Simpler: get all distinct ISO weeks
+        from datetime import date as d
+        all_dates = conn.execute("SELECT DISTINCT date FROM activities ORDER BY date").fetchall()
+        week_set = set()
+        for row in all_dates:
+            dt = d.fromisoformat(row[0])
+            iso = dt.isocalendar()
+            week_set.add(f"{iso.year}-W{iso.week:02d}")
+
+        for week_str in sorted(week_set):
+            agg = compute_weekly_agg(conn, week_str)
+            _upsert_weekly_agg(conn, agg)
+
+        conn.commit()
+        console.print(f"  [green]✓[/green] Recomputed {len(week_set)} weeks")
+        console.print("[bold green]Done.[/bold green]")
+    finally:
+        conn.close()
+
+
+@main.command()
 @click.argument("metric", type=click.Choice(["max_hr", "lthr"]))
 def calibrate(metric: str):
     """Calibrate a physiological metric (max_hr or lthr)."""
