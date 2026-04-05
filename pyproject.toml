@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fit"
+version = "0.1.0"
+description = "Personal fitness data platform"
+requires-python = ">=3.11"
+dependencies = [
+    "garminconnect>=0.2.0",
+    "garth>=0.4.0",
+    "requests>=2.31.0",
+    "pyyaml>=6.0",
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "jinja2>=3.1.0",
+    "mcp>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.4.0",
+]
+
+[project.scripts]
+fit = "fit.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["fit*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

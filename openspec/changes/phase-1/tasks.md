@@ -2,56 +2,56 @@
 
 ## 1. Project Setup
 
-- [ ] 1.1 Create `pyproject.toml` with package metadata, dependencies, and entry point: `[project.scripts] fit = "fit.cli:main"`. Package name `fit`, Python ≥3.11.
-- [ ] 1.2 Create package structure: `fit/__init__.py`, `fit/cli.py` (Click group), move planned `lib/` modules to `fit/` package
-- [ ] 1.3 Set up logging: configure Python `logging` in `fit/cli.py` — rotating file handlers (`~/.fit/logs/sync.log`, `report.log`), Rich console handler. One logger per module via `getLogger(__name__)`.
-- [ ] 1.4 Verify `pip install -e .` → `fit --help` works
-- [ ] 1.5 Test: import paths work (`from fit.config import get_config`), logging writes to file
+- [x] 1.1 Create `pyproject.toml` with package metadata, dependencies, and entry point: `[project.scripts] fit = "fit.cli:main"`. Package name `fit`, Python ≥3.11.
+- [x] 1.2 Create package structure: `fit/__init__.py`, `fit/cli.py` (Click group), move planned `lib/` modules to `fit/` package
+- [x] 1.3 Set up logging: configure Python `logging` in `fit/cli.py` — rotating file handlers (`~/.fit/logs/sync.log`, `report.log`), Rich console handler. One logger per module via `getLogger(__name__)`.
+- [x] 1.4 Verify `pip install -e .` → `fit --help` works
+- [x] 1.5 Test: import paths work (`from fit.config import get_config`), logging writes to file
 
 ## 2. Foundation (config + database)
 
-- [ ] 2.1 Implement `fit/config.py` — `get_config()` with three-layer loading: `config.yaml` → `config.local.yaml` → env vars, deep merge, `${VAR}` resolution, error on unresolved
-- [ ] 2.2 Implement `fit/db.py` — `get_db(config)` returns SQLite connection, `schema_version` tracking table, migration runner with **transaction safety** (BEGIN/COMMIT per migration, ROLLBACK on error, schema_version updated only after success). Log migration name + row counts + success/failure.
-- [ ] 2.3 Create `config.local.yaml` with personal values (gitignored) — profile (max_hr 192), location, garmin token dir, db path
-- [ ] 2.4 Test: config loads correctly, migration runner applies in order with transactions, rollback on failure leaves clean state
+- [x] 2.1 Implement `fit/config.py` — `get_config()` with three-layer loading: `config.yaml` → `config.local.yaml` → env vars, deep merge, `${VAR}` resolution, error on unresolved
+- [x] 2.2 Implement `fit/db.py` — `get_db(config)` returns SQLite connection, `schema_version` tracking table, migration runner with **transaction safety** (BEGIN/COMMIT per migration, ROLLBACK on error, schema_version updated only after success). Log migration name + row counts + success/failure.
+- [x] 2.3 Create `config.local.yaml` with personal values (gitignored) — profile (max_hr 192), location, garmin token dir, db path
+- [x] 2.4 Test: config loads correctly, migration runner applies in order with transactions, rollback on failure leaves clean state
 
 ## 3. Backfill Migrations
 
-- [ ] 3.1 Implement `migrations/002_backfill_garmy.py` — read `~/.garmy/health.db`, import health + activities, warn if missing. Log row counts.
-- [ ] 3.2 Implement `migrations/003_backfill_weight.py` — Apple Health CSV → `body_comp`, warn if missing
-- [ ] 3.3 Implement `migrations/004_backfill_checkins.py` — 5 historical check-ins, `INSERT OR IGNORE`
-- [ ] 3.4 Test: all migrations end-to-end, idempotency, missing source graceful handling
+- [x] 3.1 Implement `migrations/002_backfill_garmy.py` — read `~/.garmy/health.db`, import health + activities, warn if missing. Log row counts.
+- [x] 3.2 Implement `migrations/003_backfill_weight.py` — Apple Health CSV → `body_comp`, warn if missing
+- [x] 3.3 Implement `migrations/004_backfill_checkins.py` — 5 historical check-ins, `INSERT OR IGNORE`
+- [x] 3.4 Test: all migrations end-to-end, idempotency, missing source graceful handling
 
 ## 4. Basic Garmin Sync + Weather
 
-- [ ] 4.1 Implement `fit/garmin.py` — connect via garth tokens, `fetch_health()`, `fetch_activities()` (all types, manual + auto_detected)
-- [ ] 4.2 Add `fetch_spo2()` — graceful NULL if disabled
-- [ ] 4.3 Implement `fit/weather.py` — `fetch_daily_weather()` via Open-Meteo
-- [ ] 4.4 Implement basic `fit sync` — Garmin → health + activities + SpO2 → **upsert via INSERT ON CONFLICT** (raw fields only) → daily weather → log summary. `--days N` and `--full` flags.
-- [ ] 4.5 Implement basic `fit status` — table counts, last sync timestamp
-- [ ] 4.6 Test: `fit sync --days 3` populates DB, `fit status` shows counts, re-sync doesn't duplicate
+- [x] 4.1 Implement `fit/garmin.py` — connect via garth tokens, `fetch_health()`, `fetch_activities()` (all types, manual + auto_detected)
+- [x] 4.2 Add `fetch_spo2()` — graceful NULL if disabled
+- [x] 4.3 Implement `fit/weather.py` — `fetch_daily_weather()` via Open-Meteo
+- [x] 4.4 Implement basic `fit sync` — Garmin → health + activities + SpO2 → **upsert via INSERT ON CONFLICT** (raw fields only) → daily weather → log summary. `--days N` and `--full` flags.
+- [x] 4.5 Implement basic `fit status` — table counts, last sync timestamp
+- [x] 4.6 Test: `fit sync --days 3` populates DB, `fit status` shows counts, re-sync doesn't duplicate
 
 ## 5. Basic Check-in
 
-- [ ] 5.1 Implement `fit/checkin.py` — Rich prompts: hydration, alcohol, legs, eating, water, energy, weight (optional), notes
-- [ ] 5.2 Add duplicate detection (show existing, overwrite y/N)
-- [ ] 5.3 Add weight cross-write to `body_comp`
-- [ ] 5.4 Test: check-in flow, DB row, duplicate handling, weight dual-write
+- [x] 5.1 Implement `fit/checkin.py` — Rich prompts: hydration, alcohol, legs, eating, water, energy, weight (optional), notes
+- [x] 5.2 Add duplicate detection (show existing, overwrite y/N)
+- [x] 5.3 Add weight cross-write to `body_comp`
+- [x] 5.4 Test: check-in flow, DB row, duplicate handling, weight dual-write
 
 ## 6. MCP Server
 
-- [ ] 6.1 Implement `mcp/server.py` — MCP SDK, read-only SQLite (`?mode=ro`), register tools
-- [ ] 6.2 Implement `execute_sql_query()` — SELECT-only validation
-- [ ] 6.3 Implement `get_health_summary()` and `get_run_context()`
-- [ ] 6.4 Implement `explore_database_structure()` and `get_table_details()`
-- [ ] 6.5 Test: all tools, SQL injection protection
+- [x] 6.1 Implement `mcp/server.py` — MCP SDK, read-only SQLite (`?mode=ro`), register tools
+- [x] 6.2 Implement `execute_sql_query()` — SELECT-only validation
+- [x] 6.3 Implement `get_health_summary()` and `get_run_context()`
+- [x] 6.4 Implement `explore_database_structure()` and `get_table_details()`
+- [x] 6.5 Test: all tools, SQL injection protection
 
 ## 7. Integration + Legacy Retirement
 
-- [ ] 7.1 End-to-end: `fit sync` → `fit checkin` → verify DB populated
-- [ ] 7.2 Configure MCP: add `fit-mcp` to Claude Chat/Code config
-- [ ] 7.3 Verify Claude Chat can query fitness.db
-- [ ] 7.4 Retire: remove `garmy-localdb` from MCP config, `mv ~/.garmy ~/.garmy.bak`
+- [x] 7.1 End-to-end: `fit sync` → `fit checkin` → verify DB populated
+- [x] 7.2 Configure MCP: add `fit-mcp` (added alongside garmy-localdb) to Claude Chat/Code config
+- [ ] 7.3 Verify Claude Chat can query fitness.db (restart Claude Desktop, test fit-mcp tools)
+- [ ] 7.4 Retire: remove `garmy-localdb` from claude_desktop_config.json, `mv ~/.garmy ~/.garmy.bak`, uninstall garmy-mcp from MCP config, `mv ~/.garmy ~/.garmy.bak`
 
 ---
 

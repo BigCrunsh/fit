@@ -16,5 +16,8 @@ __pycache__/
 *.pyc
 .env
 
+# Python packaging
+*.egg-info/
+
 # OS
 .DS_Store
