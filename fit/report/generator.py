@@ -56,6 +56,7 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "race_prediction": _race_prediction(conn),
         "coaching": _coaching(conn),
         "recent_alerts": _recent_alerts(conn),
+        "goal_progress": _goal_progress(conn),
         "correlation_bars": _correlation_bars(conn),
         "phase_compliance": _phase_compliance(conn),
         "calibration_panel": _calibration_panel(conn),
@@ -643,6 +644,42 @@ def _coaching(conn):
     insights = [{**styles.get(i.get("type", "info"), styles["info"]), "title": i.get("title", ""), "body": i.get("body", "")}
                 for i in data.get("insights", [])]
     return {"generated_at": data.get("generated_at", ""), "stale": stale, "insights": insights}
+
+
+# ── Goal Progress ──
+
+def _goal_progress(conn):
+    goals = conn.execute("SELECT * FROM goals WHERE active = 1").fetchall()
+    results = []
+    for g in goals:
+        current = None
+        pct = None
+        if g["type"] == "metric" and g["target_value"]:
+            if "vo2" in (g["name"] or "").lower():
+                row = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
+                if row:
+                    current = row["vo2max"]
+                    pct = current / g["target_value"] * 100
+            elif "weight" in (g["name"] or "").lower():
+                row = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
+                if row:
+                    current = row["weight_kg"]
+                    # For weight, lower is better — invert progress
+                    start_weight = 78.3  # approximate start
+                    target = g["target_value"]
+                    if start_weight > target:
+                        pct = max(0, (start_weight - current) / (start_weight - target) * 100)
+        elif g["type"] == "habit" and g["target_value"]:
+            streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
+            if streak:
+                current = streak[0] or 0
+                pct = current / g["target_value"] * 100
+        results.append({
+            "name": g["name"], "type": g["type"], "current": current, "target": g["target_value"],
+            "target_date": g["target_date"], "pct": min(pct or 0, 100),
+            "color": SAFE if pct and pct >= 80 else CAUTION if pct and pct >= 50 else DANGER,
+        })
+    return results
 
 
 # ── Recent Alerts ──

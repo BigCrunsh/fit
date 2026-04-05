@@ -90,6 +90,11 @@ pytest tests/ -v --tb=short   # compact output
 
 Tests use in-memory SQLite with the full migration suite applied. Fixtures in `tests/conftest.py`.
 
+## Notes
+
+- **Config env vars** are placeholder-substitution only (`${VAR}` in YAML), not a general override layer. If `config.local.yaml` has a literal value, env vars won't override it. This is by-design.
+- **Logging** uses a single `sync.log` file for all operations (the design mentioned per-module files, but the implementation uses one rotating file).
+
 ## Common Pitfalls
 
 - **config.local.yaml is gitignored** — must be created manually per machine

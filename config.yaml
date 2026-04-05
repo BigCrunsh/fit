@@ -28,6 +28,7 @@ sync:
   db_path: "~/.fit/fitness.db"
   weather_api: open-meteo
   sync_days_default: 7
+  weight_csv_path: "${FIT_WEIGHT_CSV:-}"  # Path to Apple Health weight CSV (e.g., ~/Downloads/apple_health_weight.csv)
 
 analysis:
   easy_hr_ceiling: 134           # Top of Z2 — true easy ceiling

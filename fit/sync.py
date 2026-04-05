@@ -3,6 +3,7 @@
 import logging
 import sqlite3
 from datetime import date, timedelta
+from pathlib import Path
 
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn
 
@@ -141,7 +142,15 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
 
     conn.commit()
 
-    # 7. Auto-compute correlations + run alerts
+    # 7. Auto-import weight CSV if configured
+    weight_csv = config.get("sync", {}).get("weight_csv_path", "")
+    if weight_csv:
+        try:
+            _auto_import_weight(conn, Path(weight_csv).expanduser())
+        except Exception as e:
+            logger.debug("Weight auto-import skipped: %s", e)
+
+    # 8. Auto-compute correlations + run alerts
     try:
         from fit.correlations import compute_all_correlations
         compute_all_correlations(conn)
@@ -158,6 +167,66 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
 
     logger.info("Sync complete: %s", counts)
     return counts
+
+
+def _auto_import_weight(conn: sqlite3.Connection, csv_path: Path) -> None:
+    """Auto-import new weight measurements from configured CSV path."""
+    import csv
+    import hashlib
+
+    if not csv_path.exists():
+        logger.debug("Weight CSV not found at %s", csv_path)
+        return
+
+    file_hash = hashlib.md5(csv_path.read_bytes()).hexdigest()
+
+    # Check import_log for duplicate
+    existing = conn.execute("SELECT 1 FROM import_log WHERE file_hash = ?", (file_hash,)).fetchone()
+    if existing:
+        logger.debug("Weight CSV already imported (hash match)")
+        return
+
+    count = 0
+    with open(csv_path, newline="") as f:
+        reader = csv.DictReader(f)
+        # Validate header
+        headers = reader.fieldnames or []
+        date_col = next((h for h in headers if h.lower() in ("date", "startdate")), None)
+        weight_col = next((h for h in headers if "weight" in h.lower() or h.lower() == "value"), None)
+        if not date_col or not weight_col:
+            logger.warning("Weight CSV has unexpected columns: %s. Expected Date + Weight column.", headers)
+            return
+
+        for row in reader:
+            d = str(row.get(date_col, ""))[:10]
+            try:
+                w = float(row.get(weight_col, ""))
+            except (ValueError, TypeError):
+                continue
+            # Only insert if date not already in body_comp
+            existing_w = conn.execute("SELECT 1 FROM body_comp WHERE date = ?", (d,)).fetchone()
+            if not existing_w:
+                conn.execute("INSERT INTO body_comp (date, weight_kg, source) VALUES (?, ?, 'fitdays')", (d, w))
+                count += 1
+
+    # Log the import
+    total_rows = count  # approximation
+    conn.execute("""
+        INSERT INTO import_log (filename, file_hash, row_count, rows_imported, source_type)
+        VALUES (?, ?, ?, ?, 'weight_csv')
+    """, (str(csv_path), file_hash, total_rows, count))
+
+    # Auto-update weight calibration
+    if count > 0:
+        latest = conn.execute("SELECT date, weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
+        if latest:
+            from fit.calibration import add_calibration
+            add_calibration(conn, "weight", latest["weight_kg"], "scale", "high",
+                            date.fromisoformat(latest["date"]))
+            logger.info("Weight calibration auto-updated: %s kg on %s", latest["weight_kg"], latest["date"])
+
+    conn.commit()
+    logger.info("Auto-imported %d new weight measurements from %s", count, csv_path)
 
 
 def enrich_existing_activities(conn: sqlite3.Connection, config: dict) -> int:

@@ -96,6 +96,19 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   </div>
   {% endif %}
 
+  {% if goal_progress %}
+  <div class="sec"><h2>Goals</h2><div class="line"></div></div>
+  {% for g in goal_progress %}
+  <div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:10px">
+    <span style="width:140px;color:var(--text-muted)">{{ g.name }}</span>
+    <div style="flex:1;height:10px;background:rgba(255,255,255,0.05);border-radius:5px;overflow:hidden">
+      <div style="width:{{ g.pct }}%;height:100%;background:{{ g.color }};border-radius:5px"></div>
+    </div>
+    <span style="color:var(--text-dim);font-family:var(--mono);font-size:9px">{{ g.current or '?' }}/{{ g.target or '?' }}{% if g.target_date %} ({{ g.target_date }}){% endif %}</span>
+  </div>
+  {% endfor %}
+  {% endif %}
+
   {% if journey %}
   <div class="journey">
     <div style="font-size:10px;font-weight:700;color:var(--text-muted);margin-bottom:4px">{{ journey.goal_name }}</div>

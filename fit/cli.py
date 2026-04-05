@@ -98,6 +98,174 @@ def report(daily: bool, weekly: bool):
         conn.close()
 
 
+@main.group()
+def goal():
+    """Manage training goals."""
+    pass
+
+
+@goal.command("add")
+def goal_add():
+    """Add a new goal interactively."""
+    from rich.prompt import Prompt
+
+    from fit.config import get_config
+    from fit.db import get_db
+    from fit.goals import create_goal
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    try:
+        name = Prompt.ask("  Goal name")
+        goal_type = Prompt.ask("  Type", choices=["race", "metric", "habit"])
+        target_value = None
+        target_unit = None
+        target_time = None
+        target_date = None
+
+        if goal_type == "race":
+            target_time = Prompt.ask("  Target time (e.g., 3:59:59)", default="")
+            target_date = Prompt.ask("  Race date (YYYY-MM-DD)", default="")
+        elif goal_type == "metric":
+            target_value = float(Prompt.ask("  Target value"))
+            target_unit = Prompt.ask("  Unit (e.g., ml/kg/min, kg, weeks)")
+            target_date = Prompt.ask("  Target date (YYYY-MM-DD, enter=none)", default="") or None
+        elif goal_type == "habit":
+            target_value = float(Prompt.ask("  Target (e.g., 8 for 8 consecutive weeks)"))
+            target_unit = Prompt.ask("  Unit (e.g., consecutive_weeks)")
+
+        gid = create_goal(conn, name, goal_type, target_value=target_value, target_unit=target_unit,
+                          target_time=target_time or None, target_date=target_date or None)
+        console.print(f"  [green]✓ Goal created: {name} (id={gid})[/green]")
+    finally:
+        conn.close()
+
+
+@goal.command("list")
+def goal_list():
+    """Show all active goals with progress."""
+    from fit.config import get_config
+    from fit.db import get_db
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    try:
+        goals = conn.execute("SELECT * FROM goals WHERE active = 1 ORDER BY id").fetchall()
+        if not goals:
+            console.print("  No active goals.")
+            return
+        for g in goals:
+            progress = ""
+            if g["type"] == "metric" and g["target_value"]:
+                # Find current value
+                if "vo2" in g["name"].lower():
+                    cur = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
+                    if cur:
+                        pct = cur["vo2max"] / g["target_value"] * 100
+                        progress = f" [{cur['vo2max']}/{g['target_value']} = {pct:.0f}%]"
+                elif "weight" in g["name"].lower():
+                    cur = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
+                    if cur:
+                        progress = f" [{cur['weight_kg']:.1f}/{g['target_value']}kg]"
+            elif g["type"] == "habit" and g["target_value"]:
+                streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
+                if streak:
+                    progress = f" [{streak[0] or 0}/{int(g['target_value'])} weeks]"
+            console.print(f"  {g['id']}. {g['name']} ({g['type']}) — {g['target_date'] or 'no date'}{progress}")
+    finally:
+        conn.close()
+
+
+@goal.command("complete")
+@click.argument("goal_id", type=int)
+def goal_complete(goal_id: int):
+    """Mark a goal as achieved."""
+    from fit.config import get_config
+    from fit.db import get_db
+    from fit.goals import log_goal_event
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    try:
+        conn.execute("UPDATE goals SET active = 0 WHERE id = ?", (goal_id,))
+        log_goal_event(conn, goal_id, None, "goal_completed", "Goal marked as achieved")
+        conn.commit()
+        console.print(f"  [green]✓ Goal {goal_id} completed[/green]")
+    finally:
+        conn.close()
+
+
+@main.command()
+def doctor():
+    """Validate data pipeline health."""
+    from fit.calibration import get_calibration_status
+    from fit.config import get_config
+    from fit.data_health import check_data_sources
+    from fit.db import get_db
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+    try:
+        issues = 0
+        console.print("\n[bold]fit doctor[/bold]\n")
+
+        # Schema version
+        versions = [r[0] for r in conn.execute("SELECT version FROM schema_version ORDER BY version").fetchall()]
+        console.print(f"  [green]✓[/green] Schema versions: {versions}")
+
+        # Tables
+        tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()]
+        expected = {"activities", "daily_health", "checkins", "body_comp", "weather", "goals",
+                    "training_phases", "goal_log", "calibration", "weekly_agg", "schema_version",
+                    "correlations", "alerts", "import_log"}
+        missing_tables = expected - set(tables)
+        if missing_tables:
+            console.print(f"  [red]✗[/red] Missing tables: {missing_tables}")
+            issues += 1
+        else:
+            console.print(f"  [green]✓[/green] All {len(expected)} tables present")
+
+        # Weekly_agg freshness
+        latest_activity = conn.execute("SELECT MAX(created_at) FROM activities").fetchone()[0]
+        latest_agg = conn.execute("SELECT MAX(created_at) FROM weekly_agg").fetchone()[0]
+        if latest_activity and latest_agg and latest_activity > latest_agg:
+            console.print("  [yellow]⚠[/yellow] weekly_agg may be stale — run `fit recompute`")
+            issues += 1
+        else:
+            console.print("  [green]✓[/green] weekly_agg up to date")
+
+        # Calibration
+        cal = get_calibration_status(conn)
+        stale = [c for c in cal if c["stale"]]
+        if stale:
+            console.print(f"  [yellow]⚠[/yellow] {len(stale)} stale calibration(s): {', '.join(c['metric'] for c in stale)}")
+            issues += 1
+        else:
+            console.print("  [green]✓[/green] All calibrations current")
+
+        # Data sources
+        sources = check_data_sources(conn)
+        bad = [s for s in sources if s["status"] != "active"]
+        if bad:
+            console.print(f"  [yellow]⚠[/yellow] {len(bad)} data source warning(s)")
+            for s in bad:
+                console.print(f"    {s['source']}: {s['status']}")
+            issues += 1
+        else:
+            console.print("  [green]✓[/green] All data sources active")
+
+        # Correlations
+        try:
+            corr_count = conn.execute("SELECT COUNT(*) FROM correlations WHERE status = 'computed'").fetchone()[0]
+            console.print(f"  [green]✓[/green] {corr_count} correlations computed")
+        except Exception:
+            console.print("  [dim]—[/dim] Correlations table not yet created (run `fit sync`)")
+
+        console.print(f"\n  {'[green]All healthy ✓' if issues == 0 else f'[yellow]{issues} issue(s) found'}[/]\n")
+    finally:
+        conn.close()
+
+
 @main.command()
 def correlate():
     """Compute cross-domain correlations and display results."""

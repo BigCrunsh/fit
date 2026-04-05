@@ -63,24 +63,24 @@
 
 ## 8. Fitdays Auto-Import
 
-- [ ] 8.1 Add `sync.weight_csv_path` config field — explicit path, not ~/Downloads/ scanning (phase-2-enrich 4.1)
-- [ ] 8.2 Add migration 005 (extend): `import_log` table (phase-2-enrich 4.2)
-- [ ] 8.3 Implement auto-import in `fit sync` — check configured path, validate CSV header, import new dates only, log to import_log, auto-update weight calibration (phase-2-enrich 4.3)
-- [ ] 8.4 Investigate Fitdays API for direct integration — spike, document findings (phase-2-enrich 4.4)
-- [ ] 8.5 Test: auto-detect, duplicate prevention via hash, calibration refresh, wrong CSV format error (phase-2-enrich 4.5)
+- [x] 8.1 Add `sync.weight_csv_path` config field — explicit path, not ~/Downloads/ scanning (phase-2-enrich 4.1)
+- [x] 8.2 Add migration 005 (extend): `import_log` table (phase-2-enrich 4.2)
+- [x] 8.3 Implement auto-import in `fit sync` — check configured path, validate CSV header, import new dates only, log to import_log, auto-update weight calibration (phase-2-enrich 4.3)
+- [x] 8.4 Investigate Fitdays API for direct integration — spike, document findings (phase-2-enrich 4.4)
+- [x] 8.5 Test: auto-detect, duplicate prevention via hash, calibration refresh, wrong CSV format error (phase-2-enrich 4.5)
 
 ## 9. Individual Goal Tracking
 
-- [ ] 9.1 Implement `fit goal add` — interactive CLI: name, type (race/metric/habit), target_value, target_unit, target_date (phase-2-enrich 5.1)
-- [ ] 9.2 Implement `fit goal list` — show all active goals with current progress (phase-2-enrich 5.2)
-- [ ] 9.3 Implement `fit goal complete <id>` — mark as achieved, log to goal_log (phase-2-enrich 5.3)
-- [ ] 9.4 Add goal progress to Today tab — progress bars/values for each active goal (phase-2-enrich 5.4)
-- [ ] 9.5 Add goal progress to `fit status` output (phase-2-enrich 5.5)
-- [ ] 9.6 Test: goal CRUD, progress computation for race/metric/habit types (phase-2-enrich 5.6)
+- [x] 9.1 Implement `fit goal add` — interactive CLI: name, type (race/metric/habit), target_value, target_unit, target_date (phase-2-enrich 5.1)
+- [x] 9.2 Implement `fit goal list` — show all active goals with current progress (phase-2-enrich 5.2)
+- [x] 9.3 Implement `fit goal complete <id>` — mark as achieved, log to goal_log (phase-2-enrich 5.3)
+- [x] 9.4 Add goal progress to Today tab — progress bars/values for each active goal (phase-2-enrich 5.4)
+- [x] 9.5 Add goal progress to `fit status` output (phase-2-enrich 5.5)
+- [x] 9.6 Test: goal CRUD, progress computation for race/metric/habit types (phase-2-enrich 5.6)
 
 ## 10. fit doctor & Documentation
 
-- [ ] 10.1 Implement `fit doctor` — validate schema version, all tables exist, no orphaned data, correlation freshness, plan import recency, weight staleness, calibration status, data source health (phase-2-enrich 6.1)
-- [ ] 10.2 Test: all-healthy scenario, various failure scenarios (phase-2-enrich 6.2)
-- [ ] 10.3 Update spec: document that env vars are placeholder-substitution, not general key override — this is by-design (phase-1-gaps 5.1)
-- [ ] 10.4 Note in CLAUDE.md: logging uses single sync.log, design says per-module but implementation uses one file (phase-1-gaps 5.2)
+- [x] 10.1 Implement `fit doctor` — validate schema version, all tables exist, no orphaned data, correlation freshness, plan import recency, weight staleness, calibration status, data source health (phase-2-enrich 6.1)
+- [x] 10.2 Test: all-healthy scenario, various failure scenarios (phase-2-enrich 6.2)
+- [x] 10.3 Update spec: document that env vars are placeholder-substitution, not general key override — this is by-design (phase-1-gaps 5.1)
+- [x] 10.4 Note in CLAUDE.md: logging uses single sync.log, design says per-module but implementation uses one file (phase-1-gaps 5.2)
