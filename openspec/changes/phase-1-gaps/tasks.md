@@ -1,10 +1,10 @@
 ## 1. Foundation & Tech Debt
 
-- [ ] 1.1 Fix `db.py` `executescript` auto-commit — parse SQL into individual statements, execute each with `conn.execute()` inside explicit transaction (phase-2-enrich 1.1)
-- [ ] 1.2 Add shared retry/backoff utility in `fit/garmin.py` — `_request_with_retry(func, max_retries=3)` handling 429 countdown, 401 re-auth prompt, 5xx exponential backoff (merges phase-1-gaps 1.1 auth handling + phase-2-enrich 1.2 retry utility)
-- [ ] 1.3 Add user-friendly auth error in `garmin.py` — catch garth auth failures, show exact re-auth command (merges phase-1-gaps 1.1 + phase-2-enrich 2.3)
-- [ ] 1.4 Design MCP response schema for Phase 2 additions upfront — correlations, plan adherence, splits in coaching context (phase-2-enrich 1.5)
-- [ ] 1.5 Refactor `get_coaching_context()` into composable sections: `_ctx_health()`, `_ctx_training()`, `_ctx_correlations()`, `_ctx_plan()`, `_ctx_splits()`, `_ctx_goals()` (phase-2-enrich 1.3, enables dashboard fixes)
+- [x] 1.1 Fix `db.py` `executescript` auto-commit — parse SQL into individual statements, execute each with `conn.execute()` inside explicit transaction (phase-2-enrich 1.1)
+- [x] 1.2 Add shared retry/backoff utility in `fit/garmin.py` — `_request_with_retry(func, max_retries=3)` handling 429 countdown, 401 re-auth prompt, 5xx exponential backoff (merges phase-1-gaps 1.1 auth handling + phase-2-enrich 1.2 retry utility)
+- [x] 1.3 Add user-friendly auth error in `garmin.py` — catch garth auth failures, show exact re-auth command (merges phase-1-gaps 1.1 + phase-2-enrich 2.3)
+- [x] 1.4 Design MCP response schema for Phase 2 additions upfront — correlations, plan adherence, splits in coaching context (phase-2-enrich 1.5)
+- [x] 1.5 Refactor `get_coaching_context()` into composable sections: `_ctx_health()`, `_ctx_training()`, `_ctx_correlations()`, `_ctx_plan()`, `_ctx_splits()`, `_ctx_goals()` (phase-2-enrich 1.3, enables dashboard fixes)
 - [ ] 1.6 Test: migration runner transaction safety verified, retry works on mock 429 (phase-2-enrich 1.6)
 
 ## 2. Sync & Data Pipeline

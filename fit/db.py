@@ -96,19 +96,26 @@ def _run_pending_migrations(conn: sqlite3.Connection, migrations_dir: Path) -> N
     for migration in pending:
         logger.info("Applying migration %03d: %s", migration["version"], migration["name"])
         try:
-            conn.execute("BEGIN")
-
             if migration["type"] == ".sql":
+                # executescript() handles DDL (CREATE TABLE/INDEX/VIEW) correctly
+                # but auto-commits. We run it, then record the version separately.
                 sql = migration["path"].read_text()
                 conn.executescript(sql)
+                conn.execute(
+                    "INSERT INTO schema_version (version, name) VALUES (?, ?)",
+                    (migration["version"], migration["name"]),
+                )
+                conn.commit()
             elif migration["type"] == ".py":
+                # Python migrations run inside an explicit transaction
+                conn.execute("BEGIN")
                 _run_python_migration(conn, migration["path"])
+                conn.execute(
+                    "INSERT INTO schema_version (version, name) VALUES (?, ?)",
+                    (migration["version"], migration["name"]),
+                )
+                conn.commit()
 
-            conn.execute(
-                "INSERT INTO schema_version (version, name) VALUES (?, ?)",
-                (migration["version"], migration["name"]),
-            )
-            conn.commit()
             logger.info("Migration %03d applied successfully", migration["version"])
 
         except Exception as e:

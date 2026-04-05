@@ -9,8 +9,8 @@ from mcp.server.fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
 
-# Load config to find DB path
-from fit.config import get_config
+# Load config to find DB path (must be after mcp import to avoid circular)
+from fit.config import get_config  # noqa: E402
 
 config = get_config(Path(__file__).parent.parent)
 db_path = Path(config["sync"]["db_path"]).expanduser()
@@ -217,115 +217,113 @@ def check_dashboard_freshness() -> str:
         conn.close()
 
 
+def _ctx_profile(conn) -> list[str]:
+    """Zone boundaries, calibrations, thresholds."""
+    s = []
+    max_hr = config.get("profile", {}).get("max_hr")
+    zones_maxhr = config.get("profile", {}).get("zones_max_hr", {})
+    zone_model = config.get("profile", {}).get("zone_model", "max_hr")
+    s.append(f"Profile: max_hr={max_hr}, zone_model={zone_model}")
+    z2_bounds = zones_maxhr.get("z2", [115, 134])
+    z4_bounds = zones_maxhr.get("z4", [154, 173])
+    s.append(f"Zone boundaries (max HR model): Z2 (Easy)={z2_bounds[0]}-{z2_bounds[1]} bpm, "
+             f"Z3 (Moderate)={zones_maxhr.get('z3', [134, 154])[0]}-{zones_maxhr.get('z3', [134, 154])[1]}, "
+             f"Z4 (Hard)={z4_bounds[0]}-{z4_bounds[1]}")
+    s.append(f"IMPORTANT: Easy runs must stay below {z2_bounds[1]} bpm (Z2 ceiling), NOT 150 bpm")
+    from fit.calibration import get_active_calibration as _get_cal, get_calibration_status
+    lthr_cal = _get_cal(conn, "lthr")
+    if lthr_cal:
+        s.append(f"LTHR: {lthr_cal['value']} bpm ({lthr_cal['method']}, {lthr_cal['date']})")
+        s.append(f"Zone boundaries (LTHR model): Z2={round(lthr_cal['value']*0.85)}-{round(lthr_cal['value']*0.89)}, "
+                 f"Z4={round(lthr_cal['value']*0.95)}-{round(lthr_cal['value']*0.99)}")
+    stale_cals = [c for c in get_calibration_status(conn) if c["stale"]]
+    if stale_cals:
+        s.append("Stale calibrations: " + ", ".join(f"{c['metric']} ({c['retest_prompt']})" for c in stale_cals))
+    return s
+
+
+def _ctx_health(conn) -> list[str]:
+    """Recent health metrics, ACWR."""
+    s = []
+    acwr_safe = config.get("analysis", {}).get("acwr_safe_range", [0.8, 1.3])
+    acwr_danger = config.get("analysis", {}).get("acwr_danger_threshold", 1.5)
+    acwr_row = conn.execute("SELECT week, acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
+    if acwr_row:
+        acwr = acwr_row["acwr"]
+        safety = "SAFE" if acwr_safe[0] <= acwr <= acwr_safe[1] else "CAUTION" if acwr <= acwr_danger else "DANGER"
+        s.append(f"ACWR: {acwr} ({safety})")
+    health = conn.execute("""
+        SELECT ROUND(AVG(resting_heart_rate), 1) as rhr, ROUND(AVG(sleep_duration_hours), 1) as sleep,
+               ROUND(AVG(hrv_last_night), 1) as hrv, ROUND(AVG(training_readiness), 0) as readiness
+        FROM daily_health WHERE date >= date('now', '-7 days')
+    """).fetchone()
+    if health:
+        s.append(f"Last 7d: RHR={health['rhr']}, Sleep={health['sleep']}h, HRV={health['hrv']}, Readiness={health['readiness']}")
+    streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
+    if streak:
+        s.append(f"Consistency streak: {streak['consecutive_weeks_3plus']} weeks with 3+ runs")
+    return s
+
+
+def _ctx_training(conn) -> list[str]:
+    """Zone distribution, run types, efficiency, active phase."""
+    s = []
+    zones = conn.execute("""
+        SELECT ROUND(AVG(z12_pct), 1) as avg_z12, ROUND(AVG(z45_pct), 1) as avg_z45
+        FROM weekly_agg WHERE week >= (SELECT MAX(week) FROM weekly_agg WHERE week <= date('now'))
+        ORDER BY week DESC LIMIT 4
+    """).fetchone()
+    if zones and zones["avg_z12"] is not None:
+        s.append(f"Zone distribution (4wk avg): Z1+Z2={zones['avg_z12']}%, Z4+Z5={zones['avg_z45']}%")
+    phase = conn.execute("SELECT * FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
+    if phase:
+        s.append(f"Active phase: {phase['phase']} — {phase['name']} ({phase['start_date']} to {phase['end_date']})")
+        if phase["z12_pct_target"]:
+            s.append(f"  Phase Z1+Z2 target: {phase['z12_pct_target']}%")
+    types = conn.execute("""
+        SELECT run_type, COUNT(*) as n FROM activities
+        WHERE type = 'running' AND date >= date('now', '-28 days')
+        GROUP BY run_type ORDER BY n DESC
+    """).fetchall()
+    if types:
+        s.append("Run types (4wk): " + ", ".join(f"{r['run_type']}:{r['n']}" for r in types))
+    spb = conn.execute("""
+        SELECT ROUND(AVG(speed_per_bpm), 3) as recent FROM activities
+        WHERE type = 'running' AND speed_per_bpm IS NOT NULL AND date >= date('now', '-28 days')
+    """).fetchone()
+    spb_prev = conn.execute("""
+        SELECT ROUND(AVG(speed_per_bpm), 3) as prev FROM activities
+        WHERE type = 'running' AND speed_per_bpm IS NOT NULL
+        AND date BETWEEN date('now', '-56 days') AND date('now', '-29 days')
+    """).fetchone()
+    if spb and spb["recent"]:
+        trend = ""
+        if spb_prev and spb_prev["prev"]:
+            diff = spb["recent"] - spb_prev["prev"]
+            trend = f" (vs prev 4wk: {'↑' if diff > 0 else '↓'}{abs(diff):.3f})"
+        s.append(f"Speed/BPM (4wk avg): {spb['recent']}{trend}")
+    return s
+
+
+def _ctx_goals(conn) -> list[str]:
+    """Active goals."""
+    s = []
+    goals = conn.execute("SELECT name, type, target_date FROM goals WHERE active = 1").fetchall()
+    if goals:
+        s.append("Goals: " + "; ".join(f"{g['name']} ({g['target_date'] or 'no date'})" for g in goals))
+    return s
+
+
 @mcp.tool()
 def get_coaching_context() -> str:
     """Get structured data summary for coaching analysis. Returns key metrics, trends, and status."""
     conn = _get_conn()
     try:
         sections = []
-
-        # Profile + zone boundaries (so Claude knows the actual thresholds)
-        max_hr = config.get("profile", {}).get("max_hr")
-        zones_maxhr = config.get("profile", {}).get("zones_max_hr", {})
-        zone_model = config.get("profile", {}).get("zone_model", "max_hr")
-        sections.append(f"Profile: max_hr={max_hr}, zone_model={zone_model}")
-        z2_bounds = zones_maxhr.get("z2", [115, 134])
-        z4_bounds = zones_maxhr.get("z4", [154, 173])
-        sections.append(f"Zone boundaries (max HR model): Z2 (Easy)={z2_bounds[0]}-{z2_bounds[1]} bpm, "
-                        f"Z3 (Moderate)={zones_maxhr.get('z3', [134, 154])[0]}-{zones_maxhr.get('z3', [134, 154])[1]}, "
-                        f"Z4 (Hard)={z4_bounds[0]}-{z4_bounds[1]}")
-        sections.append(f"IMPORTANT: Easy runs must stay below {z2_bounds[1]} bpm (Z2 ceiling), NOT 150 bpm")
-
-        # LTHR calibration if available
-        from fit.calibration import get_active_calibration as _get_cal
-        lthr_cal = _get_cal(conn, "lthr")
-        if lthr_cal:
-            sections.append(f"LTHR: {lthr_cal['value']} bpm ({lthr_cal['method']}, {lthr_cal['date']})")
-            zones_lthr = config.get("profile", {}).get("zones_lthr", {})
-            sections.append(f"Zone boundaries (LTHR model): Z2={round(lthr_cal['value']*0.85)}-{round(lthr_cal['value']*0.89)}, "
-                            f"Z4={round(lthr_cal['value']*0.95)}-{round(lthr_cal['value']*0.99)}")
-
-        # ACWR thresholds
-        acwr_safe = config.get("analysis", {}).get("acwr_safe_range", [0.8, 1.3])
-        acwr_danger = config.get("analysis", {}).get("acwr_danger_threshold", 1.5)
-
-        # ACWR
-        acwr_row = conn.execute("SELECT week, acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
-        if acwr_row:
-            acwr = acwr_row["acwr"]
-            safety = "SAFE" if acwr_safe[0] <= acwr <= acwr_safe[1] else "CAUTION" if acwr <= acwr_danger else "DANGER"
-            sections.append(f"ACWR: {acwr} ({safety})")
-
-        # Zone distribution (last 4 weeks)
-        zones = conn.execute("""
-            SELECT ROUND(AVG(z12_pct), 1) as avg_z12, ROUND(AVG(z45_pct), 1) as avg_z45
-            FROM weekly_agg WHERE week >= (SELECT MAX(week) FROM weekly_agg WHERE week <= date('now'))
-            ORDER BY week DESC LIMIT 4
-        """).fetchone()
-        if zones and zones["avg_z12"] is not None:
-            sections.append(f"Zone distribution (4wk avg): Z1+Z2={zones['avg_z12']}%, Z4+Z5={zones['avg_z45']}%")
-
-        # Active phase
-        phase = conn.execute("SELECT * FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
-        if phase:
-            sections.append(f"Active phase: {phase['phase']} — {phase['name']} ({phase['start_date']} to {phase['end_date']})")
-            if phase["z12_pct_target"]:
-                sections.append(f"  Phase Z1+Z2 target: {phase['z12_pct_target']}%")
-
-        # Run type breakdown (last 4 weeks)
-        types = conn.execute("""
-            SELECT run_type, COUNT(*) as n FROM activities
-            WHERE type = 'running' AND date >= date('now', '-28 days')
-            GROUP BY run_type ORDER BY n DESC
-        """).fetchall()
-        if types:
-            type_str = ", ".join(f"{r['run_type']}:{r['n']}" for r in types)
-            sections.append(f"Run types (4wk): {type_str}")
-
-        # Speed per BPM trend
-        spb = conn.execute("""
-            SELECT ROUND(AVG(speed_per_bpm), 3) as recent
-            FROM activities WHERE type = 'running' AND speed_per_bpm IS NOT NULL
-            AND date >= date('now', '-28 days')
-        """).fetchone()
-        spb_prev = conn.execute("""
-            SELECT ROUND(AVG(speed_per_bpm), 3) as prev
-            FROM activities WHERE type = 'running' AND speed_per_bpm IS NOT NULL
-            AND date BETWEEN date('now', '-56 days') AND date('now', '-29 days')
-        """).fetchone()
-        if spb and spb["recent"]:
-            trend = ""
-            if spb_prev and spb_prev["prev"]:
-                diff = spb["recent"] - spb_prev["prev"]
-                trend = f" (vs prev 4wk: {'↑' if diff > 0 else '↓'}{abs(diff):.3f})"
-            sections.append(f"Speed/BPM (4wk avg): {spb['recent']}{trend}")
-
-        # Consistency
-        streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
-        if streak:
-            sections.append(f"Consistency streak: {streak['consecutive_weeks_3plus']} weeks with 3+ runs")
-
-        # Calibration status
-        from fit.calibration import get_calibration_status
-        cal_status = get_calibration_status(conn)
-        stale_cals = [c for c in cal_status if c["stale"]]
-        if stale_cals:
-            sections.append("Stale calibrations: " + ", ".join(f"{c['metric']} ({c['retest_prompt']})" for c in stale_cals))
-
-        # Recent health
-        health = conn.execute("""
-            SELECT ROUND(AVG(resting_heart_rate), 1) as rhr, ROUND(AVG(sleep_duration_hours), 1) as sleep,
-                   ROUND(AVG(hrv_last_night), 1) as hrv, ROUND(AVG(training_readiness), 0) as readiness
-            FROM daily_health WHERE date >= date('now', '-7 days')
-        """).fetchone()
-        if health:
-            sections.append(f"Last 7d: RHR={health['rhr']}, Sleep={health['sleep']}h, HRV={health['hrv']}, Readiness={health['readiness']}")
-
-        # Goals
-        goals = conn.execute("SELECT name, type, target_date FROM goals WHERE active = 1").fetchall()
-        if goals:
-            sections.append("Goals: " + "; ".join(f"{g['name']} ({g['target_date'] or 'no date'})" for g in goals))
-
+        sections.extend(_ctx_profile(conn))
+        sections.extend(_ctx_health(conn))
+        sections.extend(_ctx_training(conn))
+        sections.extend(_ctx_goals(conn))
         return "Coaching Context:\n" + "\n".join(f"  {s}" for s in sections)
     finally:
         conn.close()

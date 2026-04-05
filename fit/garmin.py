@@ -1,6 +1,7 @@
 """Garmin Connect API client for syncing health metrics and activities."""
 
 import logging
+import time
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -10,17 +11,64 @@ from garminconnect import Garmin
 logger = logging.getLogger(__name__)
 
 
+def _request_with_retry(func, max_retries=3, description="API call"):
+    """Execute a Garmin API call with retry/backoff for transient errors.
+
+    Handles: 429 (rate limit, wait 60s), 401 (auth expired), 5xx (exponential backoff).
+    """
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str:
+                wait = 60
+                logger.warning("%s rate limited (429). Waiting %ds...", description, wait)
+                time.sleep(wait)
+                continue
+            elif "401" in err_str:
+                raise RuntimeError(
+                    "Garmin auth expired. Re-authenticate with:\n"
+                    "  python -c \"import garth; garth.login(input('Email: '), input('Password: ')); "
+                    "garth.save('~/.fit/garmin-tokens/')\""
+                ) from e
+            elif any(code in err_str for code in ("500", "502", "503", "504")):
+                wait = 2 ** attempt
+                logger.warning("%s server error (attempt %d/%d). Retrying in %ds...",
+                               description, attempt + 1, max_retries, wait)
+                time.sleep(wait)
+                continue
+            else:
+                if attempt < max_retries - 1:
+                    logger.debug("%s failed: %s (attempt %d/%d)", description, e, attempt + 1, max_retries)
+                    continue
+                raise
+    return None
+
+
 def connect(token_dir: str) -> Garmin:
     """Connect to Garmin using saved garth tokens.
 
     Args:
-        token_dir: Path to directory containing garth tokens (e.g., ~/.garmy/).
+        token_dir: Path to directory containing garth tokens.
 
     Returns:
         Authenticated Garmin API client.
+
+    Raises:
+        RuntimeError: If auth tokens are missing or expired, with re-auth instructions.
     """
     token_path = Path(token_dir).expanduser()
-    garth.resume(str(token_path))
+    try:
+        garth.resume(str(token_path))
+    except Exception as e:
+        raise RuntimeError(
+            f"Garmin auth failed: {e}\n"
+            f"Token dir: {token_path}\n"
+            f"Re-authenticate with:\n"
+            f"  python -c \"import garth; garth.login(input('Email: '), input('Password: ')); "
+            f"garth.save('{token_path}')\""
+        ) from e
     api = Garmin()
     api.garth = garth.client
 
