@@ -548,6 +548,40 @@ def _all_charts(conn):
                                    "x": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
+    # Race prediction trend (Fitness tab) — monthly VDOT prediction from VO2max
+    vo2_monthly = conn.execute("""
+        SELECT substr(date, 1, 7) as month, ROUND(AVG(vo2max), 1) as avg_vo2
+        FROM activities WHERE vo2max IS NOT NULL
+        GROUP BY month ORDER BY month
+    """).fetchall()
+    if len(vo2_monthly) >= 3:
+        from fit.analysis import predict_marathon_time
+        pred_times = []
+        labels = []
+        for v in vo2_monthly:
+            p = predict_marathon_time([], vo2max=v["avg_vo2"])
+            if p.get("vdot"):
+                pred_times.append(round(p["vdot"]["predicted_seconds"] / 60, 1))  # minutes
+                labels.append(v["month"])
+        if pred_times:
+            charts.append({"id": "chart-marathon-pred", "config": json.dumps({
+                "type": "line",
+                "data": {"labels": labels,
+                         "datasets": [{"label": "Predicted Marathon (min)", "data": pred_times,
+                                       "borderColor": ACCENT, "backgroundColor": ACCENT + "15", "fill": True,
+                                       "borderWidth": 2, "pointRadius": 3}]},
+                "options": {"responsive": True,
+                            "plugins": {"legend": {"display": False},
+                                        "annotation": {"annotations": {
+                                            "sub4": {"type": "line", "yMin": 240, "yMax": 240,
+                                                     "borderColor": SAFE + "60", "borderDash": [6, 3],
+                                                     "label": {"content": "Sub-4:00 (240 min)", "display": True,
+                                                               "position": "end", "font": {"size": 8}}}}}},
+                            "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
+                                       "y": {"reverse": True, "grid": {"color": "rgba(255,255,255,0.03)"},
+                                             "title": {"display": True, "text": "minutes (lower = faster)"}}}}
+            })})
+
     return charts
 
 

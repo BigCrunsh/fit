@@ -254,8 +254,11 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div style="color:var(--text-muted);font-size:11px;padding:10px 0">Garmin effort: {{ rpe_garmin_count }} runs. Your RPE: {{ rpe_checkin_count }}/{{ run_count }} runs. Run <code>fit checkin</code> with RPE to add your subjective line.</div>
   {% endif %}
 
+  <div class="sec"><h2>Marathon Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Monthly marathon time prediction from VO2max using VDOT tables. Lower = faster. Green line = sub-4:00 target (240 min). Tracks how race readiness changes over time.</div><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-marathon-pred" height="150"></canvas></div>
+
   {% if race_prediction %}
-  <div class="sec"><h2>Race Prediction</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.race_prediction | safe }}</div><div class="line"></div></div>
+  <div class="sec"><h2>Race Prediction Detail</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.race_prediction | safe }}</div><div class="line"></div></div>
   <div style="background:rgba(167,139,250,0.04);border:1px solid rgba(167,139,250,0.12);border-radius:12px;padding:15px">
     {{ race_prediction | safe }}
   </div>
