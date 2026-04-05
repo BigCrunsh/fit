@@ -343,7 +343,11 @@ const chartInstances = {};
     if (!cfg.options.scales) cfg.options.scales = {};
     if (!cfg.options.scales.x) cfg.options.scales.x = {};
     cfg.options.scales.x.type = 'time';
-    cfg.options.scales.x.time = { unit: 'day', displayFormats: { day: 'MMM d' }, tooltipFormat: 'yyyy-MM-dd' };
+    // Auto-detect unit: if data spans > 180 days use 'month', else 'day'
+    const labels = cfg.data.labels || [];
+    const span = labels.length > 1 ? (new Date(labels[labels.length-1]) - new Date(labels[0])) / 86400000 : 0;
+    const unit = span > 180 ? 'month' : 'day';
+    cfg.options.scales.x.time = { unit: unit, displayFormats: { day: 'MMM d, yy', month: "MMM ''yy" }, tooltipFormat: 'yyyy-MM-dd' };
     cfg.options.scales.x.grid = { color: 'rgba(255,255,255,0.03)' };
   }
   const el = document.getElementById('{{ chart.id }}');
