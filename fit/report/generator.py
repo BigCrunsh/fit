@@ -583,42 +583,50 @@ def _definitions(conn):
 # ── Race Prediction ──
 
 def _race_prediction(conn):
-    races = conn.execute("SELECT date, name, distance_km, duration_min FROM activities WHERE run_type = 'race' ORDER BY date DESC LIMIT 3").fetchall()
+    races = conn.execute("""
+        SELECT date, name, distance_km, duration_min FROM activities
+        WHERE run_type = 'race' AND distance_km >= 5 ORDER BY date DESC LIMIT 3
+    """).fetchall()
     vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
     if not races and not vo2:
         return None
 
     from fit.analysis import predict_marathon_time
     race_data = [{"distance_km": r["distance_km"], "time_seconds": (r["duration_min"] or 0) * 60,
-                  "name": r["name"], "date": r["date"]} for r in races if r["distance_km"] and r["duration_min"]]
+                  "name": r["name"][:30] if r["name"] else f"{r['distance_km']:.0f}km",
+                  "date": r["date"]} for r in races if r["distance_km"] and r["duration_min"]]
     preds = predict_marathon_time(race_data, vo2max=vo2["vo2max"] if vo2 else None)
 
     parts = []
     for r in preds.get("riegel", []):
         t = r["predicted_seconds"]
-        parts.append(f"<div><strong>Riegel ({r['from_race']}):</strong> {t // 3600}:{(t % 3600) // 60:02d} ({r['predicted_pace_sec_km'] // 60}:{r['predicted_pace_sec_km'] % 60:02d}/km)</div>")
+        parts.append(f"<div style='margin:3px 0'><strong>Riegel ({r['from_race']}, {r.get('from_date', '')[:7]}):</strong> "
+                     f"{t // 3600}:{(t % 3600) // 60:02d} ({r['predicted_pace_sec_km'] // 60}:{r['predicted_pace_sec_km'] % 60:02d}/km)</div>")
     if preds.get("vdot"):
         t = preds["vdot"]["predicted_seconds"]
-        parts.append(f"<div><strong>VDOT (VO2max {preds['vdot']['vo2max']}):</strong> {t // 3600}:{(t % 3600) // 60:02d}</div>")
-    # VDOT trend over time (from VO2max history)
-    vo2_history = conn.execute("SELECT date, vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date").fetchall()
-    if len(vo2_history) >= 2:
-        parts.append("<div style='margin-top:8px;font-size:10px;color:var(--text-muted)'><strong>Prediction trend (from VO2max):</strong> ")
+        parts.append(f"<div style='margin:3px 0'><strong>VDOT (VO2max {preds['vdot']['vo2max']}):</strong> {t // 3600}:{(t % 3600) // 60:02d}</div>")
+
+    # VDOT trend — sample monthly (not every data point) to avoid clutter
+    vo2_monthly = conn.execute("""
+        SELECT substr(date, 1, 7) as month, ROUND(AVG(vo2max), 1) as avg_vo2
+        FROM activities WHERE vo2max IS NOT NULL
+        GROUP BY month ORDER BY month
+    """).fetchall()
+    if len(vo2_monthly) >= 2:
+        parts.append("<div style='margin-top:8px;font-size:10px;color:var(--text-muted)'><strong>Monthly VO2max → predicted marathon:</strong> ")
         trend_pts = []
-        for v in vo2_history[-6:]:  # last 6 data points
-            from fit.analysis import predict_marathon_time as _pmt
-            p = _pmt([], vo2max=v["vo2max"])
+        for v in vo2_monthly[-8:]:
+            p = predict_marathon_time([], vo2max=v["avg_vo2"])
             if p.get("vdot"):
                 t = p["vdot"]["predicted_seconds"]
-                trend_pts.append(f"{v['date'][:7]}: {t // 3600}:{(t % 3600) // 60:02d}")
+                trend_pts.append(f"{v['month']}: {t // 3600}:{(t % 3600) // 60:02d}")
         parts.append(" → ".join(trend_pts))
         parts.append("</div>")
 
     if parts:
         parts.append("<div style='font-size:10px;color:var(--text-muted);margin-top:6px'>"
-                     "Riegel extrapolates from race times (more reliable with recent races). "
-                     "VDOT uses Daniels' tables from VO2max. Post-detraining, actual fitness is likely "
-                     "below both estimates — add 5-10 min for a conservative target.</div>")
+                     "Riegel: from race times. VDOT: from Daniels' tables. "
+                     "Post-detraining, add 5-10 min for a conservative target.</div>")
     return "\n".join(parts) if parts else None
 
 
