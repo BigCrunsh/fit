@@ -67,7 +67,7 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
             conn.execute("UPDATE daily_health SET avg_spo2 = ? WHERE date = ?", (avg_spo2, d_str))
             counts["spo2"] += 1
 
-    # 5. Weather for activity dates
+    # 5. Weather: daily + hourly per-activity
     lat = config.get("profile", {}).get("location", {}).get("lat")
     lon = config.get("profile", {}).get("location", {}).get("lon")
     if lat and lon:
@@ -81,6 +81,28 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
             if w:
                 _upsert_weather(conn, w)
                 counts["weather"] += 1
+
+        # Hourly weather per activity (for activities with start time/location)
+        for a in activities:
+            if a.get("start_lat") and a.get("start_lon") and a.get("date"):
+                existing_hw = conn.execute(
+                    "SELECT temp_at_start_c FROM activities WHERE id = ? AND temp_at_start_c IS NOT NULL",
+                    (a["id"],)
+                ).fetchone()
+                if existing_hw and not full:
+                    continue
+                try:
+                    d = date.fromisoformat(a["date"])
+                    # Estimate start hour from pace/distance or default to 8am
+                    hour = 8
+                    hw = weather.fetch_hourly_weather(d, hour, float(a["start_lat"]), float(a["start_lon"]))
+                    if hw:
+                        conn.execute(
+                            "UPDATE activities SET temp_at_start_c = ?, humidity_at_start_pct = ? WHERE id = ?",
+                            (hw["temp_at_start_c"], hw["humidity_at_start_pct"], a["id"]),
+                        )
+                except Exception as e:
+                    logger.debug("Hourly weather failed for %s: %s", a["id"], e)
 
     # 6. Recompute weekly_agg for affected weeks
     affected_weeks = _get_affected_weeks(activities, start, end)

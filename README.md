@@ -1,11 +1,56 @@
 # fit
 
-Goal-agnostic personal fitness data platform. Ingests from Garmin, Fitdays, Apple Health, and weather APIs into a single SQLite database. Claude is the primary analysis engine via MCP.
+Goal-agnostic personal fitness data platform. Ingests from Garmin, Fitdays, Apple Health, and weather APIs into a single SQLite database. Two analysis interfaces: Claude (deep, conversational) and an HTML dashboard (visual, daily).
+
+## How It Works
+
+```
+  You                    fit CLI                  Claude
+  ───                    ───────                  ──────
+  
+  Morning routine:
+  1. fit sync            Garmin → enrich →        
+                         weather → DB              
+  2. fit checkin         hydration, legs,          
+                         sleep quality, RPE        
+  3. fit report          → dashboard.html          
+  4. Open dashboard      Today tab: headline,      
+                         cards, journey            
+                                                   
+  Deep analysis:                                   
+  5.                                              "Analyze my training"
+                                                   → get_coaching_context()
+                                                   → execute_sql_query()
+                                                   → save_coaching_notes()
+  6. fit report          Coach tab now shows        
+                         AI coaching insights       
+```
+
+### When to use what
+
+| Need | Use | Why |
+|------|-----|-----|
+| Pull new data from Garmin | `fit sync` | Automated pipeline: health + activities + weather + enrichment |
+| Log how you feel today | `fit checkin` | Subjective data (legs, sleep quality, RPE) joins with Garmin biometrics |
+| See your training at a glance | `fit report` → open HTML | 5-tab dashboard: Today, Training, Body, Fitness, Coach |
+| Quick status check in terminal | `fit status` | Counts, last sync, goals, active phase |
+| Deep question about your data | **Claude Chat** | Ad-hoc SQL queries, cross-referencing, pattern detection |
+| Weekly coaching analysis | **Claude Chat** or `/fit-coach` | AI reads all your data, generates structured insights |
+| Update physiological baseline | `fit calibrate max_hr` or `lthr` | After a race or time trial |
+| Fix derived metrics after changes | `fit recompute` | Re-enriches all activities, rebuilds weekly aggregations |
+
+### Daily workflow
+
+1. **`fit sync`** — run daily (or cron it). Pulls health metrics, activities, SpO2, enriches with weather, computes zones/efficiency/run types/ACWR, updates weekly aggregations.
+2. **`fit checkin`** — run after training (or in the morning). Captures hydration, alcohol, legs, eating, energy, sleep quality, RPE, weight. RPE auto-writes to today's activity.
+3. **`fit report`** — generates dashboard. The **Today tab** gives you the headline ("Ready for training" or "Recovery day recommended") plus status cards, ACWR safety, phase compliance, and a journey timeline.
+4. **Claude Chat** — for questions the dashboard can't answer. "Why was my efficiency worse this week?", "Compare my alcohol vs next-day HRV", "What should my long run target be?" Claude has full SQL access via MCP.
+5. **`/fit-coach`** (in Claude Code) or ask Claude Chat — generates coaching insights that persist to the dashboard Coach tab.
 
 ## Install
 
 ```bash
-cd ~/.fit  # or wherever you cloned this repo
+cd ~/.fit
 pip install -e .
 fit --version
 ```
@@ -15,36 +60,70 @@ fit --version
 ```bash
 # 1. Create personal config (gitignored)
 cp config.yaml config.local.yaml
-# Edit config.local.yaml with your values: max_hr, location, etc.
+# Edit config.local.yaml: max_hr, location, garmin token dir
 
 # 2. Garmin auth (one-time)
 # Tokens should be in ~/.fit/garmin-tokens/
 # If migrating from garmy: cp ~/.garmy/oauth*.json ~/.fit/garmin-tokens/
 
-# 3. First sync
-fit sync --full     # pulls all available history
-fit recompute       # enriches activities with zones, efficiency, run types
+# 3. First sync + enrichment
+fit sync --full
+fit recompute
 
-# 4. Generate dashboard
+# 4. Calibrate (recommended)
+fit calibrate max_hr    # enter highest HR from a recent race
+fit calibrate lthr      # after a 30-min time trial (avg HR of last 20 min)
+
+# 5. Generate dashboard
 fit report
 open ~/.fit/reports/dashboard.html
 ```
+
+### Garmin Settings Checklist
+
+Enable these on your Garmin watch for full data coverage:
+
+| Setting | Path | Why |
+|---------|------|-----|
+| Pulse Ox | Settings → Health → Pulse Oximeter → During Sleep | SpO2 tracking |
+| Lactate Threshold | Settings → Physiological Metrics → Lactate Threshold | Auto LT detection |
+| HRV Status | Settings → Health → HRV Status | Needs 3 weeks for baseline |
+| Training Readiness | Usually on by default | Daily readiness score |
+| Move IQ | Settings → Activity Tracking → Move IQ | Auto-detect cycling/walking |
+
+The dashboard's data health panel shows which sources are active, stale, or missing.
 
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `fit sync [--days N] [--full]` | Pull Garmin data, enrich with weather, compute derived metrics |
-| `fit checkin` | Interactive daily check-in (hydration, legs, RPE, weight, etc.) |
+| `fit sync [--days N] [--full]` | Pull Garmin data, enrich with weather + zones + ACWR, compute weekly agg |
+| `fit checkin` | Interactive check-in: hydration, legs, eating, energy, sleep quality, RPE, weight |
 | `fit report [--daily] [--weekly]` | Generate HTML dashboard (5 tabs: Today/Training/Body/Fitness/Coach) |
 | `fit status` | Quick overview: data counts, last sync, goals |
 | `fit recompute` | Re-enrich all activities and rebuild weekly aggregations |
-| `fit calibrate max_hr` | Calibrate max heart rate from race observation |
-| `fit calibrate lthr` | Calibrate lactate threshold from 30-min time trial |
+| `fit calibrate max_hr` | Calibrate max HR from race observation |
+| `fit calibrate lthr` | Calibrate LTHR from 30-min time trial |
+
+## Dashboard
+
+5 story-driven tabs, each answering a different question:
+
+| Tab | Question | Key visualizations |
+|-----|----------|-------------------|
+| **Today** | How am I doing? What should I do? | Headline, status cards (4-week deltas), ACWR, phase compliance, journey timeline, calibration/data health panel |
+| **Training** | What have I been doing? | Weekly volume (with longest run), training load, run timeline viz, week-over-week comparison |
+| **Body** | How is my body recovering? | Readiness + RHR + HRV, sleep composition, stress vs body battery, weight trend, sleep quality mismatches |
+| **Fitness** | Am I getting faster? | Speed per BPM (hero chart), VO2max, zone distribution vs phase targets, cadence trend, race predictions (Riegel + VDOT), RPE predicted vs actual |
+| **Coach** | What does the AI think? | Claude-generated coaching insights (via `/fit-coach` or Claude Chat) |
+
+Uses two color palettes to avoid confusion: **safety** (green/yellow/red for "is this good?") and **intensity** (blue/amber/orange for "how hard?"). Event annotations mark races, training gaps, and phase transitions on time-series charts.
 
 ## Zone Model
 
-Standard 5-zone model based on % of max HR (aligned with Runna/Garmin):
+Two models computed in parallel on every activity:
+
+**Max HR model** (default, stable over time):
 
 | Zone | % Max HR | HR (192) | Effort |
 |------|----------|----------|--------|
@@ -54,15 +133,29 @@ Standard 5-zone model based on % of max HR (aligned with Runna/Garmin):
 | Z4 | 80-90% | 154-173 | Hard |
 | Z5 | 90-100% | 173-192 | Very Hard |
 
-Both max HR and LTHR (Friel) zone models are computed in parallel on every activity.
+**LTHR model** (Friel, shifts with fitness — requires calibration):
+
+| Zone | % LTHR | Effort |
+|------|--------|--------|
+| Z1 | < 85% | Recovery |
+| Z2 | 85-89% | Aerobic |
+| Z3 | 90-94% | Tempo |
+| Z4 | 95-99% | Threshold |
+| Z5 | 100%+ | VO2max |
+
+Calibrate LTHR via a 30-min time trial or auto-extracted from races >= 10km. The system tracks calibration staleness and prompts for recalibration.
 
 ## MCP Server
 
-The MCP server exposes `fitness.db` to Claude Chat and Claude Code.
+Exposes `fitness.db` to Claude Chat and Claude Code (read-only).
 
-**Tools:** `execute_sql_query`, `get_health_summary`, `get_run_context`, `explore_database_structure`, `get_table_details`, `check_dashboard_freshness`, `get_coaching_context`, `save_coaching_notes`
+**Data tools:** `execute_sql_query`, `get_health_summary`, `get_run_context`, `explore_database_structure`, `get_table_details`
 
-**Setup:** Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+**Coaching tools:** `check_dashboard_freshness` → `get_coaching_context` (returns zone boundaries, ACWR, phase targets, trends) → `save_coaching_notes` (atomic write to coaching.json)
+
+The coaching context explicitly includes configured zone boundaries so Claude never defaults to incorrect HR thresholds.
+
+**Setup:** Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
@@ -74,10 +167,16 @@ The MCP server exposes `fitness.db` to Claude Chat and Claude Code.
 }
 ```
 
-## Coaching
-
-Use `/fit-coach` in Claude Code or ask Claude Chat to call `get_coaching_context()` → analyze → `save_coaching_notes()`. Insights appear in the dashboard Coach tab.
-
 ## Database
 
-SQLite at `~/.fit/fitness.db`. 10 tables: activities, daily_health, checkins, body_comp, weather, goals, training_phases, goal_log, calibration, weekly_agg. 2 views: v_run_days, v_all_training.
+SQLite at `~/.fit/fitness.db`. 10 tables, 2 views:
+
+| Table | Key data |
+|-------|----------|
+| activities | All types (running, cycling, hiking), parallel zones, speed_per_bpm, run_type, RPE |
+| daily_health | RHR, sleep, HRV, readiness, stress, body battery, SpO2 |
+| checkins | Hydration, legs, eating, energy, sleep quality, RPE, weight |
+| weekly_agg | Run metrics, cross-training, ACWR, zone distribution by time, consistency streak |
+| training_phases | Phased targets + actuals, phase lifecycle (planned → active → completed/revised) |
+| calibration | Max HR, LTHR, weight — with staleness tracking and retest prompts |
+| goals / goal_log | Active goals + append-only event history |

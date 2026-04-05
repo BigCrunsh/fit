@@ -55,6 +55,10 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "definitions": _definitions(conn),
         "race_prediction": _race_prediction(conn),
         "coaching": _coaching(conn),
+        "phase_compliance": _phase_compliance(conn),
+        "calibration_panel": _calibration_panel(conn),
+        "data_health": _data_health_panel(conn),
+        "sleep_mismatches": _sleep_mismatches(conn),
     }
 
     html = template.render(**context)
@@ -282,6 +286,27 @@ def _all_charts(conn):
                                    "y": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
+    # Stress vs Body Battery (Body tab — W2)
+    stress = conn.execute("""
+        SELECT date, avg_stress_level, body_battery_high
+        FROM daily_health WHERE date >= date('now','-21 days') AND (avg_stress_level IS NOT NULL OR body_battery_high IS NOT NULL)
+        ORDER BY date
+    """).fetchall()
+    if stress:
+        charts.append({"id": "chart-stress", "config": json.dumps({
+            "type": "line",
+            "data": {"labels": [s["date"] for s in stress],
+                     "datasets": [
+                         {"label": "Battery Peak", "data": [s["body_battery_high"] for s in stress],
+                          "borderColor": SAFE, "backgroundColor": SAFE + "10", "fill": True, "borderWidth": 1.5, "pointRadius": 0},
+                         {"label": "Avg Stress", "data": [s["avg_stress_level"] for s in stress],
+                          "borderColor": DANGER, "borderWidth": 1.5, "pointRadius": 2, "fill": False},
+                     ]},
+            "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
+                        "scales": {"y": {"min": 0, "max": 100, "grid": {"color": "rgba(255,255,255,0.03)"}},
+                                   "x": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
+        })})
+
     # Weight (Body tab)
     weight = conn.execute("SELECT date, weight_kg FROM body_comp ORDER BY date").fetchall()
     if weight:
@@ -295,6 +320,9 @@ def _all_charts(conn):
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
+    # Get event annotations for time-series charts (W5)
+    event_annots = _get_event_annotations(conn)
+
     # Speed per BPM (Fitness tab — hero chart)
     eff = conn.execute("SELECT date, speed_per_bpm, speed_per_bpm_z2 FROM activities WHERE type='running' AND speed_per_bpm IS NOT NULL AND date >= date('now','-90 days') ORDER BY date").fetchall()
     if eff:
@@ -305,7 +333,8 @@ def _all_charts(conn):
                          {"label": "All runs", "data": [e["speed_per_bpm"] for e in eff], "borderColor": Z3 + "80", "borderWidth": 1.5, "pointRadius": 2, "fill": False},
                          {"label": "Z2 only", "data": [e["speed_per_bpm_z2"] for e in eff], "borderColor": ACCENT, "borderWidth": 2.5, "pointRadius": 4, "fill": False},
                      ]},
-            "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
+            "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}},
+                                                         "annotation": {"annotations": event_annots}},
                         "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}, "title": {"display": True, "text": "m/min/bpm (higher=better)"}}}}
         })})
@@ -319,7 +348,7 @@ def _all_charts(conn):
                      "datasets": [{"label": "VO2max", "data": [v["vo2max"] for v in vo2],
                                    "borderColor": ACCENT, "backgroundColor": ACCENT + "20", "fill": True, "borderWidth": 2, "pointRadius": 3}]},
             "options": {"responsive": True, "plugins": {"legend": {"display": False},
-                                                         "annotation": {"annotations": {"sub4": {"type": "line", "yMin": 50, "yMax": 50, "borderColor": CAUTION + "60", "borderDash": [6, 3], "label": {"content": "Sub-4 ≥50", "display": True, "position": "end", "font": {"size": 8}}}}}},
+                                                         "annotation": {"annotations": {**event_annots, "sub4": {"type": "line", "yMin": 50, "yMax": 50, "borderColor": CAUTION + "60", "borderDash": [6, 3], "label": {"content": "Sub-4 ≥50", "display": True, "position": "end", "font": {"size": 8}}}}}},
                         "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
@@ -339,6 +368,53 @@ def _all_charts(conn):
             "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
                         "scales": {"x": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}},
                                    "y": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}, "title": {"display": True, "text": "minutes"}}}}
+        })})
+
+    # Cadence trend (Fitness tab — W3)
+    cadence = conn.execute("""
+        SELECT date, avg_cadence FROM activities
+        WHERE type='running' AND avg_cadence IS NOT NULL AND date >= date('now','-90 days')
+        ORDER BY date
+    """).fetchall()
+    if cadence:
+        charts.append({"id": "chart-cadence", "config": json.dumps({
+            "type": "line",
+            "data": {"labels": [c["date"] for c in cadence],
+                     "datasets": [{"label": "Cadence (spm)", "data": [c["avg_cadence"] for c in cadence],
+                                   "borderColor": Z12, "borderWidth": 2, "pointRadius": 3, "fill": False}]},
+            "options": {"responsive": True, "plugins": {"legend": {"display": False},
+                        "annotation": {"annotations": {"threshold": {"type": "line", "yMin": 165, "yMax": 165,
+                                       "borderColor": CAUTION + "60", "borderDash": [6, 3],
+                                       "label": {"content": "Low threshold 165", "display": True, "position": "end", "font": {"size": 8}}}}}},
+                        "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
+                                   "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
+        })})
+
+    # RPE predicted vs actual (Fitness tab — W4)
+    rpe_data = conn.execute("""
+        SELECT a.date, a.rpe as actual_rpe, a.hr_zone,
+               CASE a.hr_zone
+                   WHEN 'Z1' THEN 2 WHEN 'Z2' THEN 3 WHEN 'Z3' THEN 5
+                   WHEN 'Z4' THEN 7 WHEN 'Z5' THEN 9 ELSE NULL
+               END as predicted_rpe
+        FROM activities a
+        WHERE a.type='running' AND a.rpe IS NOT NULL AND a.hr_zone IS NOT NULL
+        ORDER BY a.date
+    """).fetchall()
+    if len(rpe_data) >= 3:
+        charts.append({"id": "chart-rpe", "config": json.dumps({
+            "type": "line",
+            "data": {"labels": [r["date"] for r in rpe_data],
+                     "datasets": [
+                         {"label": "Predicted (from HR)", "data": [r["predicted_rpe"] for r in rpe_data],
+                          "borderColor": Z12, "borderWidth": 1.5, "borderDash": [4, 2], "pointRadius": 2, "fill": False},
+                         {"label": "Actual RPE", "data": [r["actual_rpe"] for r in rpe_data],
+                          "borderColor": Z45, "borderWidth": 2, "pointRadius": 4, "fill": False},
+                     ]},
+            "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
+                        "scales": {"y": {"min": 1, "max": 10, "grid": {"color": "rgba(255,255,255,0.03)"},
+                                         "title": {"display": True, "text": "RPE (gap = fatigue)"}},
+                                   "x": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
     return charts
@@ -400,6 +476,103 @@ def _coaching(conn):
     insights = [{**styles.get(i.get("type", "info"), styles["info"]), "title": i.get("title", ""), "body": i.get("body", "")}
                 for i in data.get("insights", [])]
     return {"generated_at": data.get("generated_at", ""), "stale": stale, "insights": insights}
+
+
+# ── Event Annotations (W5) ──
+
+def _get_event_annotations(conn) -> dict:
+    """Build Chart.js annotation config for key events."""
+    annotations = {}
+
+    # Races
+    races = conn.execute("SELECT date, name FROM activities WHERE run_type = 'race' ORDER BY date").fetchall()
+    for i, r in enumerate(races):
+        annotations[f"race_{i}"] = {
+            "type": "line", "xMin": r["date"], "xMax": r["date"],
+            "borderColor": ACCENT + "80", "borderWidth": 1, "borderDash": [3, 3],
+            "label": {"content": r["name"] or "Race", "display": True, "position": "start",
+                      "font": {"size": 8}, "color": ACCENT},
+        }
+
+    # Phase transitions
+    phases = conn.execute("SELECT start_date, name FROM training_phases WHERE status != 'revised' AND start_date IS NOT NULL ORDER BY start_date").fetchall()
+    for i, p in enumerate(phases):
+        annotations[f"phase_{i}"] = {
+            "type": "line", "xMin": p["start_date"], "xMax": p["start_date"],
+            "borderColor": SAFE + "60", "borderWidth": 1, "borderDash": [6, 3],
+            "label": {"content": p["name"] or "", "display": True, "position": "start",
+                      "font": {"size": 7}, "color": SAFE + "AA"},
+        }
+
+    # Training gaps (> 7 days without activity)
+    dates = conn.execute("SELECT DISTINCT date FROM activities ORDER BY date").fetchall()
+    date_list = [d["date"] for d in dates]
+    for i in range(1, len(date_list)):
+        d1 = date.fromisoformat(date_list[i - 1])
+        d2 = date.fromisoformat(date_list[i])
+        gap_days = (d2 - d1).days
+        if gap_days > 7:
+            mid = d1 + (d2 - d1) / 2
+            annotations[f"gap_{i}"] = {
+                "type": "box", "xMin": date_list[i - 1], "xMax": date_list[i],
+                "backgroundColor": "rgba(239,68,68,0.05)", "borderWidth": 0,
+                "label": {"content": f"{gap_days}d gap", "display": True, "position": "center",
+                          "font": {"size": 8}, "color": DANGER + "80"},
+            }
+
+    return annotations
+
+
+# ── Phase Compliance (W8) ──
+
+def _phase_compliance(conn):
+    phase = conn.execute("SELECT * FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
+    if not phase:
+        return None
+    from fit.goals import get_phase_compliance
+    compliance = get_phase_compliance(conn, phase["id"])
+    if compliance.get("status") == "no_data":
+        return {"phase_name": f"{phase['phase']}: {phase['name']}", "dimensions": [], "no_data": True}
+    return {"phase_name": f"{phase['phase']}: {phase['name']}", "dimensions": compliance.get("dimensions", []), "no_data": False}
+
+
+# ── Calibration Panel (W9) ──
+
+def _calibration_panel(conn):
+    from fit.calibration import get_calibration_status
+    return get_calibration_status(conn)
+
+
+# ── Data Health Panel (W9) ──
+
+def _data_health_panel(conn):
+    from fit.data_health import check_data_sources
+    return check_data_sources(conn)
+
+
+# ── Sleep Mismatches (W10) ──
+
+def _sleep_mismatches(conn):
+    rows = conn.execute("""
+        SELECT h.date, h.sleep_duration_hours, c.sleep_quality
+        FROM daily_health h
+        JOIN checkins c ON h.date = c.date
+        WHERE h.date >= date('now', '-21 days')
+          AND c.sleep_quality IS NOT NULL
+          AND h.sleep_duration_hours IS NOT NULL
+        ORDER BY h.date DESC
+    """).fetchall()
+    mismatches = []
+    for r in rows:
+        hours = r["sleep_duration_hours"]
+        quality = r["sleep_quality"]
+        if hours >= 7 and quality == "Poor":
+            mismatches.append({"date": r["date"], "hours": f"{hours:.1f}", "quality": quality,
+                               "msg": f"{hours:.1f}h sleep but felt Poor — possible stress or sleep disruption"})
+        elif hours < 6 and quality == "Good":
+            mismatches.append({"date": r["date"], "hours": f"{hours:.1f}", "quality": quality,
+                               "msg": f"Only {hours:.1f}h but felt Good — monitor for cumulative deficit"})
+    return mismatches
 
 
 # ── Helpers ──

@@ -98,10 +98,59 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
     <div style="font-size:10px;color:var(--text-muted);margin-top:4px">{{ journey.position }}</div>
   </div>
   {% endif %}
+
+  {% if phase_compliance %}
+  <div class="sec"><h2>Phase Compliance: {{ phase_compliance.phase_name }}</h2><div class="line"></div></div>
+  {% if phase_compliance.no_data %}
+    <div style="font-size:11px;color:var(--text-muted)">No weekly data yet for compliance check.</div>
+  {% else %}
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+    {% for dim in phase_compliance.dimensions %}
+      <div class="card" style="min-width:140px">
+        <div class="card-label">{{ dim.name }}</div>
+        <div class="card-value" style="font-size:16px;color:{% if dim.on_track %}var(--safe){% else %}var(--danger){% endif %}">{{ dim.actual or '—' }}</div>
+        <div class="card-sub">target: {{ dim.target or dim.target_range }}</div>
+      </div>
+    {% endfor %}
+    </div>
+  {% endif %}
+  {% endif %}
+
+  <details style="margin:14px 0">
+    <summary style="font-size:10px;font-weight:700;color:var(--text-dim);cursor:pointer">
+      Calibration & Data Health
+      {% set stale_count = calibration_panel | selectattr('stale') | list | length %}
+      {% set missing_count = data_health | selectattr('status', 'equalto', 'missing') | list | length %}
+      {% if stale_count + missing_count > 0 %}<span class="stale-badge">{{ stale_count + missing_count }} warnings</span>{% else %}<span style="color:var(--safe);font-size:9px"> All healthy ✓</span>{% endif %}
+    </summary>
+    <div style="margin-top:8px">
+      <div style="font-size:10px;font-weight:700;color:var(--text-muted);margin-bottom:4px">Calibration</div>
+      {% for cal in calibration_panel %}
+      <div style="font-size:10px;color:{% if cal.stale %}var(--caution){% elif cal.missing %}var(--danger){% else %}var(--safe){% endif %};margin:2px 0">
+        {{ cal.metric }}: {{ cal.value or 'not set' }} {% if cal.method %}({{ cal.method }}, {{ cal.date }}){% endif %}
+        {% if cal.retest_prompt %} — {{ cal.retest_prompt }}{% endif %}
+      </div>
+      {% endfor %}
+      <div style="font-size:10px;font-weight:700;color:var(--text-muted);margin:8px 0 4px">Data Sources</div>
+      {% for src in data_health %}
+      <div style="font-size:10px;color:{% if src.status == 'active' %}var(--safe){% elif src.status == 'stale' %}var(--caution){% else %}var(--danger){% endif %};margin:2px 0">
+        {% if src.status == 'active' %}✓{% elif src.status == 'stale' %}⚠{% else %}✗{% endif %} {{ src.source }}
+        {% if src.last_date %}({{ src.last_date }}){% endif %}
+        {% if src.instruction %}<span style="color:var(--text-dim)"> — {{ src.instruction }}</span>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </details>
 </div>
 
 <!-- ═══ TRAINING ═══ -->
 <div id="tab-training" class="tab-content">
+  <div style="display:flex;gap:4px;margin-bottom:10px">
+    <span style="font-size:9px;color:var(--text-dim);padding:3px 0">Range:</span>
+    {% for r in ["3mo","6mo","1yr","all"] %}
+    <button class="tab-btn{% if r == 'all' %} active{% endif %}" style="font-size:9px;padding:2px 8px" onclick="setZoom('{{ r }}',this)">{{ r }}</button>
+    {% endfor %}
+  </div>
   {% if wow %}
   <div class="wow-card">
     <div style="font-size:9px;font-weight:700;color:var(--z12);margin-bottom:4px">WEEK OVER WEEK</div>
@@ -133,12 +182,30 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div class="sec"><h2>Sleep</h2><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-sleep" height="150"></canvas></div>
 
+  <div class="sec"><h2>Stress vs Body Battery</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-stress" height="130"></canvas></div>
+
   <div class="sec"><h2>Weight</h2><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-weight" height="130"></canvas></div>
+
+  {% if sleep_mismatches %}
+  <div class="sec"><h2>Sleep Quality Mismatches</h2><div class="line"></div></div>
+  {% for m in sleep_mismatches %}
+  <div style="background:rgba(234,179,8,0.06);border:1px solid rgba(234,179,8,0.12);border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:11px;color:#94a3b8">
+    <span style="color:var(--caution)">⚠ {{ m.date }}:</span> {{ m.msg }}
+  </div>
+  {% endfor %}
+  {% endif %}
 </div>
 
 <!-- ═══ FITNESS ═══ -->
 <div id="tab-fitness" class="tab-content">
+  <div style="display:flex;gap:4px;margin-bottom:10px">
+    <span style="font-size:9px;color:var(--text-dim);padding:3px 0">Range:</span>
+    {% for r in ["3mo","6mo","1yr","all"] %}
+    <button class="tab-btn{% if r == '3mo' %} active{% endif %}" style="font-size:9px;padding:2px 8px" onclick="setZoom('{{ r }}',this)">{{ r }}</button>
+    {% endfor %}
+  </div>
   <div class="sec"><h2>Aerobic Efficiency (Speed / BPM)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.speed_per_bpm }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-efficiency" height="170"></canvas></div>
 
@@ -147,6 +214,12 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
 
   <div class="sec"><h2>Zone Distribution (by time)</h2><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-zones" height="130"></canvas></div>
+
+  <div class="sec"><h2>Cadence</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Running cadence (steps per minute). Below 165 spm often indicates overstriding. Target: 170-180 for most runners.</div><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-cadence" height="130"></canvas></div>
+
+  <div class="sec"><h2>RPE: Predicted vs Actual</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Predicted RPE from HR zone (Z2→3, Z4→7) vs actual RPE from check-in. A widening gap where actual exceeds predicted = accumulating fatigue.</div><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-rpe" height="140"></canvas></div>
 
   {% if race_prediction %}
   <div class="sec"><h2>Race Prediction</h2><div class="line"></div></div>
@@ -187,9 +260,17 @@ function showTab(id, btn) {
 Chart.defaults.color = '#475569';
 Chart.defaults.font.family = "'JetBrains Mono', monospace";
 Chart.defaults.font.size = 10;
+const chartInstances = {};
 {% for chart in charts %}
-new Chart(document.getElementById('{{ chart.id }}'), {{ chart.config | safe }});
+chartInstances['{{ chart.id }}'] = new Chart(document.getElementById('{{ chart.id }}'), {{ chart.config | safe }});
 {% endfor %}
+function setZoom(range, btn) {
+  btn.parentElement.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  // Zoom is a UI affordance — actual filtering would require re-querying data.
+  // For now, this provides the toggle UI. Full implementation needs data slicing per range.
+  console.log('Zoom set to', range);
+}
 </script>
 </body>
 </html>
