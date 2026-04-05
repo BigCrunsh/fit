@@ -50,7 +50,7 @@
 
 - [x] 7.1 End-to-end: `fit sync` → `fit checkin` → verify DB populated
 - [x] 7.2 Configure MCP: add `fit-mcp` (added alongside garmy-localdb) to Claude Chat/Code config
-- [ ] 7.3 Verify Claude Chat can query fitness.db (restart Claude Desktop, test fit-mcp tools)
+- [x] 7.3 Verify Claude Chat can query fitness.db (verified: 111 activities, 41 health days, views working)
 - [ ] 7.4 Retire: remove `garmy-localdb` from claude_desktop_config.json, `mv ~/.garmy ~/.garmy.bak`, uninstall garmy-mcp from MCP config, `mv ~/.garmy ~/.garmy.bak`
 
 ---
@@ -59,13 +59,13 @@
 
 ## 8. Analysis Library
 
-- [ ] 8.1 Implement `fit/analysis.py` — `compute_hr_zones(avg_hr, config)` returning BOTH `hr_zone_maxhr` and `hr_zone_lthr` in parallel. `compute_effort_class(zone)` with 5 levels.
-- [ ] 8.2 Add `compute_speed_per_bpm()` (higher = better) and `compute_speed_per_bpm_z2()` (Z2 only)
-- [ ] 8.3 Add `classify_run_type()` — easy/long/tempo/intervals/recovery/race/progression
-- [ ] 8.4 Add `enrich_activity()` — parallel zones, effort class, speed_per_bpm, run_type, max_hr_used/lthr_used. Upsert preserves existing derived metrics.
-- [ ] 8.5 Add `compute_weekly_agg()` — run metrics (count, km, pace, HR, longest run, cadence, easy/quality counts), cross-training, ACWR, zone distribution by time, consistency streak
-- [ ] 8.6 Add `predict_marathon_time()` — Riegel + VDOT predictions
-- [ ] 8.7 Test: parallel zones, effort class, speed_per_bpm direction, run types, ACWR (safe/danger/null), race predictions
+- [x] 8.1 Implement `fit/analysis.py` — `compute_hr_zones(avg_hr, config)` returning BOTH `hr_zone_maxhr` and `hr_zone_lthr` in parallel. `compute_effort_class(zone)` with 5 levels.
+- [x] 8.2 Add `compute_speed_per_bpm()` (higher = better) and `compute_speed_per_bpm_z2()` (Z2 only)
+- [x] 8.3 Add `classify_run_type()` — easy/long/tempo/intervals/recovery/race/progression
+- [x] 8.4 Add `enrich_activity()` — parallel zones, effort class, speed_per_bpm, run_type, max_hr_used/lthr_used. Upsert preserves existing derived metrics.
+- [x] 8.5 Add `compute_weekly_agg()` — run metrics (count, km, pace, HR, longest run, cadence, easy/quality counts), cross-training, ACWR, zone distribution by time, consistency streak
+- [x] 8.6 Add `predict_marathon_time()` — Riegel + VDOT predictions
+- [x] 8.7 Test: parallel zones, effort class, speed_per_bpm direction, run types, ACWR (safe/danger/null), race predictions
 
 ## 9. Calibration & Data Health
 
