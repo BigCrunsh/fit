@@ -516,30 +516,30 @@ def _all_charts(conn):
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
-    # RPE chart (Fitness tab) — show actual RPE even without predicted
-    rpe_actual = conn.execute("""
-        SELECT a.date, a.rpe as actual_rpe, a.hr_zone,
-               CASE a.hr_zone
-                   WHEN 'Z1' THEN 2 WHEN 'Z2' THEN 3 WHEN 'Z3' THEN 5
-                   WHEN 'Z4' THEN 7 WHEN 'Z5' THEN 9 ELSE NULL
-               END as predicted_rpe
+    # RPE chart (Fitness tab) — Garmin effort (from aerobic_te) vs actual RPE
+    # aerobic_te is 1-5 Garmin scale, map to RPE 1-10: RPE ≈ aerobic_te * 2
+    rpe_data = conn.execute("""
+        SELECT a.date, a.rpe as actual_rpe, a.aerobic_te,
+               ROUND(a.aerobic_te * 2, 1) as garmin_rpe
         FROM activities a
-        WHERE a.type='running' AND a.rpe IS NOT NULL
+        WHERE a.type='running' AND a.aerobic_te IS NOT NULL
+        AND a.date >= date('now', '-90 days')
         ORDER BY a.date
     """).fetchall()
-    if len(rpe_actual) >= 1:
+    if len(rpe_data) >= 3:
         datasets = [
-            {"label": "Actual RPE", "data": [r["actual_rpe"] for r in rpe_actual],
-             "borderColor": Z45, "borderWidth": 2, "pointRadius": 4, "fill": False},
+            {"label": "Garmin Effort (TE×2)", "data": [r["garmin_rpe"] for r in rpe_data],
+             "borderColor": Z12, "borderWidth": 1.5, "borderDash": [4, 2], "pointRadius": 2, "fill": False},
         ]
-        # Add predicted line only if HR zone data available
-        has_predicted = any(r["predicted_rpe"] is not None for r in rpe_actual)
-        if has_predicted:
-            datasets.insert(0, {"label": "Predicted (from HR)", "data": [r["predicted_rpe"] for r in rpe_actual],
-                                "borderColor": Z12, "borderWidth": 1.5, "borderDash": [4, 2], "pointRadius": 2, "fill": False})
+        # Add actual RPE line if any check-in RPE data exists
+        actual_rpes = [r["actual_rpe"] for r in rpe_data]
+        if any(v is not None for v in actual_rpes):
+            datasets.append({"label": "Your RPE (checkin)", "data": actual_rpes,
+                             "borderColor": Z45, "borderWidth": 2, "pointRadius": 4, "fill": False,
+                             "spanGaps": True})
         charts.append({"id": "chart-rpe", "config": json.dumps({
             "type": "line",
-            "data": {"labels": [r["date"] for r in rpe_actual],
+            "data": {"labels": [r["date"] for r in rpe_data],
                      "datasets": datasets},
             "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
                         "scales": {"y": {"min": 1, "max": 10, "grid": {"color": "rgba(255,255,255,0.03)"},
@@ -580,7 +580,7 @@ def _definitions(conn):
         "zones": "HR zones by training TIME (minutes per week), not run count. Compared to your active training phase targets. Blue = Z1+Z2 (easy), amber = Z3 (moderate), orange = Z4+Z5 (hard). Phase 1 targets ~90% easy.",
         "volume": "Total running km per week. The darker segment shows the longest single run. For marathon training: long run should build gradually to 30-32 km, weekly volume to 50-60 km at peak.",
         "cadence": f"Your 30d avg cadence: {avg_cadence_val} spm. Below 165 often indicates overstriding. Target: 170-180. Tends to improve with fatigue resilience and form work.",
-        "rpe": "Predicted RPE from HR zone (Z2→3, Z4→7) vs actual RPE from check-in. A widening gap where actual exceeds predicted signals accumulating fatigue — your body is working harder than your heart rate suggests.",
+        "rpe": "Garmin Effort = Aerobic Training Effect × 2 (dashed line, from every run). Your RPE = subjective effort from check-in (solid line, when available). When your RPE consistently exceeds Garmin's estimate, you're more fatigued than the numbers suggest.",
         "race_prediction": "Riegel formula: extrapolates from shorter race times using T2 = T1 × (D2/D1)^1.06. VDOT: from Daniels' tables using VO2max. Both are estimates — actual performance depends on training specificity, fueling, and conditions.",
         "acwr": f"Acute:Chronic Workload Ratio. Current: {acwr_val}. This week's load ÷ avg of previous 4 weeks. <strong style='color:var(--safe)'>0.8-1.3 = safe</strong>, <strong style='color:var(--caution)'>1.3-1.5 = caution</strong>, <strong style='color:var(--danger)'>> 1.5 = injury risk (spike)</strong>, < 0.6 = detraining. Critical for comeback training.",
     }
