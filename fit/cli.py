@@ -109,17 +109,20 @@ def races():
     try:
         rows = conn.execute("""
             SELECT rc.date, rc.name, rc.distance, rc.status, rc.target_time, rc.result_time,
-                   rc.activity_id, rc.organizer
+                   rc.garmin_time, rc.activity_id, rc.organizer
             FROM race_calendar rc ORDER BY rc.date
         """).fetchall()
         console.print(f"\n[bold]Race Calendar ({len(rows)} races)[/bold]\n")
+        console.print(f"  {'':1s} {'Date':10s}  {'Status':10s}  {'Distance':12s}  {'Official':>8s}  {'Garmin':>8s}  {'Target':>8s}  Name")
+        console.print(f"  {'':1s} {'─'*10}  {'─'*10}  {'─'*12}  {'─'*8}  {'─'*8}  {'─'*8}  {'─'*20}")
         for r in rows:
             matched = "[green]✓[/green]" if r["activity_id"] else "[red]✗[/red]"
             status_color = {"completed": "green", "registered": "cyan", "planned": "dim", "dns": "red", "dnf": "red"}
             sc = status_color.get(r["status"], "dim")
             result = r["result_time"] or "—"
-            target = f" → {r['target_time']}" if r["target_time"] else ""
-            console.print(f"  {matched} {r['date']}  [{sc}]{r['status']:10s}[/]  {r['distance']:12s}  {result:>8s}{target}  {r['name']}")
+            garmin = r["garmin_time"] or "—"
+            target = r["target_time"] or "—"
+            console.print(f"  {matched} {r['date']}  [{sc}]{r['status']:10s}[/]  {r['distance']:12s}  {result:>8s}  {garmin:>8s}  {target:>8s}  {r['name']}")
         # Show unmatched warning
         unmatched = [r for r in rows if r["status"] == "completed" and not r["activity_id"]]
         if unmatched:

@@ -184,11 +184,12 @@ def _match_race_calendar(conn: sqlite3.Connection) -> None:
             WHERE date = ? AND type = 'running' ORDER BY distance_km DESC LIMIT 1
         """, (rc["date"],)).fetchone()
         if activity:
-            result_min = activity["duration_min"] or 0
-            result_time = f"{int(result_min // 60)}:{int(result_min % 60):02d}:00"
-            pace = (result_min * 60) / activity["distance_km"] if activity["distance_km"] else None
-            conn.execute("UPDATE race_calendar SET activity_id = ?, result_time = ?, result_pace = ? WHERE id = ?",
-                         (activity["id"], result_time, pace, rc["id"]))
+            dur = activity["duration_min"] or 0
+            garmin_time = f"{int(dur // 60)}:{int(dur % 60):02d}:{int((dur * 60) % 60):02d}"
+            pace = (dur * 60) / activity["distance_km"] if activity["distance_km"] else None
+            conn.execute("""UPDATE race_calendar SET activity_id = ?, garmin_time = ?, result_pace = ?
+                            WHERE id = ?""",
+                         (activity["id"], garmin_time, pace, rc["id"]))
             conn.execute("UPDATE activities SET run_type = 'race' WHERE id = ?", (activity["id"],))
             logger.info("Race matched: %s → activity %s", rc["date"], activity["id"])
     conn.commit()
