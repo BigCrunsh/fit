@@ -64,6 +64,41 @@ def checkin():
 
 
 @main.command()
+@click.argument("metric", type=click.Choice(["max_hr", "lthr"]))
+def calibrate(metric: str):
+    """Calibrate a physiological metric (max_hr or lthr)."""
+    from datetime import date as d
+
+    from rich.prompt import Prompt
+
+    from fit.calibration import add_calibration
+    from fit.config import get_config
+    from fit.db import get_db
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=Path.cwd() / "migrations")
+
+    try:
+        if metric == "max_hr":
+            console.print("\n[bold]Max HR Calibration[/bold]")
+            console.print("  Enter the highest HR you've observed in a recent race or hard effort.")
+            value = float(Prompt.ask("  Max HR (bpm)"))
+            method = Prompt.ask("  Method", choices=["race", "lab_test", "manual"], default="race")
+            add_calibration(conn, "max_hr", value, method, "high", d.today())
+            console.print(f"  [green]✓ Max HR calibrated: {value} bpm[/green]")
+
+        elif metric == "lthr":
+            console.print("\n[bold]LTHR Calibration (30-min Time Trial)[/bold]")
+            console.print("  Protocol: warm up 15min, run 30min all-out (even pace),")
+            console.print("  LTHR = average HR of the LAST 20 minutes.")
+            value = float(Prompt.ask("  LTHR (avg HR of last 20 min)"))
+            add_calibration(conn, "lthr", value, "time_trial", "high", d.today())
+            console.print(f"  [green]✓ LTHR calibrated: {value} bpm[/green]")
+    finally:
+        conn.close()
+
+
+@main.command()
 def status():
     """Quick overview of data and goals."""
     from fit.config import get_config

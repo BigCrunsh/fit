@@ -69,12 +69,12 @@
 
 ## 9. Calibration & Data Health
 
-- [ ] 9.1 Implement `fit/calibration.py` — `get_active_calibration()`, `add_calibration()`, `is_stale()` (max_hr >12mo, lthr >8wk, weight >7d), `get_calibration_status()`
-- [ ] 9.2 Add LTHR auto-extraction from races ≥10km (avg HR of second half)
-- [ ] 9.3 Implement `fit calibrate <metric>` CLI subcommand
-- [ ] 9.4 Implement `fit/data_health.py` — `check_data_sources()` (active/stale/missing per source with Garmin instructions)
-- [ ] 9.5 Seed initial calibration entries (max_hr 192, lthr from Oct HM)
-- [ ] 9.6 Test: staleness, auto-extraction, data health checks
+- [x] 9.1 Implement `fit/calibration.py` — `get_active_calibration()`, `add_calibration()`, `is_stale()` (max_hr >12mo, lthr >8wk, weight >7d), `get_calibration_status()`
+- [x] 9.2 Add LTHR auto-extraction from races ≥10km (avg HR of second half)
+- [x] 9.3 Implement `fit calibrate <metric>` CLI subcommand
+- [x] 9.4 Implement `fit/data_health.py` — `check_data_sources()` (active/stale/missing per source with Garmin instructions)
+- [x] 9.5 Seed initial calibration entries (max_hr 192, lthr from Oct HM)
+- [x] 9.6 Test: staleness, auto-extraction, data health checks
 
 ## 10. Goals & Training Phases
 
