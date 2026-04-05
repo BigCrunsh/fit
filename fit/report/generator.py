@@ -146,10 +146,25 @@ def _checkin(conn):
     if not row:
         return None
     fields = []
-    if row["hydration"]: fields.append(f"💧 {row['hydration']}")
-    if row["alcohol"] is not None: fields.append(f"🍺 {row['alcohol']}")
-    if row["legs"]: fields.append(f"🦵 {row['legs']}")
-    if row["notes"]: fields.append(row["notes"])
+    if row["hydration"]:
+        fields.append(f"💧 {row['hydration']}")
+    if row["alcohol"] is not None:
+        detail = f" ({row['alcohol_detail']})" if row["alcohol_detail"] else ""
+        fields.append(f"🍺 {row['alcohol']}{detail}")
+    if row["legs"]:
+        fields.append(f"🦵 {row['legs']}")
+    if row["eating"]:
+        fields.append(f"🍽️ {row['eating']}")
+    if row["water_liters"]:
+        fields.append(f"💧 {row['water_liters']}L")
+    if row["energy"]:
+        fields.append(f"⚡ {row['energy']}")
+    if row["sleep_quality"]:
+        fields.append(f"😴 {row['sleep_quality']}")
+    if row["rpe"] is not None:
+        fields.append(f"💪 RPE {row['rpe']}")
+    if row["notes"]:
+        fields.append(row["notes"])
     return {"date": row["date"], "fields": fields}
 
 
