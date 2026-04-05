@@ -158,10 +158,10 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   </div>
   {% endif %}
 
-  <div class="sec"><h2>Weekly Volume</h2><div class="line"></div></div>
+  <div class="sec"><h2>Weekly Volume</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.volume | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-volume" height="160"></canvas></div>
 
-  <div class="sec"><h2>Training Load Per Run</h2><div class="line"></div></div>
+  <div class="sec"><h2>Training Load Per Run</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.training_load | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-load" height="150"></canvas></div>
 
   <div class="sec"><h2>Run Timeline</h2><div class="line"></div></div>
@@ -176,16 +176,16 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
 
 <!-- ═══ BODY ═══ -->
 <div id="tab-body" class="tab-content">
-  <div class="sec"><h2>Readiness · RHR · HRV</h2><div class="line"></div></div>
+  <div class="sec"><h2>Readiness · RHR · HRV</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.readiness | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-readiness" height="180"></canvas></div>
 
-  <div class="sec"><h2>Sleep</h2><div class="line"></div></div>
+  <div class="sec"><h2>Sleep</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.sleep | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-sleep" height="150"></canvas></div>
 
-  <div class="sec"><h2>Stress vs Body Battery</h2><div class="line"></div></div>
+  <div class="sec"><h2>Stress vs Body Battery</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.stress_battery | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-stress" height="130"></canvas></div>
 
-  <div class="sec"><h2>Weight</h2><div class="line"></div></div>
+  <div class="sec"><h2>Weight</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.weight | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-weight" height="130"></canvas></div>
 
   {% if sleep_mismatches %}
@@ -212,7 +212,7 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div class="sec"><h2>VO2max</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.vo2max }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-vo2" height="140"></canvas></div>
 
-  <div class="sec"><h2>Zone Distribution (by time)</h2><div class="line"></div></div>
+  <div class="sec"><h2>Zone Distribution (by time)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.zones | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-zones" height="130"></canvas></div>
 
   <div class="sec"><h2>Cadence</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Running cadence (steps per minute). Below 165 spm often indicates overstriding. Target: 170-180 for most runners.</div><div class="line"></div></div>
@@ -222,7 +222,7 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div class="chart-box"><canvas id="chart-rpe" height="140"></canvas></div>
 
   {% if race_prediction %}
-  <div class="sec"><h2>Race Prediction</h2><div class="line"></div></div>
+  <div class="sec"><h2>Race Prediction</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.race_prediction | safe }}</div><div class="line"></div></div>
   <div style="background:rgba(167,139,250,0.04);border:1px solid rgba(167,139,250,0.12);border-radius:12px;padding:15px">
     {{ race_prediction | safe }}
   </div>
