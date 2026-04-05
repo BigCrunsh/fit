@@ -34,3 +34,4 @@ Generate coaching insights for the fit platform.
 - Always use the zone boundaries from `get_coaching_context()`. NEVER default to HR 150 for "easy" — use the actual Z2 ceiling from the config.
 - Reference specific numbers from the data in every insight.
 - Be direct and actionable, not generic.
+- **EVERY insight MUST have a `body` field** with the full analysis paragraph (2-5 sentences, specific numbers, actionable). The tool will REJECT insights with empty or missing body text. Do NOT save title-only insights — the dashboard renders both title AND body.

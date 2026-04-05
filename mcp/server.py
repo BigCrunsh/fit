@@ -333,7 +333,7 @@ def get_coaching_context() -> str:
 
 @mcp.tool()
 def save_coaching_notes(insights_json: str) -> str:
-    """Save coaching insights to reports/coaching.json. Pass a JSON string with insights array."""
+    """Save coaching insights to reports/coaching.json. Pass a JSON array where EACH insight MUST have: type (critical/warning/positive/info/target), title (short), and body (FULL analysis paragraph with specific numbers and recommendations — minimum 20 chars, typically 2-5 sentences). Insights without body text will be rejected."""
     from datetime import datetime
 
     try:
@@ -342,11 +342,24 @@ def save_coaching_notes(insights_json: str) -> str:
         return f"Error: Invalid JSON: {e}"
 
     if "insights" not in data:
-        # Wrap bare array
         if isinstance(data, list):
             data = {"insights": data}
         else:
             return "Error: JSON must contain an 'insights' array."
+
+    # Validate each insight has type, title, AND body with actual content
+    errors = []
+    for i, insight in enumerate(data.get("insights", [])):
+        if not insight.get("type"):
+            errors.append(f"Insight {i}: missing 'type' (critical/warning/positive/info/target)")
+        if not insight.get("title"):
+            errors.append(f"Insight {i}: missing 'title'")
+        if not insight.get("body") or len(str(insight.get("body", ""))) < 20:
+            errors.append(f"Insight {i} ('{insight.get('title', '?')}'): missing or too short 'body' — "
+                          "each insight MUST include the full analysis paragraph, not just a title. "
+                          "The body should contain specific numbers, context, and actionable recommendations.")
+    if errors:
+        return "Error: Insights validation failed. Fix these issues and re-save:\n" + "\n".join(errors)
 
     data["generated_at"] = datetime.now().isoformat()
     data["report_date"] = datetime.now().strftime("%Y-%m-%d")
