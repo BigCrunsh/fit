@@ -56,6 +56,8 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "race_prediction": _race_prediction(conn),
         "coaching": _coaching(conn),
         "recent_alerts": _recent_alerts(conn),
+        "rpe_count": conn.execute("SELECT COUNT(*) FROM activities WHERE type='running' AND rpe IS NOT NULL").fetchone()[0],
+        "run_count": conn.execute("SELECT COUNT(*) FROM activities WHERE type='running'").fetchone()[0],
         "goal_progress": _goal_progress(conn),
         "correlation_bars": _correlation_bars(conn),
         "phase_compliance": _phase_compliance(conn),

@@ -252,7 +252,7 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div class="chart-box"><canvas id="chart-rpe" height="140"></canvas></div>
   {% else %}
   <div class="sec"><h2>RPE: Predicted vs Actual</h2><div class="line"></div></div>
-  <div style="color:var(--text-muted);font-size:11px;padding:10px 0">No RPE data yet. Run <code>fit checkin</code> with RPE after each workout to build this chart.</div>
+  <div style="color:var(--text-muted);font-size:11px;padding:10px 0">RPE data: {{ rpe_count }}/{{ run_count }} runs. {% if rpe_count < 3 %}Need ≥3 runs with RPE to chart. Run <code>fit checkin</code> with RPE after each workout.{% endif %}</div>
   {% endif %}
 
   {% if race_prediction %}
