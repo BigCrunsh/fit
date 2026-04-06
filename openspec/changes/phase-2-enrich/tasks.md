@@ -42,7 +42,7 @@
 - [ ] 4.2 Fix long run threshold — use % of weekly volume (>30% of weekly km) instead of hardcoded max(15, avg×0.75)
 - [ ] 4.3 Add sRPE (session RPE × duration) as validated internal load metric alongside Garmin EPOC. Store in activities, show in weekly_agg
 - [ ] 4.4 Implement training monotony (stdev of daily loads per week) and strain (weekly_load × monotony) — add to weekly_agg
-- [ ] 4.5 Add cycling commute impact to recovery assessment — compute daily/weekly cycling km, add `cycling_km` to weekly_agg, factor into headline ("you cycled 30km yesterday — consider easy run today"), add cycling volume as "why" connector for run quality, add correlation pair: previous-day cycling_km → next-day run efficiency
+- [ ] 4.5 Add cycling volume to training model — compute daily/weekly cycling km + duration in weekly_agg (`cycling_km`, `cycling_min`). Show cycling distance + time in fit status and Training tab stats. Factor into headline when preceding-day cycling was high ("30km cycling yesterday — consider easy run today"). Add cycling as "why" connector for run quality. Add correlation pair: previous-day cycling_km → next-day run efficiency.
 - [ ] 4.6 Add SpO2 illness alert: avg_spo2 < 93% for 2+ consecutive days → "Possible illness or altitude effect — consider rest." Do NOT add SpO2 to dashboard charts (mostly flat 95-98% for sea-level runners).
 - [ ] 4.7 Consider adding correlation pair: SpO2 → training_readiness (validate if useful signal for this user)
 - [ ] 4.8 Test: Daniels table accuracy, long run classification, sRPE, monotony/strain, cycling impact, SpO2 alert
