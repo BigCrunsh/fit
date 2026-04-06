@@ -100,19 +100,17 @@
 
 ## 8. Dashboard Improvements + Documentation
 
-- [ ] 8.1 Chart readability fixes (15 items from viz review):
-  - Sleep chart: change Deep to `rgba(14,165,233,0.7)` (bright blue), Light to `rgba(148,163,184,0.25)` (visible gray) — currently near-invisible on dark bg
-  - Readiness combo: move HRV to y1 axis (currently overlaps bars), change HRV color to `#a78bfa`, widen RHR axis range to 40-85 (currently clips at 45-75)
-  - Efficiency "All runs": increase to `Z3+"50"` opacity or replace with faint dots — currently invisible at 12% opacity
-  - Training load: default zoom to 3mo (not all), add `maxBarThickness:12` — hundreds of 1px bars are unreadable
-  - ACWR: change from bar to line chart with colored point markers — bars wrong for trend data
-  - Stress/Battery: increase Battery fill to 20% opacity (currently 6%, invisible)
-  - Cadence: set explicit y-axis 155-190 to prevent misleading auto-scale
-  - Marathon prediction: add goal zone band (230-240min shaded green) alongside the line
-  - RPE: change Garmin effort to gray `#94a3b8` (baseline), keep actual RPE as orange — same blue used everywhere currently
-  - Volume/RunTypes: shorten week labels to "W14", add maxRotation:45 + autoSkip
-  - Zone chart: add tooltip callback showing percentage (not just raw minutes)
-  - Weight: reduce pointRadius to 1.5, add tension:0.3 for smoothing, consider 7-day rolling avg
+- [ ] 8.1 Chart readability pass — apply these principles across ALL charts:
+  - **Contrast on dark bg**: every dataset must be clearly visible against `#07070c`. Audit all colors below 30% opacity — increase or replace. Stacked bar segments must be distinguishable from each other AND from the background.
+  - **Axis scaling**: never hardcode axis min/max that could clip real data. Use auto-scale with padding, or set conservative ranges that cover expected extremes. For metrics with known ranges (cadence 155-190, readiness 0-100), set explicit bounds.
+  - **One chart, one story**: combo charts with 3+ datasets on mixed axes are hard to read. If datasets overlap or compete, split into separate charts. Reserve dual-axis for clearly paired metrics (e.g., pace + HR).
+  - **Trend data = line chart**: ACWR, efficiency, cadence are trends — use lines with colored point markers, not bars. Bars are for discrete/categorical data (volume per week, load per run).
+  - **Default to readable time window**: charts with many data points (load, volume) should default to 3-6 months, not "all time." Ensure zoom toggle works and defaults to a readable range.
+  - **Label density**: long labels (ISO weeks, full dates) must auto-skip or rotate. Prefer short formats ("W14", "Mar 26") over full ISO strings.
+  - **Semantic color differentiation**: each chart should use distinct colors for its datasets. Avoid reusing the same blue/orange across unrelated charts. Machine/baseline data = muted/gray, human/subjective data = bright/warm.
+  - **Show percentages, not just absolutes**: zone distribution should show % in tooltips, not just raw minutes. Goal progress should show % alongside values.
+  - **Smooth noisy data**: daily weight, HRV — consider 7-day rolling average as primary line with raw data as faint dots. Reduce point radius on dense time series.
+  - **Goal zone visualization**: where a target exists (sub-4:00, Z2 ≥90%, weight ≤75kg), show it as a shaded band, not just a thin line.
 - [ ] 8.2 Update README: race-anchored model, narratives, .fit analysis, Runna auto-sync, monotony/strain
 - [ ] 8.3 Update CLAUDE.md: new tables, refactored architecture, new metrics, migration strategy
 - [ ] 8.4 Update all specs to match implementation
