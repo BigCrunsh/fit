@@ -48,7 +48,7 @@ Three sub-phases, ordered by architectural impact:
 
 ### Plan + Story (Phase 2c)
 
-- **runna-integration** — Import plans with structure JSON for intervals. Weekly compliance. Systematic override detection. Rest day compliance. Connect readiness data to planned workouts for gating.
+- **runna-integration** — **Auto-sync from Garmin Calendar** (Runna pushes workouts to Garmin Connect). No CSV needed. Discovered: `garminconnect` library exposes calendar API + workout details. Pull scheduled workouts via `/calendar-service/year/{y}/month/{m}`, parse Runna names ("W 2 Mi. Intervalle - 1-km-Wiederholungen (7,5 km)") for week/day/type/distance, fetch structured segments via `get_workout_by_id()`. Plan versioning on re-sync. Weekly compliance. Systematic override detection. Rest day compliance. Readiness gate. Fallback: manual CSV import if Garmin sync unavailable.
 
 - **run-story** — Narrative paragraph for most recent long run: splits + correlations + checkin + weather synthesized. "Sunday's 18km: held 5:45 through km 14, then faded to 6:10. HR drifted +11%. 2 drinks Saturday, sleep quality poor."
 

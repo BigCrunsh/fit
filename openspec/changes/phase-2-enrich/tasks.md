@@ -70,17 +70,18 @@
 
 # Phase 2c: Plan + Story
 
-## 6. Runna Training Plan Integration
+## 6. Runna Training Plan Integration (auto-sync from Garmin)
 
-- [ ] 6.1 Add migration 009: `planned_workouts` table with structure JSON, plan versioning, unique (date, plan_version)
-- [ ] 6.2 Implement `fit plan validate <file>` — dry-run checks
-- [ ] 6.3 Implement `fit plan import <file>` — CSV with versioning, import_log
-- [ ] 6.4 Implement `fit plan` — show next 7 days
-- [ ] 6.5 Plan adherence: per-run deltas, weekly compliance (0-100%), systematic override detection, rest day compliance
-- [ ] 6.6 Connect readiness data to planned workouts: readiness gate recommends swap when readiness < 30
-- [ ] 6.7 Dashboard: plan indicators on run timeline + sparkline adherence (28 dots)
-- [ ] 6.8 Coaching context: weekly compliance, rest compliance, override detection
-- [ ] 6.9 Test: import, validation, adherence, override detection, readiness gate
+- [ ] 6.1 Add migration 009: `planned_workouts` table (date, workout_name, workout_type, target_distance_km, target_zone, structure JSON, plan_week, plan_day, garmin_workout_id, plan_version, imported_at, status). Unique (date, plan_version).
+- [ ] 6.2 Implement `fit/plan.py` — `sync_planned_workouts(api, conn, month_range)`: fetch Garmin calendar items, filter workout type, parse Runna names ("W 2 Mi. Intervalle - 1-km-Wiederholungen (7,5 km)") → extract week, day, type (Intervalle/Dauerlauf/Langer Lauf/Tempo), distance. Fetch workout segments via `get_workout_by_id()` for structured steps.
+- [ ] 6.3 Integrate plan sync into `fit sync` — pull next 4 weeks of planned workouts from Garmin Calendar after activity sync. Plan versioning: mark previous entries as superseded on re-sync.
+- [ ] 6.4 Implement `fit plan` — show next 7 days of planned workouts with type, distance, segments summary
+- [ ] 6.5 Implement `fit plan import <file>` — CSV fallback if Garmin sync unavailable. `fit plan validate` dry-run.
+- [ ] 6.6 Plan adherence: per-run deltas (planned vs actual zone/distance/pace), weekly compliance (0-100%), systematic override detection (>60% easy overridden in 3 weeks), rest day compliance
+- [ ] 6.7 Connect readiness data to planned workouts: readiness gate recommends swap when readiness < 30 and planned = quality session
+- [ ] 6.8 Dashboard: plan indicators on run timeline (green/red) + sparkline adherence (28 dots)
+- [ ] 6.9 Coaching context: weekly compliance, rest compliance, override detection, next planned workout
+- [ ] 6.10 Test: Garmin calendar parsing, Runna name extraction, plan sync, adherence, override detection
 
 ## 7. Run Story + Periodization
 
