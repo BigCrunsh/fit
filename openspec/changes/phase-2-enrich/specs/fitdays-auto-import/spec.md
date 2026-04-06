@@ -1,37 +1,26 @@
 ## ADDED Requirements
 
-### Requirement: Automated weight import from configured path
-The system SHALL import weight + body composition data from a **configured file path** (not ~/Downloads/ scanning). Path set in `config.yaml` under `sync.weight_csv_path`. During `fit sync`, check if the file has new data (compare row count or hash against `import_log`). Import only dates not already in body_comp.
+### Requirement: Full body composition import from FitDays CSV
+The weight CSV importer SHALL parse body_fat_pct, muscle_mass_kg, visceral_fat from FitDays CSV alongside weight_kg. Column name detection (case-insensitive matching). Skip BMI (derivable), bone mass, body water, metabolic age, protein, subcutaneous fat (BIA noise — not actionable for marathon training).
 
-#### Scenario: New weight data detected
-- **WHEN** `fit sync` runs and the configured CSV has 3 new measurements since last import
-- **THEN** 3 new rows are inserted into body_comp, import_log entry created
+#### Scenario: Full body comp parsed
+- **WHEN** FitDays CSV has columns Date, Weight(kg), Body Fat(%), Muscle(kg), Visceral Fat
+- **THEN** all values stored in body_comp table per row
 
-#### Scenario: No new data
-- **WHEN** CSV exists but all dates are already in body_comp
-- **THEN** no import, no error
+#### Scenario: Weight-only CSV
+- **WHEN** CSV only has Date and Weight columns
+- **THEN** weight imported, body comp fields remain NULL
 
-#### Scenario: File not found
-- **WHEN** configured path does not exist
-- **THEN** log warning, data health panel shows "weight CSV not found at [path]"
+### Requirement: Body fat trend on dashboard
+Add body fat % as a second y-axis line on the Body tab weight chart (faint, different color from weight). Include body comp trend in `get_coaching_context()`: "fat trending down + muscle stable = healthy cut."
 
-### Requirement: Import tracking via import_log table
-An `import_log` table SHALL track all file imports: filename, file_hash, row_count, rows_imported, import_timestamp, source_type (weight_csv/runna_plan). Prevents duplicate imports and enables debugging.
+#### Scenario: Body comp in coaching
+- **WHEN** body_fat_pct decreased from 20.5% to 19.2% over 8 weeks while muscle_mass_kg stable
+- **THEN** coaching context: "Body fat ↓1.3% with stable muscle — healthy composition change"
 
-#### Scenario: Duplicate import prevented
-- **WHEN** the same CSV file (same hash) is processed twice
-- **THEN** second import is skipped with log: "File already imported (hash matches)"
+### Requirement: Apple Health explicitly out of scope
+Do NOT build an Apple Health integration for body comp. The data originates from the FitDays scale — Apple Health is a middleman that loses data (no visceral fat in HealthKit). Apple Health has no API accessible from non-Apple platforms. Extending the FitDays CSV import directly gives more data with less effort.
 
-### Requirement: CSV format validation
-The system SHALL validate the CSV header row before parsing. Pin expected column names and date format. Fail with clear error showing expected vs actual columns.
-
-#### Scenario: Wrong CSV format
-- **WHEN** CSV has columns "timestamp,mass_kg" instead of "Date,Weight(kg)"
-- **THEN** error: "Unexpected columns: timestamp, mass_kg. Expected: Date, Weight(kg)"
-
-### Requirement: Weight calibration auto-update
-When new body_comp data is imported, the `calibration` table SHALL be automatically updated with the latest weight measurement.
-
-#### Scenario: Calibration refreshed on import
-- **WHEN** 3 new weight measurements are imported, latest is 77.8kg on Apr 10
-- **THEN** weight calibration updated to 77.8, date=Apr 10, method='scale'
+#### Scenario: Apple Health not proposed
+- **WHEN** evaluating body comp data sources
+- **THEN** FitDays CSV is the path, not Apple Health (decision recorded, prevents re-proposal)

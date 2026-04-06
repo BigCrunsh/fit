@@ -16,7 +16,7 @@ Three sub-phases, ordered by architectural impact:
 
 **Phase 2a — "Race-Anchored Model"**: Refactor goals → objectives linked to a target race. Dashboard reorients around race countdown + objectives + phase plan. Fix hardcoded goal progress. Add trend narratives.
 
-**Phase 2b — "Deep Run Analysis"**: .fit file parsing for per-km splits, rolling cardiac drift detection, cadence drift, time-in-zone per split. Training monotony/strain metrics. Heat-adjusted zones.
+**Phase 2b — "Deep Run Analysis"**: .fit file parsing for per-km splits, rolling cardiac drift detection, cadence drift, time-in-zone per split. Heat-adjusted zones.
 
 **Phase 2c — "Plan + Story"**: Runna plan integration with adherence tracking. Run Story narrative. sRPE (session RPE × duration) as validated load metric. Periodization feedback loop.
 
@@ -34,17 +34,21 @@ Three sub-phases, ordered by architectural impact:
 
 - **rolling-correlations** — 8-week rolling window showing "this correlation is getting stronger/weaker." More actionable than static r-values.
 
+### Improved Coaching Metrics (Phase 2a, with Phase 2b .fit analysis)
+
+- **training-monotony** — mean(daily_load) / stdev(daily_load) per week = monotony. Weekly_load × monotony = strain. Classic Foster injury predictors (monotony > 2.0 = warning). Add to weekly_agg. (Phase 2a — safety-critical, ships with migration 007.)
+
+- **srpe-load** — session RPE × duration_min = sRPE (validated internal load metric). Cross-validates against Garmin's EPOC-based training load. Requires RPE data from checkins. (Phase 2a — ships with migration 007.)
+
+- **improved-race-prediction** — Replace linear VDOT approximation with Daniels lookup table (or polynomial fit). Current formula diverges badly outside VO2max 45-55. Also: long run threshold as % of weekly volume (>30%), not hardcoded max(15, avg×0.75). Include confidence band, not just point estimate.
+
+- **return-to-run-protocol** — When chronic load is near-zero after a training gap (≥14 days), switch from ACWR to absolute volume caps for 4 weeks. Prevents misleading ACWR values and dangerous over-ramping.
+
 ### Deep Run Analysis (Phase 2b)
 
 - **fit-file-analysis** — Parse .fit files for per-km splits with extended metrics: time_above_z2_ceiling per split, elevation profile, HR zones per km (not just avg HR for entire run). Fixes the zone-time underestimation problem.
 
-- **training-monotony** — stdev(daily_load) per week = monotony. Weekly_load × monotony = strain. Classic Banister/Foster injury predictors. Add to weekly_agg.
-
-- **heat-adjusted-zones** — Flag runs at >25°C or >70% humidity as "heat-affected." Adjust zone classification or add a "heat penalty" annotation. Run at 30°C is physiologically a zone harder than HR suggests.
-
-- **srpe-load** — session RPE × duration_min = sRPE (validated internal load metric). Cross-validates against Garmin's EPOC-based training load. Requires RPE data from checkins.
-
-- **improved-race-prediction** — Replace linear VDOT approximation with Daniels lookup table (or polynomial fit). Current formula diverges badly outside VO2max 45-55. Also: long run threshold as % of weekly volume (>30%), not hardcoded max(15, avg×0.75).
+- **heat-adjusted-zones** — Flag runs at >25°C or >70% humidity as "heat-affected." Adjust zone classification or add a "heat penalty" annotation. Run at 30°C is physiologically a zone harder than HR suggests. Fallback to Open-Meteo weather data when .fit file lacks temperature.
 
 ### Plan + Story (Phase 2c)
 
@@ -68,6 +72,24 @@ Three sub-phases, ordered by architectural impact:
 
 - **generator-refactor** — Extract 860-line generator.py into sections (engine, cards, charts, predictions).
 
+### Derived During Specification
+
+These capabilities emerged from expert review and spec elaboration — not in the original proposal but required for correctness:
+
+- **return-to-run-protocol** — Absolute volume caps after ≥14-day training gap (ACWR is meaningless when chronic load is near-zero)
+- **cycling-load-contribution** — Cycling factored into monotony/strain at 0.3× weight (75km/week cycling is significant cardiovascular load)
+- **prediction-confidence-band** — Range instead of point estimate, with confidence qualifier based on data quality/quantity
+- **z2-remediation-narrative** — Specific pace/HR targets when Z2 compliance <50% for 3+ weeks
+- **walk-break-exit-criteria** — Graduate from run-walk when sustained <5% drift through km 8
+- **deload-detection** — Alert when no recovery week in 4+ consecutive build weeks
+- **correlation-effect-filter** — All pairs need n≥15 AND |r|≥0.2 before surfacing
+
+### Naming Notes
+
+- Spec folder `correlation-engine/` covers more than rolling correlations (cycling pair, SpO2 pair) — broader name is intentional
+- Spec folder `sync-ux/` covers pipeline decomposition + retries + bug fixes (engineering, not UX)
+- Run Story lives in `runna-integration/spec.md` because both are Phase 2c — Run Story works without Runna but benefits from plan context
+
 ### Design Notes
 
 - **training_phases.goal_id indirection** — Phases link to races through goals (phase → goal → race via race_id). No direct training_phases.race_id needed; the indirection works and avoids a schema change to training_phases.
@@ -88,11 +110,11 @@ Three sub-phases, ordered by architectural impact:
 
 - **Empty states** — Every narrative feature (rolling correlations, why-connectors, Run Story) has a defined minimum-data threshold and fallback message. Prevents misleading results from sparse data.
 
-- **Visual hierarchy** — Today tab DOM order: headline → race countdown → alerts → objectives → "This Month" badges → phase compliance → journey. Narratives collapse after 2 items via progressive disclosure.
+- **Visual hierarchy** — Today tab DOM order: headline → alerts (safety first) → race countdown → milestone celebrations → objectives → "This Month" badges → phase compliance → journey. Narratives collapse after 2 items via progressive disclosure.
 
 - **FitDays body comp** — The body_comp table already has body_fat_pct, muscle_mass_kg, visceral_fat columns but `_auto_import_weight()` only parses weight. The FitDays CSV contains all these fields. Extend the importer to parse them. Skip BMI (derivable), bone mass, body water, metabolic age, protein, subcutaneous fat (BIA noise, not actionable for marathon training).
 
-- **SpO2 as illness early warning** — SpO2 is collected and stored but never used analytically. Add a threshold alert (< 93% for 2+ days) as a minimal illness detector. Do NOT add to dashboard charts — mostly flat 95-98% for healthy sea-level runners, more noise than signal. Optionally test as a correlation pair against readiness.
+- **SpO2 as illness early warning** — SpO2 is collected and stored but never used analytically. Add a threshold alert (< 95% for 2+ consecutive days) as a minimal illness detector. Do NOT add to dashboard charts — mostly flat 95-98% for healthy sea-level runners, more noise than signal. Optionally test as a correlation pair against readiness.
 
 - **Apple Health integration: explicitly out of scope** — Don't build an Apple Health integration for body comp. The data originates from the FitDays scale — Apple Health is a middleman that loses data (no visceral fat in HealthKit). Apple Health has no API accessible from non-Apple platforms; the only paths are manual XML export, iOS Shortcuts webhooks, or paid bridge apps. Extending the FitDays CSV import directly gives more data with less effort. This decision prevents the feature from being re-proposed.
 

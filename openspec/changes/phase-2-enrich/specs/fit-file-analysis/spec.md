@@ -1,73 +1,79 @@
 ## ADDED Requirements
 
-### Requirement: Download and cache .fit files
-The system SHALL download .fit files via Garmin API, gated behind **`sync.download_fit_files: true`** config or `fit sync --splits` flag (not every sync by default). Files cached in `~/.fit/fit-files/{activity_id}.fit`. Track download status via `fit_file_path` column on activities and `splits_status` column (pending/parsed/failed/skipped). Max downloads per sync: configurable, default 20.
+### Requirement: .fit file download with opt-in and caching
+The system SHALL download .fit files gated behind `sync.download_fit_files` config toggle (default false) or `fit sync --splits` flag. Files cached in `~/.fit/fit-files/{activity_id}.fit`. Track status via `fit_file_path` and `splits_status` columns on activities (pending/parsed/failed/skipped). Max downloads per sync: configurable (default 20). Backfill: `fit splits --backfill` with rate control (max 20 per batch, 2s delay to avoid Garmin throttling).
 
-#### Scenario: Download gated by config
-- **WHEN** `sync.download_fit_files` is false (default) and user runs `fit sync`
-- **THEN** no .fit files are downloaded
+#### Scenario: Download disabled by default
+- **WHEN** `sync.download_fit_files` is false and user runs `fit sync`
+- **THEN** no .fit files downloaded
 
-#### Scenario: Download with --splits flag
-- **WHEN** user runs `fit sync --splits`
-- **THEN** .fit files are downloaded for new running activities (up to max_fit_downloads_per_sync)
+#### Scenario: Per-file failure handling
+- **WHEN** a .fit file is corrupt or from an unsupported activity (swim, treadmill)
+- **THEN** splits_status='failed', error logged, sync continues
 
-#### Scenario: Cached file reused
-- **WHEN** a .fit file already exists in ~/.fit/fit-files/
-- **THEN** it is not re-downloaded
+#### Scenario: Rate-limited backfill
+- **WHEN** `fit splits --backfill` processes 200+ activities
+- **THEN** downloads 20 at a time with 2s delay between batches
 
-#### Scenario: Per-file parse failure
-- **WHEN** a .fit file is corrupt or unsupported (swim, treadmill)
-- **THEN** splits_status='failed' is set, error logged, sync continues with other files
+### Requirement: Per-km split extraction with zone time
+Parse .fit files into `activity_splits` table with: activity_id, split_num, distance_km, time_sec, pace_sec_per_km, avg_hr, avg_cadence, elevation_gain_m, avg_speed_m_s, time_above_z2_ceiling_sec, start_distance_m, end_distance_m. The time_above_z2_ceiling_sec per split fixes the "entire run = one zone" problem.
 
-### Requirement: Per-km split extraction with extended metrics
-Parse .fit files into `activity_splits` table: activity_id, split_num, distance_km, time_sec, pace_sec_per_km, avg_hr, avg_cadence, elevation_gain_m, avg_speed_m_s, **time_above_z2_ceiling_sec** (seconds HR exceeded Z2 ceiling within this split), start_distance_m, end_distance_m.
-
-#### Scenario: 10km run produces 10 splits
-- **WHEN** a 10km .fit file is parsed
-- **THEN** 10 rows in activity_splits, each covering ~1km with all fields populated
-
-#### Scenario: Partial final split
-- **WHEN** a 10.3km run is parsed
-- **THEN** split 11 covers the final 0.3km, identifiable by start_distance_m and end_distance_m
+#### Scenario: Zone time per split
+- **WHEN** a 10km run has 3km in Z2 (HR 128) and 7km in Z3-Z4
+- **THEN** splits 1-3 have time_above_z2_ceiling_sec=0, splits 4-10 have positive values
+- **AND** weekly zone aggregation uses split-level data (not avg HR per run)
 
 ### Requirement: Rolling cardiac drift detection
-The system SHALL compute cardiac drift using a **rolling 1km window** that identifies the specific kilometer where HR begins decoupling from pace — not just first-half vs second-half average. The "drift onset km" is the athlete's current aerobic ceiling distance.
+Compute drift using a rolling 1km window — identify the specific km where HR begins decoupling from pace (drift_onset_km). Constant-pace filter: if pace CV > 15% between halves, flag as "inconclusive (variable pace)."
 
-Additional: a **constant-pace filter** — if pace CV > 15% between halves, drift is flagged as "inconclusive (variable pace)".
-
-#### Scenario: Drift onset detected at km 14
-- **WHEN** an 18km run shows stable HR through km 13, then HR rises 10+ bpm/km
-- **THEN** drift_onset_km = 14, drift_pct = computed, drift_status = "significant"
+#### Scenario: Drift onset at km 14
+- **WHEN** an 18km run shows stable HR:pace ratio through km 13, then HR rises without pace change
+- **THEN** drift_onset_km=14, drift_pct computed, drift_status="significant"
 
 #### Scenario: Variable pace invalidates drift
-- **WHEN** a hilly run has pace CV > 15% between halves
-- **THEN** drift_status = "inconclusive_variable_pace"
+- **WHEN** a hilly run has pace CV > 15%
+- **THEN** drift_status="inconclusive_variable_pace"
 
 ### Requirement: Pace variability and cadence drift
-The system SHALL compute **pace variability** (coefficient of variation across splits) as a consistency marker. Also **cadence drift** (same formula as cardiac drift but for cadence — cadence dropping in later splits signals form breakdown).
-
-#### Scenario: High pace variability
-- **WHEN** a run has splits ranging from 5:10 to 6:40/km
-- **THEN** pace_cv is high, flagged as "inconsistent pacing"
+Compute pace CV (coefficient of variation across splits) as a consistency marker. Cadence drift = same formula as cardiac drift but for cadence.
 
 #### Scenario: Cadence fade in long run
 - **WHEN** cadence drops from 175 to 162 spm over the last 5km
-- **THEN** cadence_drift flagged: "cadence faded 7% in final 5km — neuromuscular fatigue"
+- **THEN** cadence_drift flagged: "cadence faded 7% in final 5km"
 
-### Requirement: Split visualization with fade point
-Training tab (collapsible section): **dual-axis bar+line chart** — pace per km as bars (zone-colored), HR per km as line on secondary axis. Target pace annotation from Runna plan if available. **Elevation profile** as subtle filled area background. **Fade point** highlighted with vertical annotation at the km where pace degrades >5% from first-half average.
+### Requirement: Heat-adjusted zone flags
+Runs at >25°C or >70% humidity SHALL be flagged as "heat-affected" with a zone penalty annotation. Update `get_coaching_context()` and `generate_headline()`: "Last run was in 30°C heat — HR was ~1 zone higher than true effort."
 
-Generate for **most recent long run only** in Phase 2 (run selector deferred).
+**Temperature data fallback chain:** (1) .fit file recorded data (if available and contains temp/humidity), (2) Open-Meteo hourly weather already stored on the activity (temp_c, humidity_pct columns — always available for synced runs), (3) if neither exists, skip heat flag. Since Open-Meteo data is populated during sync, most runs will have heat data even without .fit files.
 
-**Cardiac drift gauge card** above the chart: single number, color-coded (<3% green, 3-5% caution, >5% danger), with one-line interpretation.
+#### Scenario: Hot run flagged
+- **WHEN** a run has temp_at_start_c=31 and humidity_at_start_pct=75
+- **THEN** activity flagged heat_affected=True, coaching context mentions heat impact
 
-#### Scenario: Split chart with fade point
-- **WHEN** an 18km long run has splits and pace fades at km 14
-- **THEN** chart shows bars + HR line + elevation, with vertical dashed line at km 14 labeled "fade began"
+#### Scenario: Heat flag from weather data (no .fit file)
+- **WHEN** a run has no .fit file but Open-Meteo data shows temp_c=28
+- **THEN** activity flagged heat_affected=True using weather data
 
-### Requirement: Split data in coaching context
-`get_coaching_context()` SHALL include split analysis for the most recent long run: drift_onset_km, drift_pct, pace_cv, cadence_drift, fade_point_km.
+### Requirement: Split visualization (dual-panel)
+Display as dual-panel chart on Training tab (collapsible): top panel = pace bars colored by zone, bottom panel = HR line with expected-HR reference. Elevation profile as subtle background. Drift onset marked with vertical annotation. Most recent long run only inline; historical behind "View splits" link.
 
-#### Scenario: Coaching references drift
-- **WHEN** Claude generates coaching notes and last long run has split data
-- **THEN** insights reference: "HR decoupled at km 14 — your current aerobic ceiling is ~14km"
+**Drift gauge card** above the split chart shows: drift_pct (e.g., "+11%"), drift_onset_km (e.g., "km 14"), drift_status (significant/mild/none/inconclusive), and a color indicator (green <5%, yellow 5-10%, red >10%). If drift_status = inconclusive_variable_pace, show "Pace too variable for drift analysis" instead.
+
+#### Scenario: Split chart for 18km run
+- **WHEN** 18km run with splits, drift onset at km 14
+- **THEN** pace bars show zone colors, HR line shows decoupling at km 14, vertical annotation "drift onset"
+- **AND** drift gauge card shows "+11% | onset km 14 | significant" in red
+
+### Requirement: Heat acclimatization tracking
+Track temperature-adjusted efficiency over time: efficiency per run plotted against temperature. Project expected race-day conditions (Berlin late September: ~15°C). Show trend: "Your heat-adjusted efficiency is improving — you're acclimating."
+
+#### Scenario: Acclimatization trend
+- **WHEN** runs at >25°C show improving efficiency over 4+ weeks
+- **THEN** coaching: "Heat efficiency improving. Race day forecast ~15°C — conditions will be favorable."
+
+### Requirement: Test fixture
+Bundle a minimal synthetic .fit fixture in tests/fixtures/ (not real files — keep tests fast, avoid licensing). Test full pipeline: parse → splits → drift → DB.
+
+#### Scenario: Synthetic fixture test
+- **WHEN** test parses the synthetic .fit fixture
+- **THEN** correct splits, drift detection, and DB storage verified

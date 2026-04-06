@@ -1,71 +1,36 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
-### Requirement: Cross-domain correlation analysis using Spearman rank
-The system SHALL compute correlations using **Spearman rank correlation** (not Pearson) as default, since most pairs involve ordinal (sleep_quality) or skewed (alcohol) data. Pearson MAY be used alongside for continuous-continuous pairs. Results stored in a `correlations` table with: metric_pair, lag_days, spearman_r, pearson_r, p_value, sample_size, confidence (high/moderate/low), status (computed/insufficient_data), last_computed, data_count_at_compute.
+### Requirement: Rolling correlation windows
+The existing static correlation computation SHALL be extended with rolling 8-week windows showing "this correlation is getting stronger/weaker." Displayed as sparkline small-multiples grid (one per pair, consistent y-axis -1.0 to +1.0). Incremental computation: store `window_end_date` and `data_hash` per pair per window. On recompute, skip if hash unchanged.
 
-Predefined pairs:
-- alcohol → next-day HRV (lag 1)
-- alcohol → next-day RHR (lag 1)
-- alcohol → same-night sleep_quality (lag 0)
-- sleep_duration + sleep_quality → next-day HR-at-pace (lag 1)
-- weight → RPE at constant pace (lag 0, weekly)
-- temp_at_start_c → speed_per_bpm (lag 0, per run)
-- water_liters → next-day HRV (lag 1)
+ALL pairs require minimum n≥15 data points AND minimum |r|≥0.2 before surfacing in coaching context or narratives. Below threshold: computed and stored but not displayed.
 
-Uses **differenced values** for trended metrics (change in HRV vs alcohol, not raw HRV) to avoid autocorrelation.
+#### Scenario: Rolling window computed
+- **WHEN** 8+ weeks of checkin + health data exist with n≥15 points
+- **THEN** each correlation pair shows an 8-week sparkline with trend arrow
 
-#### Scenario: Spearman computed for ordinal pair
-- **WHEN** alcohol (0-3 drinks, skewed) and next-day HRV are correlated
-- **THEN** Spearman rank correlation is used (not Pearson), producing a valid coefficient for non-normal data
+#### Scenario: Incremental skip
+- **WHEN** data_hash for a pair's rolling window is unchanged since last compute
+- **THEN** that pair's rolling computation is skipped
 
-#### Scenario: Minimum sample size 20 for reporting
-- **WHEN** a correlation pair has 15 data points
-- **THEN** it is stored as status='insufficient_data' with sample_size=15, not displayed in dashboard
+#### Scenario: Weak correlation suppressed
+- **WHEN** a pair has |r|=0.12 with n=20
+- **THEN** computed and stored but not shown in coaching or dashboard
 
-#### Scenario: Minimum sample size 30 for coaching context
-- **WHEN** a correlation has n=22 (above 20, below 30)
-- **THEN** it appears in the dashboard as "preliminary" but is NOT included in `get_coaching_context()`
+### Requirement: Cycling correlation pair
+Add correlation: previous-day cycling_km → next-day run efficiency (speed_per_bpm). Uses lag=1.
 
-#### Scenario: Confounders noted
-- **WHEN** temperature → drift correlation is displayed
-- **THEN** a note explains: "May be confounded by seasonal fitness changes"
+#### Scenario: High cycling → low efficiency
+- **WHEN** days with >25km cycling precede runs with lower-than-average speed_per_bpm
+- **THEN** correlation is negative, flagged in coaching context
 
-### Requirement: Real-time alerts engine
-A separate `fit/alerts.py` module SHALL run simple threshold checks on fresh data after each sync. This is a **rule engine**, not a correlation. Rules fire immediately when conditions are met.
+### Requirement: SpO2 correlation pair (optional)
+Consider adding: SpO2 → training_readiness. Validate whether it's a useful signal for this specific user before surfacing.
 
-Rules:
-- 2+ drinks last night AND today's HRV dropped >15% below 7-day baseline → "Alcohol impact detected"
-- Z2 compliance < 50% over rolling 2 weeks → "All runs too hard"
-- Weekly volume increase > 10% AND < 8 consecutive training weeks → "Volume ramp guard"
-- Readiness < 30 AND planned workout is quality session → "Recommend swap to easy/rest"
-- Long run distance trend projection won't reach 32km by peak phase start → "Long run progression too slow"
+#### Scenario: SpO2 correlates with readiness
+- **WHEN** n≥20 data points and Spearman r > 0.3
+- **THEN** include in correlation display with note "SpO2 may predict readiness for you"
 
-#### Scenario: Alcohol + HRV drop alert
-- **WHEN** `fit sync` ingests today's HRV at 22ms and yesterday's checkin had alcohol=3
-- **THEN** an alert fires: "HRV 22ms (↓18% from 7d avg 27ms) — 3 drinks last night. Rest day recommended."
-
-#### Scenario: Alert stored and surfaced
-- **WHEN** alerts fire
-- **THEN** they are stored in an `alerts` table and included in `get_coaching_context()` and the Today tab headline
-
-### Requirement: Correlation results surfaced on Coach tab with visual storytelling
-Correlations SHALL be displayed on the **Coach tab** (not Fitness — already 6+ charts). Visualization: **diverging bar chart** (bars anchored at zero, green for positive effects, red for negative, length = |r|). Labels in plain language ("Alcohol worsens next-day HRV") not r-values. Click to expand **scatter plot drill-down** with trend line (using existing progressive disclosure pattern).
-
-Additional: **before/after comparison bars** for the strongest correlations (e.g., "avg HRV after 0 drinks: 31ms" vs "avg HRV after 1+ drinks: 24ms").
-
-Data freshness indicator: show "N new data points since last compute" if correlations are stale.
-
-#### Scenario: Dashboard correlation bar chart
-- **WHEN** 5+ correlations are computed with n >= 20
-- **THEN** the Coach tab shows diverging bars with plain-language labels and effect sizes
-
-#### Scenario: Scatter plot drill-down
-- **WHEN** user clicks a correlation bar
-- **THEN** an inline scatter plot expands showing individual data points + trend line
-
-### Requirement: fit correlate command with stale detection
-`fit correlate` SHALL recompute all correlations. Track `data_count_at_compute` to skip pairs whose underlying data hasn't changed. Also run automatically at the end of `fit sync`.
-
-#### Scenario: Skip unchanged pairs
-- **WHEN** `fit correlate` runs and alcohol→HRV has the same data count as last compute
-- **THEN** that pair is skipped (not recomputed)
+#### Scenario: No correlation found
+- **WHEN** r < 0.15 with n≥20
+- **THEN** do not display (not a useful signal for this user)

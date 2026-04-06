@@ -1,49 +1,49 @@
 ## ADDED Requirements
 
-### Requirement: Rich progress bar for fit sync
-`fit sync` SHALL display Rich progress bars per step (health/activities/SpO2/weather/enrichment/weekly_agg), with item counts and ETA for `--full`. Progress bars SHALL not interleave with logging output (suppress console logging during progress, buffer to file).
+### Requirement: Sync pipeline decomposition
+`run_sync()` SHALL be decomposed into composable pipeline stages: fetch, enrich, store, weather, aggregate, correlate, alert, plan_sync. Each stage is independently testable. New stages (Phase 2b .fit downloads, Phase 2c plan sync) plug in without increasing blast radius of existing stages.
 
-#### Scenario: Normal sync with progress
-- **WHEN** user runs `fit sync --days 7`
-- **THEN** progress bar shows per-step: "Health [====    ] 4/7 days" → "Activities [========] 3/3" → etc.
+#### Scenario: Single stage failure
+- **WHEN** weather fetch fails
+- **THEN** other stages complete normally, weather failure logged as warning
 
-#### Scenario: Full sync with ETA
-- **WHEN** user runs `fit sync --full`
-- **THEN** progress bar shows estimated time remaining based on API response rate
+### Requirement: Weather API retry
+`weather.py` SHALL use a shared `_request_with_retry` wrapper (same pattern as garmin.py) for Open-Meteo API calls. Handles transient errors, rate limits.
 
-#### Scenario: No interleave with logs
-- **WHEN** progress bars are active
-- **THEN** Python logging output goes to file only (not console), avoiding garbled output
+#### Scenario: Transient 503 from Open-Meteo
+- **WHEN** first request returns 503
+- **THEN** retry with exponential backoff, succeed on retry 2
 
-### Requirement: Shared retry/backoff utility
-`fit/garmin.py` SHALL have a `_request_with_retry(func, max_retries=3)` wrapper that handles: 429 (rate limit) with countdown timer, 401 (re-auth prompt), transient 5xx with exponential backoff. All Garmin API calls use this wrapper.
+### Requirement: End-to-end integration test
+A test SHALL verify the full pipeline: sync with race-anchored goals → produces correct dashboard narratives. Tests the chain: sync layer → model layer → narrative layer → dashboard output.
 
-#### Scenario: Rate limit with countdown
-- **WHEN** Garmin API returns 429
-- **THEN** sync shows "Rate limited. Waiting 60s..." with countdown, then retries
+#### Scenario: Integration test
+- **WHEN** test runs sync with mock Garmin data + race_calendar + goals
+- **THEN** generated dashboard HTML contains race countdown, objective progress, trend narrative
 
-#### Scenario: Auth expired with instructions
-- **WHEN** garth token refresh fails with 401
-- **THEN** error: "Garmin auth expired. Run: python -c 'import garth; garth.login(email, pw); garth.save(path)'"
+### Requirement: Generator refactor
+`generator.py` (860+ lines) SHALL be refactored into a `fit/report/sections/` package: engine.py (core generator), cards.py (status cards, milestone cards), charts.py (chart generation), predictions.py (race prediction section). Each module independently testable.
 
-### Requirement: Post-sync hook system
-The system SHALL support a `post_sync_hooks` config list. After sync completes, each hook is called. ioBroker JSON export is one hook (`fit.hooks.iobroker_json`), not hardcoded in sync.py.
+#### Scenario: Modular generation
+- **WHEN** dashboard is generated
+- **THEN** each section is produced by its own module, main generator orchestrates
 
-#### Scenario: ioBroker hook configured
-- **WHEN** config has `hooks.post_sync: ["fit.hooks.iobroker_json"]` and sync completes
-- **THEN** `~/.fit/iobroker.json` is written with: readiness, ACWR, last run, weight, streak, headline
+### Requirement: sRPE pipeline stage
+The sync pipeline SHALL include an `enrich_srpe` stage that retroactively joins unmatched checkin RPE to same-day activities (assigning to highest training_load if multiple). This stage also triggers from `fit checkin` after saving, ensuring sRPE is computed regardless of whether sync or checkin happens first.
 
-#### Scenario: No hooks configured
-- **WHEN** no `hooks` section in config
-- **THEN** sync completes normally, no hooks run
+#### Scenario: sRPE computed during sync
+- **WHEN** sync finds an activity on a day with a checkin that has RPE=7
+- **THEN** sRPE computed and stored on the activity
 
-### Requirement: fit doctor diagnostic command
-`fit doctor` SHALL validate the entire data pipeline: DB schema version matches code, all expected tables exist, no orphaned splits without activities, correlation freshness, plan import recency, weight staleness, calibration status, data source health.
+#### Scenario: sRPE computed during checkin
+- **WHEN** user runs `fit checkin` with RPE=6 and there's already a synced run today
+- **THEN** sRPE computed immediately after checkin save
 
-#### Scenario: All healthy
-- **WHEN** everything is in order
-- **THEN** `fit doctor` shows all green checks
+### Requirement: Bug fixes
+- ACWR year-boundary: ISO week 53 handling (prev_week += 52 wrong for 53-week years). Use `datetime.date.fromisocalendar()` for correct week arithmetic.
+- Alert SQL: `all_runs_too_hard` query `WHERE >= MAX()` returns only 1 week. Fix to actually average 2 weeks.
+- SpO2 threshold: change from <93% to <95% for sea-level. Make configurable via config.yaml.
 
-#### Scenario: Issues detected
-- **WHEN** weekly_agg is stale or correlations are outdated
-- **THEN** `fit doctor` shows warnings with remediation commands
+#### Scenario: Week 53 ACWR
+- **WHEN** current week is 2027-W01 and computing ACWR with 4 prior weeks
+- **THEN** correctly references 2026-W52, 2026-W51, 2026-W50, 2026-W49 (not 2026-W00)
