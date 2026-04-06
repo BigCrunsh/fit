@@ -1,42 +1,75 @@
-# Phase 2 — Enrich: Data Story, Integrations, Deep Analysis
+# Phase 2 — Enrich: Race-Anchored Model, Deep Analysis, Storytelling
 
 ## Why
 
-Phase 1 built the data pipeline and basic dashboard. The data flows, Claude can query, the daily loop works. But the platform is still missing its highest-value features: the data story that connects subjective and objective signals, integration with external training systems, automated data ingestion, and deep per-run analysis. The dashboard shows charts but doesn't yet answer "why was this run slow?" with cross-domain evidence.
+Phase 1 + gaps delivered a working platform with 412 tests, 14 tables, 5-tab dashboard, correlations, alerts, and race calendar. But three fundamental issues remain:
 
-Additionally, Phase 1 has tech debt to address: `db.py` uses `executescript` which auto-commits (breaking transaction safety), `get_coaching_context()` is monolithic (100+ lines), and the dashboard zoom toggle is a non-functional placeholder.
+1. **The data model has a conceptual split** — races and goals overlap without connecting. "Berlin Marathon sub-4:00" exists as both a goal AND a race_calendar entry, but they don't reference each other. Goal progress is hardcoded in the generator, not driven by the DB.
+
+2. **The dashboard shows charts but doesn't tell stories** — no trend narratives ("your efficiency improved 8% in 6 weeks"), no "why" connectors ("your 3 worst runs all followed <6h sleep nights"), no race countdown narrative connecting phases to the finish line.
+
+3. **Run analysis is surface-level** — avg HR per run loses information. Zone classification assigns the entire duration to one zone. No per-km splits, no cardiac drift detection, no form analysis.
 
 ## What Changes
 
-Split into two sub-phases to manage scope:
+Three sub-phases, ordered by architectural impact:
 
-**Phase 2a** moved to `phase-1-gaps` change (unified batch with Phase 1 spec fixes).
+**Phase 2a — "Race-Anchored Model"**: Refactor goals → objectives linked to a target race. Dashboard reorients around race countdown + objectives + phase plan. Fix hardcoded goal progress. Add trend narratives.
 
-**Phase 2b — "Deep Analysis + Plan"** (this change): .fit file analysis (per-km splits, cardiac drift), Runna plan integration (adherence tracking), Run Story narrative, milestones, ioBroker.
+**Phase 2b — "Deep Run Analysis"**: .fit file parsing for per-km splits, rolling cardiac drift detection, cadence drift, time-in-zone per split. Training monotony/strain metrics. Heat-adjusted zones.
+
+**Phase 2c — "Plan + Story"**: Runna plan integration with adherence tracking. Run Story narrative. sRPE (session RPE × duration) as validated load metric. Periodization feedback loop.
 
 ## Capabilities
 
-- **tech-debt** — Fix `executescript` auto-commit in migration runner, refactor `get_coaching_context()` into composable sections, implement or remove the dashboard zoom toggle, add shared retry/backoff utility in garmin.py.
+### Race-Anchored Model (Phase 2a)
 
-- **correlation-engine** — Cross-domain analysis using **Spearman rank correlation** (not Pearson — alcohol is skewed, sleep_quality is ordinal). Predefined pairs: alcohol → HRV/RHR/sleep_quality, sleep duration+quality → next-day HR-at-pace, weight → RPE at constant pace, temp → cardiac drift. Minimum sample sizes: 20 for reporting, 30 for coaching. Uses differenced values for trended metrics. Correlation panel on Coach tab (not Fitness — already overloaded). Plus a real-time **alerts engine** (`fit/alerts.py`) for threshold checks on fresh data.
+- **race-model-refactor** — Add `race_id` FK to goals table. Target race = next registered in race_calendar. Objectives (renamed conceptually from goals) serve the race. Dashboard auto-orients: countdown + prediction + objectives + phase compliance. `_goal_progress()` reads targets from DB (no hardcoded 51, 75, 8). Phase lifecycle: auto-detect "Phase 1 complete, advance to Phase 2" based on objective achievement.
 
-- **runna-integration** — Import Runna training plan via CSV with **plan versioning** (supersede old plans, don't delete). Planned_workouts table with **structure JSON** for multi-segment workouts (intervals). Weekly **plan compliance score** (0-100%). Detect **systematic intensity override** pattern. Track **rest day compliance**. Plan CSV includes plan_week and plan_phase columns. `fit plan validate` dry-run before import.
+- **trend-narratives** — Rule-based "This Month" summary: "Your aerobic efficiency improved 8% over 6 weeks. VO2max stable at 49. Zone compliance improved from 0% to 72%." Displayed on Today tab below headline. Also: "Your 3 worst runs all followed nights with <6h sleep" — connecting correlations to actual experiences, not just r-values.
 
-- **fitdays-auto-import** — Automated weight + body comp sync from **configured path** (not ~/Downloads/ scanning). Import tracking via `import_log` table. Auto-update weight calibration on new measurements.
+- **race-countdown-narrative** — "165 days to Berlin. Phase 2 of 4. 3 of 4 objectives on track. Current prediction: 3:52." Connects countdown to phase plan and objective progress.
 
-- **fit-file-analysis** — Parse .fit files gated behind **`--splits` flag or config toggle** (not every sync). Cache files in `~/.fit/fit-files/`. Per-file failure handling with `splits_status` column. **Rolling 1km drift detection** (not just first/second half). **Pace variability** (CV across splits), **cadence drift**, **time_above_z2_ceiling_sec** per split. Constant-pace filter for drift validity. Split viz as **dual-axis bar+line** (pace bars + HR line) with **fade point annotation** and **elevation profile background**.
+- **wow-context** — Week-over-week annotated against phase targets: "Volume up 15% — but Phase 1 target increase is ≤10%."
 
-- **goal-tracking** — Individual goal setting and tracking beyond the marathon. `fit goal add/list/complete` CLI. Race goals (with target time), metric goals (VO2max, weight, efficiency), habit goals (runs per week, check-in streak). Progress displayed on Today tab and `fit status`.
+- **rolling-correlations** — 8-week rolling window showing "this correlation is getting stronger/weaker." More actionable than static r-values.
 
-- **sync-ux** — Rich progress bars per sync step, ETA for `--full`, shared retry/backoff, better auth errors. Post-sync hook system for ioBroker. `fit doctor` diagnostic command.
+### Deep Run Analysis (Phase 2b)
 
-- **coaching-signals** — Auto-detection rules: "all runs too hard" (Z2 < 50% over 2 weeks), volume ramp guard (>10% + <8 weeks), readiness-to-planned-workout gate, long run distance projection, heat acclimatization tracker. **Run Story narrative** for most recent long run (splits + correlations + checkin synthesized into coaching text). **Milestone/PB tracking** on Today tab.
+- **fit-file-analysis** — Parse .fit files for per-km splits with extended metrics: time_above_z2_ceiling per split, elevation profile, HR zones per km (not just avg HR for entire run). Fixes the zone-time underestimation problem.
+
+- **training-monotony** — stdev(daily_load) per week = monotony. Weekly_load × monotony = strain. Classic Banister/Foster injury predictors. Add to weekly_agg.
+
+- **heat-adjusted-zones** — Flag runs at >25°C or >70% humidity as "heat-affected." Adjust zone classification or add a "heat penalty" annotation. Run at 30°C is physiologically a zone harder than HR suggests.
+
+- **srpe-load** — session RPE × duration_min = sRPE (validated internal load metric). Cross-validates against Garmin's EPOC-based training load. Requires RPE data from checkins.
+
+- **improved-race-prediction** — Replace linear VDOT approximation with Daniels lookup table (or polynomial fit). Current formula diverges badly outside VO2max 45-55. Also: long run threshold as % of weekly volume (>30%), not hardcoded max(15, avg×0.75).
+
+### Plan + Story (Phase 2c)
+
+- **runna-integration** — Import plans with structure JSON for intervals. Weekly compliance. Systematic override detection. Rest day compliance. Connect readiness data to planned workouts for gating.
+
+- **run-story** — Narrative paragraph for most recent long run: splits + correlations + checkin + weather synthesized. "Sunday's 18km: held 5:45 through km 14, then faded to 6:10. HR drifted +11%. 2 drinks Saturday, sleep quality poor."
+
+- **periodization-feedback** — Detect "you completed Phase 1 objectives, time to advance" or "you're struggling, extend this phase." Currently phases are entirely manual.
+
+### Tech Debt + Engineering
+
+- **zero-test-coverage-paths** — Add tests for garmin.py (mock API), sync.py (mock pipeline), weather.py. These are the critical data entry point.
+
+- **year-boundary-bug** — `_compute_acwr` has ISO week 53 handling bug. Fix.
+
+- **race-calendar-fk** — Add proper FK constraint from race_calendar.activity_id to activities.id.
+
+- **alert-sql-fix** — The all_runs_too_hard query only returns 1 week due to `WHERE >= MAX()`. Fix to actually average 2 weeks.
+
+- **generator-refactor** — Extract 860-line generator.py into sections (engine, cards, charts, predictions).
 
 ## Impact
 
-- **Correlation engine + alerts** answer "why was this run slow?" with evidence and catch same-day signals
-- **Runna integration** tracks plan adherence systematically — "you've overridden 80% of easy runs"
-- **Fitdays auto-import** keeps weight calibration fresh
-- **.fit file analysis** enables "your HR decoupled at km 14 — that's your current aerobic ceiling"
-- **Run Story narrative** is the data storytelling vision — a single paragraph synthesizing everything about a run
-- **Coaching signals** catch problems proactively before they become injuries
+- **Race-anchored model** transforms the dashboard from "here are some charts" to "here's your race, here's your plan, here's where you are"
+- **Trend narratives** answer "is it working?" without requiring chart interpretation
+- **.fit analysis** enables per-km coaching: "your HR decoupled at km 14 — that's your aerobic ceiling"
+- **Training monotony/strain** catch overtraining before ACWR does (leading indicator)
+- **Bug fixes** prevent silent data errors in ACWR and alerts
