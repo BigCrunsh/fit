@@ -76,7 +76,19 @@ Three sub-phases, ordered by architectural impact:
 
 - **Sleep mismatches → narratives** — Existing sleep mismatch detection (Garmin hours vs subjective quality) feeds into the "why" connector narrative engine (task 3.3).
 
-- **Migration numbering** — 007: goals.race_id. 008: activity_splits. 009: planned_workouts. No collisions.
+- **Migration numbering** — 007: goals.race_id + sRPE + monotony/strain + cycling columns (all Phase 2a schema). 008: activity_splits + fit_file columns. 009: planned_workouts. All Phase 2a schema changes consolidated into ONE migration to avoid modifying activities twice.
+
+- **SQLite FK enforcement** — `ALTER TABLE ADD COLUMN` in SQLite doesn't enforce FKs. Task 1.3 uses table rebuild (create new, copy, drop old, rename) for both race_calendar.activity_id and goals.race_id.
+
+- **sRPE join strategy** — Checkin RPE is date-based. If 2 runs on same day, sRPE goes to the harder one (by training_load). Defined in task 2.3.
+
+- **Garmin Calendar API** — Undocumented internal endpoint. Task 6.2 implements as "best effort" with CSV fallback (6.5) as equally robust path, not an afterthought.
+
+- **planned_workouts uniqueness** — Unique(date, plan_version, sequence_ordinal) allows multiple workouts per day within a plan version (morning run + evening strength).
+
+- **Empty states** — Every narrative feature (rolling correlations, why-connectors, Run Story) has a defined minimum-data threshold and fallback message. Prevents misleading results from sparse data.
+
+- **Visual hierarchy** — Today tab DOM order: headline → race countdown → alerts → objectives → "This Month" badges → phase compliance → journey. Narratives collapse after 2 items via progressive disclosure.
 
 - **FitDays body comp** — The body_comp table already has body_fat_pct, muscle_mass_kg, visceral_fat columns but `_auto_import_weight()` only parses weight. The FitDays CSV contains all these fields. Extend the importer to parse them. Skip BMI (derivable), bone mass, body water, metabolic age, protein, subcutaneous fat (BIA noise, not actionable for marathon training).
 
