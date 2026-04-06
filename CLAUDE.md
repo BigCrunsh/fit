@@ -77,6 +77,43 @@ tests/               # pytest suite
 - **Two-palette color system** — safety (green/yellow/red) for "is this good?" vs intensity (blue/amber/orange) for "how hard?"
 - **Coaching notes body validation** — `save_coaching_notes` rejects insights with missing/short body text (<20 chars)
 
+## Design Principles
+
+### Data Visualization
+
+- **No pie or donut charts. Ever.** They are the worst chart type for comparison. Use bars, lines, or small multiples instead.
+- **Dark background readability**: every dataset must be clearly visible against `#07070c`. Audit any color below 30% opacity — if you can't see it on a dark screen, increase it.
+- **One chart, one story**: if a chart has 3+ datasets competing on mixed axes, split it. A chart should answer one question, not three.
+- **Trend data = line chart**: ACWR, efficiency, cadence, weight are trends over time — use lines with point markers. Bars are for discrete/categorical data (volume per week, load per run, zone distribution).
+- **Semantic color differentiation**: machine/baseline data = muted/gray. Human/subjective data = bright/warm. Safety signals = green/yellow/red. Intensity = blue/amber/orange. Never reuse the same color for unrelated datasets.
+- **Show percentages alongside absolutes**: zone distribution should show % in tooltips, not just raw minutes. Goal progress should show % alongside current/target values.
+- **Smooth noisy daily data**: weight, HRV — show 7-day rolling average as the primary line. Raw data as faint dots for context. Reduces visual noise without hiding information.
+- **Goal zone visualization**: where a target exists (sub-4:00, Z2 ≥90%, weight ≤75kg), show it as a shaded band — not just a thin reference line. Bands are visible at a glance.
+- **Readable time windows**: charts with many data points default to 3-6 months, not "all time." Ensure zoom controls work. Long labels (ISO weeks) must auto-skip or rotate.
+- **Axis scaling**: never hardcode axis min/max that could clip real data. Use auto-scale with padding, or set conservative ranges that cover expected extremes.
+- **Progressive disclosure for definitions**: ⓘ icons collapsed by default. Definitions reference the user's actual values, not generic text.
+- **Every chart needs an empty state**: if there's insufficient data, show a clear message ("Need 4+ weeks of data") — never render a broken or misleading chart.
+
+### Software Engineering
+
+- **Single source of truth**: never hardcode values that exist in the database. Goal targets, zone boundaries, calibrations — always read from DB.
+- **INSERT ON CONFLICT, not INSERT OR REPLACE**: preserve derived metrics on re-sync. OR REPLACE deletes the row.
+- **Composable functions over monoliths**: if a function exceeds ~100 lines, split it. sync.py and generator.py are the main candidates.
+- **Transaction safety**: every migration runs in an explicit transaction (BEGIN/COMMIT/ROLLBACK). SQL migrations use executescript for DDL. Python migrations use conn.execute().
+- **Graceful degradation**: missing data, missing config, unavailable APIs — handle with warnings, not crashes. `fit sync` should never fail entirely because one data source is unavailable.
+- **Tests for the critical path**: every data entry point (Garmin API, weather API, CSV import) needs mock-based tests. Statistical functions need edge case tests (zero variance, single point, division by zero).
+- **Schema changes in one migration**: don't modify the same table in multiple migrations within one phase. Consolidate into one migration per phase.
+- **External APIs are "best effort"**: Garmin and Open-Meteo APIs are undocumented and can change. Always have a fallback path. Retry with backoff on transient errors.
+- **Rate limiting**: respect API rate limits. Cap downloads per sync (e.g., max 20 .fit files). Add delays between batch requests.
+
+### Coaching Methodology
+
+- **Zone boundaries from config, never from memory**: always use the actual Z2 ceiling from config (134 bpm), never default to common values like 150 bpm.
+- **Race calendar is the source of truth for races**: activities are NOT auto-classified as races from names. Only race_calendar entries determine which activities are races.
+- **Leading indicators over trailing**: training monotony/strain predict overtraining before ACWR spikes. Cardiac drift predicts aerobic ceiling before pace declines.
+- **Dual conditions for thresholds**: long run = >30% weekly volume AND ≥12km. Never use just one condition — edge cases break single-condition rules.
+- **Phase-specific targets**: always compare against the active training phase's targets, not generic 80/20 rules. Base building and peak training have different zone distributions.
+
 ## Zone Model
 
 Standard 5-zone, % of max HR (default). Z2 ceiling at 134 bpm (not 150 — the old config was wrong):

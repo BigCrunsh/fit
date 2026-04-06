@@ -100,17 +100,7 @@
 
 ## 8. Dashboard Improvements + Documentation
 
-- [ ] 8.1 Chart readability pass — apply these principles across ALL charts:
-  - **Contrast on dark bg**: every dataset must be clearly visible against `#07070c`. Audit all colors below 30% opacity — increase or replace. Stacked bar segments must be distinguishable from each other AND from the background.
-  - **Axis scaling**: never hardcode axis min/max that could clip real data. Use auto-scale with padding, or set conservative ranges that cover expected extremes. For metrics with known ranges (cadence 155-190, readiness 0-100), set explicit bounds.
-  - **One chart, one story**: combo charts with 3+ datasets on mixed axes are hard to read. If datasets overlap or compete, split into separate charts. Reserve dual-axis for clearly paired metrics (e.g., pace + HR).
-  - **Trend data = line chart**: ACWR, efficiency, cadence are trends — use lines with colored point markers, not bars. Bars are for discrete/categorical data (volume per week, load per run).
-  - **Default to readable time window**: charts with many data points (load, volume) should default to 3-6 months, not "all time." Ensure zoom toggle works and defaults to a readable range.
-  - **Label density**: long labels (ISO weeks, full dates) must auto-skip or rotate. Prefer short formats ("W14", "Mar 26") over full ISO strings.
-  - **Semantic color differentiation**: each chart should use distinct colors for its datasets. Avoid reusing the same blue/orange across unrelated charts. Machine/baseline data = muted/gray, human/subjective data = bright/warm.
-  - **Show percentages, not just absolutes**: zone distribution should show % in tooltips, not just raw minutes. Goal progress should show % alongside values.
-  - **Smooth noisy data**: daily weight, HRV — consider 7-day rolling average as primary line with raw data as faint dots. Reduce point radius on dense time series.
-  - **Goal zone visualization**: where a target exists (sub-4:00, Z2 ≥90%, weight ≤75kg), show it as a shaded band, not just a thin line.
+- [ ] 8.1 Chart readability pass — audit ALL charts against the Design Principles in CLAUDE.md. Fix every violation. Priority: sleep colors (invisible), readiness overlap (3 datasets), ACWR (bars→line), training load (too dense), efficiency ghost line (invisible).
 - [ ] 8.2 Update README: race-anchored model, narratives, .fit analysis, Runna auto-sync, monotony/strain
 - [ ] 8.3 Update CLAUDE.md: new tables, refactored architecture, new metrics, migration strategy
 - [ ] 8.4 Update all specs to match implementation
