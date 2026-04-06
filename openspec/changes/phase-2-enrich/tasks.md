@@ -30,7 +30,7 @@
 
 - [ ] 3.1 Implement `fit/narratives.py` — rule-based "This Month" summary: efficiency trend (%), VO2max delta, zone compliance change, volume trend
 - [ ] 3.2 Add "This Month" narrative to Today tab below headline
-- [ ] 3.3 Add "why" connectors — find the N worst/best runs and their preceding checkin data: "Your 3 worst runs all followed <6h sleep nights." Include sleep mismatches from dashboard (Garmin hours vs subjective quality) as input to narrative generation.
+- [ ] 3.3 Add "why" connectors — find the N worst/best runs and their preceding checkin data: "Your 3 worst runs all followed <6h sleep nights." Include sleep mismatches AND preceding cycling volume ("worst runs followed days with >30km cycling"). Include sleep mismatches from dashboard (Garmin hours vs subjective quality) as input to narrative generation.
 - [ ] 3.4 Week-over-week annotated against phase targets: "Volume up 15% — Phase 1 target is ≤10%"
 - [ ] 3.5 Implement rolling 8-week correlation windows — show "this correlation is getting stronger/weaker" vs static r-values
 - [ ] 3.6 Race countdown narrative: "165 days to Berlin. Phase 2 of 4. 3/4 objectives on track."
@@ -42,9 +42,10 @@
 - [ ] 4.2 Fix long run threshold — use % of weekly volume (>30% of weekly km) instead of hardcoded max(15, avg×0.75)
 - [ ] 4.3 Add sRPE (session RPE × duration) as validated internal load metric alongside Garmin EPOC. Store in activities, show in weekly_agg
 - [ ] 4.4 Implement training monotony (stdev of daily loads per week) and strain (weekly_load × monotony) — add to weekly_agg
-- [ ] 4.5 Add SpO2 illness alert: avg_spo2 < 93% for 2+ consecutive days → "Possible illness or altitude effect — consider rest." Do NOT add SpO2 to dashboard charts (mostly flat 95-98% for sea-level runners).
-- [ ] 4.6 Consider adding correlation pair: SpO2 → training_readiness (validate if useful signal for this user)
-- [ ] 4.7 Test: Daniels table accuracy, long run classification, sRPE, monotony/strain, SpO2 alert
+- [ ] 4.5 Add cycling commute impact to recovery assessment — compute daily/weekly cycling km, add `cycling_km` to weekly_agg, factor into headline ("you cycled 30km yesterday — consider easy run today"), add cycling volume as "why" connector for run quality, add correlation pair: previous-day cycling_km → next-day run efficiency
+- [ ] 4.6 Add SpO2 illness alert: avg_spo2 < 93% for 2+ consecutive days → "Possible illness or altitude effect — consider rest." Do NOT add SpO2 to dashboard charts (mostly flat 95-98% for sea-level runners).
+- [ ] 4.7 Consider adding correlation pair: SpO2 → training_readiness (validate if useful signal for this user)
+- [ ] 4.8 Test: Daniels table accuracy, long run classification, sRPE, monotony/strain, cycling impact, SpO2 alert
 
 ---
 
