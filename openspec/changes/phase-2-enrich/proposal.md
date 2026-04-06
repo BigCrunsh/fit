@@ -58,6 +58,8 @@ Three sub-phases, ordered by architectural impact:
 
 - **zero-test-coverage-paths** — Add tests for garmin.py (mock API), sync.py (mock pipeline), weather.py. These are the critical data entry point.
 
+- **weather-retry** — Add retry/backoff to weather.py (garmin.py already has `_request_with_retry`, weather.py has none).
+
 - **year-boundary-bug** — `_compute_acwr` has ISO week 53 handling bug. Fix.
 
 - **race-calendar-fk** — Add proper FK constraint from race_calendar.activity_id to activities.id.
@@ -65,6 +67,16 @@ Three sub-phases, ordered by architectural impact:
 - **alert-sql-fix** — The all_runs_too_hard query only returns 1 week due to `WHERE >= MAX()`. Fix to actually average 2 weeks.
 
 - **generator-refactor** — Extract 860-line generator.py into sections (engine, cards, charts, predictions).
+
+### Design Notes
+
+- **training_phases.goal_id indirection** — Phases link to races through goals (phase → goal → race via race_id). No direct training_phases.race_id needed; the indirection works and avoids a schema change to training_phases.
+
+- **Heat-aware coaching** — Heat flags on runs (Phase 2b) must also feed into `get_coaching_context()` and `generate_headline()` so coaching advice accounts for heat-affected runs.
+
+- **Sleep mismatches → narratives** — Existing sleep mismatch detection (Garmin hours vs subjective quality) feeds into the "why" connector narrative engine (task 3.3).
+
+- **Migration numbering** — 007: goals.race_id. 008: activity_splits. 009: planned_workouts. No collisions.
 
 ## Impact
 
