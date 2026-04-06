@@ -10,7 +10,10 @@
 - [ ] 1.6 Add tests for weather.py (mock Open-Meteo responses)
 - [ ] 1.7 Add retry/backoff to weather.py — `_request_with_retry` wrapper for Open-Meteo API calls (garmin.py already has retry, weather.py has none)
 - [ ] 1.8 Refactor generator.py (860+ lines) — extract into `fit/report/sections/` package: engine.py, cards.py, charts.py, predictions.py
-- [ ] 1.9 Test: all bugs verified fixed, new tests pass
+- [ ] 1.9 Extend `_auto_import_weight()` to parse body_fat_pct, muscle_mass_kg, visceral_fat from FitDays CSV (column name detection). Skip BMI, bone mass, body water, metabolic age, protein, subcutaneous fat (BIA noise).
+- [ ] 1.10 Add body fat % trend line to Body tab weight chart (second y-axis, faint line)
+- [ ] 1.11 Include body comp trend in `get_coaching_context()` — "fat trending down + muscle stable = healthy cut"
+- [ ] 1.12 Test: all bugs verified fixed, new tests pass
 
 ## 2. Race-Anchored Data Model
 
@@ -39,7 +42,9 @@
 - [ ] 4.2 Fix long run threshold — use % of weekly volume (>30% of weekly km) instead of hardcoded max(15, avg×0.75)
 - [ ] 4.3 Add sRPE (session RPE × duration) as validated internal load metric alongside Garmin EPOC. Store in activities, show in weekly_agg
 - [ ] 4.4 Implement training monotony (stdev of daily loads per week) and strain (weekly_load × monotony) — add to weekly_agg
-- [ ] 4.5 Test: Daniels table accuracy, long run classification, sRPE, monotony/strain
+- [ ] 4.5 Add SpO2 illness alert: avg_spo2 < 93% for 2+ consecutive days → "Possible illness or altitude effect — consider rest." Do NOT add SpO2 to dashboard charts (mostly flat 95-98% for sea-level runners).
+- [ ] 4.6 Consider adding correlation pair: SpO2 → training_readiness (validate if useful signal for this user)
+- [ ] 4.7 Test: Daniels table accuracy, long run classification, sRPE, monotony/strain, SpO2 alert
 
 ---
 

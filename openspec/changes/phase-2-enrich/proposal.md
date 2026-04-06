@@ -78,6 +78,12 @@ Three sub-phases, ordered by architectural impact:
 
 - **Migration numbering** — 007: goals.race_id. 008: activity_splits. 009: planned_workouts. No collisions.
 
+- **FitDays body comp** — The body_comp table already has body_fat_pct, muscle_mass_kg, visceral_fat columns but `_auto_import_weight()` only parses weight. The FitDays CSV contains all these fields. Extend the importer to parse them. Skip BMI (derivable), bone mass, body water, metabolic age, protein, subcutaneous fat (BIA noise, not actionable for marathon training).
+
+- **SpO2 as illness early warning** — SpO2 is collected and stored but never used analytically. Add a threshold alert (< 93% for 2+ days) as a minimal illness detector. Do NOT add to dashboard charts — mostly flat 95-98% for healthy sea-level runners, more noise than signal. Optionally test as a correlation pair against readiness.
+
+- **Apple Health integration: explicitly out of scope** — Don't build an Apple Health integration for body comp. The data originates from the FitDays scale — Apple Health is a middleman that loses data (no visceral fat in HealthKit). Apple Health has no API accessible from non-Apple platforms; the only paths are manual XML export, iOS Shortcuts webhooks, or paid bridge apps. Extending the FitDays CSV import directly gives more data with less effort. This decision prevents the feature from being re-proposed.
+
 ## Impact
 
 - **Race-anchored model** transforms the dashboard from "here are some charts" to "here's your race, here's your plan, here's where you are"
