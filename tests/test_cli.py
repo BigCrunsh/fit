@@ -26,7 +26,7 @@ class TestCLICommands:
     def test_doctor(self):
         result = CliRunner().invoke(main, ["doctor"])
         assert result.exit_code == 0
-        assert "fit doctor" in result.output
+        assert "Doctor" in result.output
 
     def test_correlate(self):
         result = CliRunner().invoke(main, ["correlate"])
@@ -35,7 +35,7 @@ class TestCLICommands:
     def test_races(self):
         result = CliRunner().invoke(main, ["races"])
         assert result.exit_code == 0
-        assert "Race Calendar" in result.output
+        assert "Races" in result.output
 
     def test_goal_list(self):
         result = CliRunner().invoke(main, ["goal", "list"])

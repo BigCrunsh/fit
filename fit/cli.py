@@ -191,17 +191,28 @@ def races_list():
                    rc.garmin_time, rc.activity_id, rc.organizer
             FROM race_calendar rc ORDER BY rc.date
         """).fetchall()
-        console.print(f"\n[bold]Race Calendar ({len(rows)} races)[/bold]\n")
-        console.print(f"  {'':1s} {'ID':>3s}  {'Date':10s}  {'Status':10s}  {'Distance':12s}  {'Official':>8s}  {'Garmin':>8s}  {'Target':>8s}  Name")
-        console.print(f"  {'':1s} {'─'*3}  {'─'*10}  {'─'*10}  {'─'*12}  {'─'*8}  {'─'*8}  {'─'*8}  {'─'*20}")
+        from rich import box as rich_box
+        from rich.panel import Panel
+        from rich.table import Table
+
+        t = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False, padding=(0, 1), expand=True)
+        t.add_column("", width=2)  # match icon
+        t.add_column("#", style="dim", justify="right", no_wrap=True)
+        t.add_column("Date", no_wrap=True)
+        t.add_column("Dist", no_wrap=True)
+        t.add_column("Result", justify="right", no_wrap=True)
+        t.add_column("Target", justify="right", no_wrap=True)
+        t.add_column("Name", ratio=1, overflow="ellipsis", no_wrap=True)
+
         for r in rows:
-            matched = "[green]✓[/green]" if r["activity_id"] else "[red]✗[/red]"
-            status_color = {"completed": "green", "registered": "cyan", "planned": "dim", "dns": "red", "dnf": "red"}
-            sc = status_color.get(r["status"], "dim")
+            sc = {"completed": "green", "registered": "cyan", "planned": "dim", "dns": "red", "dnf": "red"}.get(r["status"], "dim")
+            matched = "[green]✓[/]" if r["activity_id"] else " "
             result = r["result_time"] or "—"
-            garmin = r["garmin_time"] or "—"
             target = r["target_time"] or "—"
-            console.print(f"  {matched} {r['id']:3d}  {r['date']}  [{sc}]{r['status']:10s}[/]  {r['distance']:12s}  {result:>8s}  {garmin:>8s}  {target:>8s}  {r['name']}")
+            t.add_row(matched, str(r["id"]), r["date"], r["distance"],
+                      result, target, f"[{sc}]{r['name']}[/]")
+
+        console.print(Panel(t, title=f"[bold]Races[/] [dim]{len(rows)} total[/]", border_style="blue", padding=(0, 1)))
         unmatched = [r for r in rows if r["status"] == "completed" and not r["activity_id"]]
         if unmatched:
             console.print(f"\n  [yellow]⚠ {len(unmatched)} completed race(s) without matching activity (pre-sync period)[/yellow]")
@@ -465,55 +476,70 @@ def target_show():
             def _fobj(kw):
                 return next((o for o in derived if kw in o["name"].lower()), None)
 
-            # ── VDOT (headline fitness score) ──
+            # ── Fitness Profile (VDOT + 4 dimensions, all in one panel) ──
+            t = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False, padding=(0, 1))
+            t.add_column("", style="bold", no_wrap=True)
+            t.add_column("Now", justify="right")
+            t.add_column("Trend", style="dim")
+            t.add_column("Need", justify="right")
+            t.add_column("Gap", justify="right")
+            t.add_column("", width=2)
+
+            # VDOT row (summary score)
             vdot = profile["effective_vdot"]
             vdot_obj = _fobj("vdot")
             if vdot:
-                src = profile["race_vdot_date"][:7] if profile.get("race_vdot_date") else "estimated"
-                garmin = f" · Garmin est. {profile['garmin_vo2max']:.0f}" if profile["garmin_vo2max"] else ""
-                req_str = ""
-                if vdot_obj:
-                    req = vdot_obj["target_value"]
-                    gap = vdot - req
-                    req_str = f"  need ≥{req}  ({gap:+.1f})  {_s(vdot_obj.get('achievability'))}"
-                console.print(f"\n  [bold]VDOT  {vdot:.1f}[/]{req_str}  [dim](from {src} race{garmin})[/]")
+                src = profile["race_vdot_date"][:7] if profile.get("race_vdot_date") else "est."
+                garmin_note = f"G:{profile['garmin_vo2max']:.0f}" if profile["garmin_vo2max"] else ""
+                trend_str = f"[dim]{src} {garmin_note}[/]"
+                req = f"≥{vdot_obj['target_value']}" if vdot_obj else "—"
+                gap = f"{vdot - vdot_obj['target_value']:+.1f}" if vdot_obj else "—"
+                ach = _s(vdot_obj.get("achievability")) if vdot_obj else ""
+                t.add_row("[bold]VDOT[/]", f"[bold]{vdot:.1f}[/]", trend_str, req, gap, ach)
             elif profile["garmin_vo2max"]:
-                console.print(f"\n  [bold]VO2max  {profile['garmin_vo2max']:.1f}[/]  [dim](Garmin estimate, no recent races)[/]")
+                t.add_row("[bold]VDOT[/]", f"[bold]{profile['garmin_vo2max']:.1f}[/]", "[dim]Garmin est.[/]", "—", "—", "")
 
-            # ── 4 Fitness Dimensions ──
-            t = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False, padding=(0, 2))
-            t.add_column("Dimension", style="bold", min_width=12)
-            t.add_column("Current", justify="right", min_width=9)
-            t.add_column("Trend", min_width=13)
-            t.add_column("Need", justify="right", min_width=6)
-            t.add_column("Gap", justify="right", min_width=7)
-            t.add_column("", min_width=2)
+            t.add_row("", "", "", "", "", "")  # separator
 
-            for label, key, obj_kw, desc in [
-                ("Aerobic", "aerobic", None, "O₂ ceiling"),
-                ("Threshold", "threshold", None, "Z2 pace"),
-                ("Economy", "economy", None, "spd/bpm"),
-                ("Resilience", "resilience", "long run", "drift onset"),
+            # 4 dimensions — each with target from _dim_ objectives
+            dim_targets = {
+                "aerobic": _fobj("_dim_aerobic"),
+                "threshold": _fobj("_dim_threshold"),
+                "economy": _fobj("_dim_economy"),
+                "resilience": _fobj("_dim_resilience"),
+            }
+
+            for label, key, desc in [
+                ("Aerobic", "aerobic", "VO2max"),
+                ("Threshold", "threshold", "Z2 pace"),
+                ("Economy", "economy", "spd/bpm"),
+                ("Resilience", "resilience", "drift km"),
             ]:
                 dim = profile[key]
+                dim_obj = dim_targets.get(key)
+                need = str(dim_obj["target_value"]) if dim_obj else "—"
+
+                row_label = f"{label} [dim]({desc})[/]"
                 if dim.get("current_value") is not None:
                     arrow = {"improving": "[green]↑[/]", "declining": "[red]↓[/]", "flat": "→"}.get(dim["trend"], "")
                     rate = f"{dim['rate_per_month']:+.2f}/mo" if dim.get("rate_per_month") else ""
                     trend_str = f"{arrow} {rate}".strip() if arrow or rate else "—"
-                    obj = _fobj(obj_kw) if obj_kw else None
-                    if obj and obj.get("target_value") is not None:
-                        t.add_row(label, str(dim["current_value"]), trend_str,
-                                  str(obj["target_value"]), f"{obj.get('gap', 0):+.1f}",
-                                  _s(obj.get("achievability")))
+
+                    current_val = dim["current_value"]
+                    if dim_obj and dim_obj.get("target_value") is not None:
+                        target_val = dim_obj["target_value"]
+                        gap = current_val - target_val
+                        ach = "[green]✓[/]" if gap >= 0 else ("[yellow]⚠[/]" if gap > -target_val * 0.1 else "[red]✗[/]")
+                        t.add_row(row_label, str(current_val), trend_str, need, f"{gap:+.1f}", ach)
                     else:
-                        t.add_row(label, str(dim["current_value"]), trend_str, "—", "—", "")
+                        t.add_row(row_label, str(current_val), trend_str, need, "—", "")
                 else:
                     msg = dim.get("message", "no data")
-                    if len(msg) > 28:
-                        msg = msg[:28] + "…"
-                    t.add_row(label, "—", f"[dim]{msg}[/]", "—", "—", "")
+                    if len(msg) > 25:
+                        msg = msg[:25] + "…"
+                    t.add_row(row_label, "—", f"[dim]{msg}[/]", need, "—", "")
 
-            console.print(Panel(t, title="[bold]4 Dimensions[/]", border_style="blue", padding=(0, 1)))
+            console.print(Panel(t, title="[bold]Fitness Profile[/]", border_style="blue", padding=(0, 1)))
 
             # ── Objectives ──
             ot = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False, padding=(0, 2))
@@ -524,8 +550,8 @@ def target_show():
             ot.add_column("Why", style="dim", min_width=8)
 
             for obj in derived:
-                if "vdot" in obj["name"].lower():
-                    continue
+                if "vdot" in obj["name"].lower() or obj["name"].startswith("_dim_"):
+                    continue  # shown in fitness profile, not objectives
                 cur = obj.get("current_value")
                 cur_s = f"{cur}" if cur is not None else "—"
                 why = {"auto_daniels": "Daniels", "auto_distance": "distance", "auto_timeline": "timeline"}.get(obj.get("derivation_source", ""), "")
@@ -639,28 +665,40 @@ def goal_list():
     config = get_config()
     conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
     try:
+        from rich import box as rich_box
+        from rich.panel import Panel
+        from rich.table import Table
+
         goals = conn.execute("SELECT * FROM goals WHERE active = 1 ORDER BY id").fetchall()
         if not goals:
-            console.print("  No active goals.")
+            console.print("  No active goals. Add one: [bold]fit goal add[/]")
             return
+
+        t = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False, padding=(0, 1))
+        t.add_column("#", style="dim", justify="right")
+        t.add_column("Name")
+        t.add_column("Type", style="dim")
+        t.add_column("Current", justify="right")
+        t.add_column("Target", justify="right")
+        t.add_column("Source", style="dim")
+
         for g in goals:
-            progress = ""
+            current = "—"
+            target_str = g["target_time"] or (f"{g['target_value']} {g['target_unit'] or ''}" if g["target_value"] else "—")
+            src = g["derivation_source"] or "manual"
             if g["type"] == "metric" and g["target_value"]:
-                # Find current value
                 if "vo2" in g["name"].lower():
                     cur = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
-                    if cur:
-                        pct = cur["vo2max"] / g["target_value"] * 100
-                        progress = f" [{cur['vo2max']}/{g['target_value']} = {pct:.0f}%]"
+                    current = f"{cur['vo2max']}" if cur else "—"
                 elif "weight" in g["name"].lower():
                     cur = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
-                    if cur:
-                        progress = f" [{cur['weight_kg']:.1f}/{g['target_value']}kg]"
+                    current = f"{cur['weight_kg']:.1f}" if cur else "—"
             elif g["type"] == "habit" and g["target_value"]:
                 streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
-                if streak:
-                    progress = f" [{streak[0] or 0}/{int(g['target_value'])} weeks]"
-            console.print(f"  {g['id']}. {g['name']} ({g['type']}) — {g['target_date'] or 'no date'}{progress}")
+                current = f"{streak[0] or 0}" if streak else "0"
+            t.add_row(str(g["id"]), g["name"], g["type"], current, target_str, src)
+
+        console.print(Panel(t, title="[bold]Goals[/]", border_style="blue", padding=(0, 1)))
     finally:
         conn.close()
 
@@ -714,15 +752,31 @@ def plan_show(ctx):
         """, (today.isoformat(), end.isoformat())).fetchall()
 
         if not rows:
-            console.print("  No planned workouts for the next 7 days.")
+            console.print("  No planned workouts. Import: [bold]fit plan import <file>[/]")
             return
-        console.print("\n[bold]Plan — next 7 days[/bold]\n")
+
+        from rich import box as rich_box
+        from rich.panel import Panel
+        from rich.table import Table
+
+        import re
+        t = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False, padding=(0, 2))
+        t.add_column("Date", style="dim")
+        t.add_column("Type", style="bold")
+        t.add_column("Dist", justify="right")
+        t.add_column("Detail", style="dim")
+
         for r in rows:
             dist = f"{r['target_distance_km']:.1f}km" if r["target_distance_km"] else "—"
             wtype = r["workout_type"] or "other"
             color = {"easy": "blue", "long": "green", "tempo": "yellow", "intervals": "red"}.get(wtype, "dim")
-            console.print(f"  {r['date']}  [{color}]{wtype:12s}[/]  {dist:>8s}  {r['workout_name'] or ''}")
-        console.print()
+            # Clean Runna name: extract the descriptive part after the dash
+            name = r["workout_name"] or ""
+            m = re.search(r"-\s*(.+?)\s*\(", name)
+            detail = m.group(1).strip() if m else name[:30]
+            t.add_row(r["date"][5:], f"[{color}]{wtype}[/]", dist, detail)
+
+        console.print(Panel(t, title="[bold]Plan[/] [dim]next 7 days[/]", border_style="blue", padding=(0, 1)))
     finally:
         conn.close()
 
@@ -797,12 +851,19 @@ def doctor():
     config = get_config()
     conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
     try:
+        from rich import box as rich_box
+        from rich.panel import Panel
+        from rich.table import Table
+
         issues = 0
-        console.print("\n[bold]fit doctor[/bold]\n")
+        t = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False, padding=(0, 1))
+        t.add_column("", width=2)
+        t.add_column("Check")
+        t.add_column("Detail", style="dim")
 
         # Schema version
         versions = [r[0] for r in conn.execute("SELECT version FROM schema_version ORDER BY version").fetchall()]
-        console.print(f"  [green]✓[/green] Schema versions: {versions}")
+        t.add_row("[green]✓[/]", "Schema", f"{len(versions)} migrations applied")
 
         # Tables
         tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()]
@@ -812,48 +873,47 @@ def doctor():
                     "activity_splits", "planned_workouts"}
         missing_tables = expected - set(tables)
         if missing_tables:
-            console.print(f"  [red]✗[/red] Missing tables: {missing_tables}")
+            t.add_row("[red]✗[/]", "Tables", f"missing: {missing_tables}")
             issues += 1
         else:
-            console.print(f"  [green]✓[/green] All {len(expected)} tables present")
+            t.add_row("[green]✓[/]", "Tables", f"{len(expected)} present")
 
         # Weekly_agg freshness
         latest_activity = conn.execute("SELECT MAX(created_at) FROM activities").fetchone()[0]
         latest_agg = conn.execute("SELECT MAX(created_at) FROM weekly_agg").fetchone()[0]
         if latest_activity and latest_agg and latest_activity > latest_agg:
-            console.print("  [yellow]⚠[/yellow] weekly_agg may be stale — run `fit recompute`")
+            t.add_row("[yellow]⚠[/]", "Weekly agg", "may be stale — run fit recompute")
             issues += 1
         else:
-            console.print("  [green]✓[/green] weekly_agg up to date")
+            t.add_row("[green]✓[/]", "Weekly agg", "up to date")
 
         # Calibration
         cal = get_calibration_status(conn)
         stale = [c for c in cal if c["stale"]]
         if stale:
-            console.print(f"  [yellow]⚠[/yellow] {len(stale)} stale calibration(s): {', '.join(c['metric'] for c in stale)}")
+            t.add_row("[yellow]⚠[/]", "Calibration", f"stale: {', '.join(c['metric'] for c in stale)}")
             issues += 1
         else:
-            console.print("  [green]✓[/green] All calibrations current")
+            t.add_row("[green]✓[/]", "Calibration", "all current")
 
         # Data sources
         sources = check_data_sources(conn)
         bad = [s for s in sources if s["status"] != "active"]
         if bad:
-            console.print(f"  [yellow]⚠[/yellow] {len(bad)} data source warning(s)")
-            for s in bad:
-                console.print(f"    {s['source']}: {s['status']}")
+            t.add_row("[yellow]⚠[/]", "Data sources", f"{len(bad)} warning(s)")
             issues += 1
         else:
-            console.print("  [green]✓[/green] All data sources active")
+            t.add_row("[green]✓[/]", "Data sources", "all active")
 
         # Correlations
         try:
             corr_count = conn.execute("SELECT COUNT(*) FROM correlations WHERE status = 'computed'").fetchone()[0]
-            console.print(f"  [green]✓[/green] {corr_count} correlations computed")
+            t.add_row("[green]✓[/]", "Correlations", f"{corr_count} computed")
         except Exception:
-            console.print("  [dim]—[/dim] Correlations table not yet created (run `fit sync`)")
+            t.add_row("[dim]—[/]", "Correlations", "not yet computed")
 
-        console.print(f"\n  {'[green]All healthy ✓' if issues == 0 else f'[yellow]{issues} issue(s) found'}[/]\n")
+        status_str = "[green]healthy[/]" if issues == 0 else f"[yellow]{issues} issue(s)[/]"
+        console.print(Panel(t, title=f"[bold]Doctor[/] {status_str}", border_style="blue" if issues == 0 else "yellow", padding=(0, 1)))
     finally:
         conn.close()
 
@@ -868,19 +928,30 @@ def correlate():
     config = get_config()
     conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
     try:
+        from rich import box as rich_box
+        from rich.panel import Panel
+        from rich.table import Table
+
         results = compute_all_correlations(conn)
         if not results:
-            console.print("No new correlations to compute (data unchanged).")
+            console.print("  No new correlations to compute (data unchanged).")
             return
-        console.print(f"\n[bold]Correlations ({len(results)} pairs):[/bold]\n")
+
+        t = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False, padding=(0, 1))
+        t.add_column("r", justify="right", style="bold")
+        t.add_column("Pair")
+        t.add_column("n", justify="right", style="dim")
+        t.add_column("Confidence", style="dim")
+
         for r in sorted(results, key=lambda x: abs(x.get("spearman_r") or 0), reverse=True):
+            sr = r.get("spearman_r") or 0
             if r["status"] == "insufficient_data":
-                console.print(f"  [dim]{r['name']}: insufficient data (n={r['sample_size']})[/dim]")
+                t.add_row("[dim]—[/]", f"[dim]{r['name']}[/]", str(r["sample_size"]), "insufficient data")
             else:
-                sr = r.get("spearman_r") or 0
-                color = "[green]" if abs(sr) >= 0.3 else "[yellow]" if abs(sr) >= 0.15 else "[dim]"
-                console.print(f"  {color}r={sr:+.3f}[/] {r['name']} (n={r['sample_size']}, p={r.get('p_value', '?')}, {r['confidence']})")
-        console.print()
+                color = "green" if abs(sr) >= 0.3 else "yellow" if abs(sr) >= 0.15 else "dim"
+                t.add_row(f"[{color}]{sr:+.3f}[/]", r["name"], str(r["sample_size"]), r["confidence"])
+
+        console.print(Panel(t, title=f"[bold]Correlations[/] [dim]{len(results)} pairs[/]", border_style="blue", padding=(0, 1)))
     finally:
         conn.close()
 
@@ -962,7 +1033,13 @@ def calibrate(metric: str):
 
 @main.command()
 def status():
-    """Quick overview of data and goals."""
+    """Quick overview — what you need to know right now."""
+    from datetime import date as d
+
+    from rich import box as rich_box
+    from rich.panel import Panel
+    from rich.table import Table
+
     from fit.config import get_config
     from fit.db import get_db
 
@@ -970,93 +1047,76 @@ def status():
     conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
 
     try:
-        counts = {}
-        for table in ("daily_health", "activities", "checkins", "body_comp", "weather", "goals"):
-            row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
-            counts[table] = row[0]
+        last_sync = conn.execute("SELECT MAX(date) FROM daily_health").fetchone()[0] or "never"
 
-        last_health = conn.execute("SELECT MAX(date) FROM daily_health").fetchone()[0]
-
-        console.print(f"\n  [bold]fit[/bold] — {counts['daily_health']} health days, "
-                       f"{counts['activities']} activities, {counts['checkins']} check-ins")
-        console.print(f"  Last sync: {last_health or 'never'}")
-
-        # Target race countdown
-        from datetime import date as d
-
+        # Target race
         from fit.goals import get_active_phase, get_target_race
-        target_race = get_target_race(conn)
-        if target_race:
-            days_left = (d.fromisoformat(target_race["date"]) - d.today()).days
-            target_time = target_race.get("target_time") or ""
-            console.print(f"  [bold]Target Race:[/bold] {target_race['name']} — [cyan]{days_left} days[/cyan]"
-                          + (f" — target: {target_time}" if target_time else ""))
+        target = get_target_race(conn)
+        if target:
+            days_left = (d.fromisoformat(target["date"]) - d.today()).days
+            tt = target.get("target_time") or ""
+            header = f"[bold]{target['name']}[/]\n{target['distance']}  ·  {days_left} days  ·  target {tt}  ·  synced {last_sync}"
+        else:
+            header = f"[bold]fit[/]  ·  synced {last_sync}\n[dim]No target race. Run: fit target set <race_id>[/]"
+        console.print(Panel(header, border_style="bright_blue", padding=(0, 2)))
 
-        # Active phase with position
-        phase = get_active_phase(conn)
-        if phase:
-            total_phases = conn.execute(
-                "SELECT COUNT(*) FROM training_phases WHERE goal_id = ?",
-                (phase["goal_id"],)
-            ).fetchone()[0]
-            phase_pos = f" (of {total_phases})" if total_phases else ""
-            console.print(f"  [bold]Phase:[/bold] {phase['phase']} — {phase['name']}{phase_pos}")
-            if phase.get("z12_pct_target"):
-                console.print(f"    Z1+Z2 target: {phase['z12_pct_target']}%, km: {phase.get('weekly_km_min')}-{phase.get('weekly_km_max')}")
+        # Alerts (most important — safety first)
+        try:
+            from fit.alerts import get_recent_alerts
+            alerts = get_recent_alerts(conn, days=3)
+            seen = set()
+            for a in alerts:
+                if a["type"] not in seen:
+                    seen.add(a["type"])
+                    console.print(f"  [red]⚠ {a['type'].replace('_', ' ').title()}:[/] {a['message'][:70]}")
+        except Exception:
+            pass
 
-        # Objective progress (active goals)
-        goals = conn.execute("SELECT * FROM goals WHERE active = 1 ORDER BY id").fetchall()
-        if goals:
-            console.print("  [bold]Objectives:[/bold]")
-            for g in goals:
-                progress = ""
-                if g["type"] == "metric" and g["target_value"]:
-                    if "vo2" in g["name"].lower():
-                        cur = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
-                        if cur:
-                            pct = cur["vo2max"] / g["target_value"] * 100
-                            progress = f" [{cur['vo2max']}/{g['target_value']} = {pct:.0f}%]"
-                    elif "weight" in g["name"].lower():
-                        cur = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
-                        if cur:
-                            progress = f" [{cur['weight_kg']:.1f}/{g['target_value']}kg]"
-                elif g["type"] == "habit" and g["target_value"]:
-                    streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
-                    if streak:
-                        progress = f" [{streak[0] or 0}/{int(g['target_value'])} weeks]"
-                console.print(f"    {g['name']} ({g['type']}) — {g['target_date'] or 'no date'}{progress}")
+        # Key metrics as compact table
+        t = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False, padding=(0, 2))
+        t.add_column("Metric", style="bold")
+        t.add_column("Value", justify="right")
+        t.add_column("", style="dim")
 
-        # Calibration status
-        from fit.calibration import get_calibration_status
-        cal_status = get_calibration_status(conn)
-        console.print("  [bold]Calibration:[/bold]")
-        for c in cal_status:
-            icon = "[green]✓[/green]" if not c["stale"] and not c["missing"] else "[yellow]⚠[/yellow]" if c["stale"] else "[red]✗[/red]"
-            val = f"{c['value']} ({c['method']}, {c['date']})" if c["value"] else "not set"
-            prompt = f" — {c['retest_prompt']}" if c["retest_prompt"] else ""
-            console.print(f"    {icon} {c['metric']}: {val}{prompt}")
+        # Readiness
+        h = conn.execute("SELECT training_readiness, resting_heart_rate, hrv_last_night, sleep_duration_hours FROM daily_health ORDER BY date DESC LIMIT 1").fetchone()
+        if h:
+            r = h["training_readiness"]
+            action = "[green]quality session[/]" if r and r >= 75 else "[yellow]easy day[/]" if r and r >= 50 else "[red]rest[/]" if r else ""
+            t.add_row("Readiness", str(r or "—"), action)
+            t.add_row("RHR", f"{h['resting_heart_rate'] or '—'} bpm", "")
+            t.add_row("HRV", f"{h['hrv_last_night'] or '—'} ms", "")
+            t.add_row("Sleep", f"{h['sleep_duration_hours']:.1f}h" if h["sleep_duration_hours"] else "—", "")
 
-        # Data source health
-        from fit.data_health import check_data_sources
-        sources = check_data_sources(conn)
-        stale_or_missing = [s for s in sources if s["status"] != "active"]
-        if stale_or_missing:
-            console.print(f"  [bold]Data Health:[/bold] {len(stale_or_missing)} warning(s)")
-            for s in stale_or_missing:
-                icon = "[yellow]⚠[/yellow]" if s["status"] == "stale" else "[red]✗[/red]"
-                console.print(f"    {icon} {s['source']}: {s['status']}"
-                               + (f" — {s['instruction']}" if s.get("instruction") else ""))
-
-        # ACWR + streak
+        # ACWR
         acwr_row = conn.execute("SELECT acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
-        streak_row = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
         if acwr_row and acwr_row["acwr"]:
             v = acwr_row["acwr"]
-            safety = "[green]safe[/green]" if 0.8 <= v <= 1.3 else "[yellow]caution[/yellow]" if v <= 1.5 else "[red]DANGER[/red]"
-            console.print(f"  [bold]ACWR:[/bold] {v:.2f} ({safety})")
-        if streak_row and streak_row[0]:
-            console.print(f"  [bold]Streak:[/bold] {streak_row[0]} consecutive weeks with 3+ runs")
+            safety = "[green]safe[/]" if 0.8 <= v <= 1.3 else "[yellow]caution[/]" if v <= 1.5 else "[red]DANGER[/]"
+            t.add_row("ACWR", f"{v:.2f}", safety)
 
-        console.print()
+        # Streak
+        streak_row = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
+        t.add_row("Streak", f"{streak_row[0] or 0} wk" if streak_row else "0 wk", "3+ runs/wk")
+
+        # Phase
+        phase = get_active_phase(conn)
+        if phase:
+            t.add_row("Phase", phase["name"], phase["phase"])
+
+        console.print(Panel(t, title="[bold]Today[/]", border_style="blue", padding=(0, 1)))
+
+        # Calibration (compact)
+        from fit.calibration import get_calibration_status
+        cal_status = get_calibration_status(conn)
+        stale = [c for c in cal_status if c["stale"] or c["missing"]]
+        if stale:
+            for c in stale:
+                icon = "[yellow]⚠[/]" if c["stale"] else "[red]✗[/]"
+                console.print(f"  {icon} {c['metric']}: {c.get('retest_prompt', 'needs update')}")
+        else:
+            console.print("  [green]✓[/] All calibrations current")
+
+        console.print("\n  [dim]Details: fit target show · Dashboard: fit report[/]")
     finally:
         conn.close()

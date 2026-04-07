@@ -11,17 +11,17 @@ class TestDoctor:
         runner = CliRunner()
         result = runner.invoke(main, ["doctor"])
         assert result.exit_code == 0
-        assert "fit doctor" in result.output
+        assert "Doctor" in result.output
 
     def test_doctor_shows_schema(self):
         runner = CliRunner()
         result = runner.invoke(main, ["doctor"])
-        assert "Schema versions" in result.output
+        assert "Schema" in result.output
 
     def test_doctor_shows_tables(self):
         runner = CliRunner()
         result = runner.invoke(main, ["doctor"])
-        assert "tables present" in result.output
+        assert "Tables" in result.output
 
     def test_doctor_checks_calibration(self):
         runner = CliRunner()

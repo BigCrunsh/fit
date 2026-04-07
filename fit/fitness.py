@@ -508,6 +508,60 @@ def derive_objectives(conn, race_id: int) -> list[dict]:
         "auto_value": 80,
     })
 
+    # ── Dimension-specific targets (for fitness profile display) ──
+
+    if target_secs and required_vdot:
+        # Aerobic target: Garmin VO2max corresponding to required VDOT
+        # Garmin reads ~5 higher than race VDOT
+        aerobic_target = round(required_vdot + 5)
+        objectives.append({
+            "name": "_dim_aerobic",
+            "type": "metric",
+            "target_value": aerobic_target,
+            "target_unit": "VO2max",
+            "derivation_source": "auto_daniels",
+            "auto_value": aerobic_target,
+        })
+
+        # Threshold target: Z2 speed_per_bpm_z2 at required VDOT
+        # Daniels easy pace for VDOT X ≈ marathon pace * 1.25
+        # speed_per_bpm at easy pace ≈ (easy_m_per_min / Z2_hr)
+        marathon_pace_m_per_min = (distance_km * 1000) / (target_secs / 60)
+        easy_pace_m_per_min = marathon_pace_m_per_min * 0.78  # ~78% of marathon pace
+        z2_hr = 134  # Z2 ceiling from config
+        threshold_target = round(easy_pace_m_per_min / z2_hr, 3)
+        objectives.append({
+            "name": "_dim_threshold",
+            "type": "metric",
+            "target_value": threshold_target,
+            "target_unit": "spd/bpm_z2",
+            "derivation_source": "auto_daniels",
+            "auto_value": threshold_target,
+        })
+
+        # Economy target: speed_per_bpm at marathon pace and race HR
+        race_hr = 165  # typical marathon race HR (~86% max HR)
+        economy_target = round(marathon_pace_m_per_min / race_hr, 3)
+        objectives.append({
+            "name": "_dim_economy",
+            "type": "metric",
+            "target_value": economy_target,
+            "target_unit": "spd/bpm",
+            "derivation_source": "auto_daniels",
+            "auto_value": economy_target,
+        })
+
+        # Resilience target: drift-free distance (as fraction of race distance)
+        resilience_target = round(distance_km * 0.75)  # hold pace through 75% of distance
+        objectives.append({
+            "name": "_dim_resilience",
+            "type": "metric",
+            "target_value": resilience_target,
+            "target_unit": "km",
+            "derivation_source": "auto_distance",
+            "auto_value": resilience_target,
+        })
+
     return objectives
 
 
