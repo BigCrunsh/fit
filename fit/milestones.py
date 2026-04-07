@@ -23,7 +23,7 @@ def detect_milestones(conn: sqlite3.Connection) -> list[dict]:
     # ── Longest run ──
     longest = conn.execute("""
         SELECT date, distance_km FROM activities
-        WHERE type = 'running' AND distance_km IS NOT NULL
+        WHERE type IN ('running', 'track_running', 'trail_running') AND distance_km IS NOT NULL
         ORDER BY distance_km DESC LIMIT 2
     """).fetchall()
     if len(longest) >= 2:
@@ -43,7 +43,7 @@ def detect_milestones(conn: sqlite3.Connection) -> list[dict]:
     # ── Best speed_per_bpm (aerobic efficiency) ──
     best_eff = conn.execute("""
         SELECT date, speed_per_bpm FROM activities
-        WHERE type = 'running' AND speed_per_bpm IS NOT NULL
+        WHERE type IN ('running', 'track_running', 'trail_running') AND speed_per_bpm IS NOT NULL
         ORDER BY speed_per_bpm DESC LIMIT 2
     """).fetchall()
     if len(best_eff) >= 2:

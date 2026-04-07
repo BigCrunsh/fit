@@ -24,7 +24,7 @@ def generate_run_story(conn: sqlite3.Connection, config: dict) -> dict | None:
                a.temp_at_start_c, a.humidity_at_start_pct, a.splits_status,
                a.training_load, a.hr_zone
         FROM activities a
-        WHERE a.type = 'running' AND a.run_type = 'long'
+        WHERE a.type IN ('running', 'track_running', 'trail_running') AND a.run_type = 'long'
         ORDER BY a.date DESC LIMIT 1
     """).fetchone()
 
@@ -292,7 +292,7 @@ def compute_heat_acclimatization(conn: sqlite3.Connection) -> dict | None:
     hot_runs = conn.execute("""
         SELECT date, speed_per_bpm, temp_at_start_c, humidity_at_start_pct
         FROM activities
-        WHERE type = 'running' AND temp_at_start_c IS NOT NULL
+        WHERE type IN ('running', 'track_running', 'trail_running') AND temp_at_start_c IS NOT NULL
             AND temp_at_start_c > 20
             AND date >= date('now', '-56 days')
         ORDER BY date
@@ -317,7 +317,7 @@ def compute_heat_acclimatization(conn: sqlite3.Connection) -> dict | None:
     race_temp = 15
     cool_runs = conn.execute("""
         SELECT AVG(speed_per_bpm) as avg_eff FROM activities
-        WHERE type = 'running' AND temp_at_start_c IS NOT NULL
+        WHERE type IN ('running', 'track_running', 'trail_running') AND temp_at_start_c IS NOT NULL
             AND temp_at_start_c BETWEEN 10 AND 20
             AND date >= date('now', '-56 days')
     """).fetchone()

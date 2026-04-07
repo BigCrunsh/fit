@@ -226,7 +226,7 @@ LEFT JOIN daily_health h ON a.date = h.date
 LEFT JOIN checkins c ON a.date = c.date
 LEFT JOIN weather w ON a.date = w.date
 LEFT JOIN body_comp b ON a.date = b.date
-WHERE a.type = 'running';
+WHERE a.type IN ('running', 'track_running', 'trail_running');
 
 CREATE VIEW IF NOT EXISTS v_all_training AS
 SELECT

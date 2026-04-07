@@ -441,7 +441,7 @@ def compute_plan_adherence(conn, week_str=None):
                hr_zone, effort_class, run_type, pace_sec_per_km
         FROM activities
         WHERE date BETWEEN ? AND ?
-          AND type = 'running'
+          AND type IN ('running', 'track_running', 'trail_running')
         ORDER BY date
     """, (week_start.isoformat(), week_end.isoformat())).fetchall()
     actuals = [dict(r) for r in actuals]
@@ -596,7 +596,7 @@ def _detect_systematic_override(conn, week_start):
     for d in easy_dates:
         activity = conn.execute("""
             SELECT hr_zone FROM activities
-            WHERE date = ? AND type = 'running' AND hr_zone IS NOT NULL
+            WHERE date = ? AND type IN ('running', 'track_running', 'trail_running') AND hr_zone IS NOT NULL
             ORDER BY duration_min DESC LIMIT 1
         """, (d,)).fetchone()
         if activity and activity["hr_zone"]:
@@ -688,13 +688,13 @@ def get_readiness_recommendation(conn, config):
     # Check for return-to-run (gap >= 14 days in last 30 days)
     gap_check = conn.execute("""
         SELECT MAX(date) as last_run FROM activities
-        WHERE type = 'running'
+        WHERE type IN ('running', 'track_running', 'trail_running')
           AND date < date('now', '-14 days')
           AND date >= date('now', '-60 days')
     """).fetchone()
     recent_run = conn.execute("""
         SELECT MIN(date) as first_recent FROM activities
-        WHERE type = 'running' AND date >= date('now', '-14 days')
+        WHERE type IN ('running', 'track_running', 'trail_running') AND date >= date('now', '-14 days')
     """).fetchone()
 
     if gap_check and gap_check["last_run"] and recent_run and recent_run["first_recent"]:
@@ -777,7 +777,7 @@ def get_upcoming_plan(conn, days=7):
                a.duration_min as actual_min, a.effort_class as actual_effort
         FROM planned_workouts pw
         LEFT JOIN activities a
-            ON pw.date = a.date AND a.type = 'running'
+            ON pw.date = a.date AND a.type IN ('running', 'track_running', 'trail_running')
         WHERE pw.date BETWEEN ? AND ?
           AND pw.plan_version = ?
           AND pw.status = 'active'

@@ -68,9 +68,9 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "race_prediction": _race_prediction(conn),
         "coaching": _coaching(conn),
         "recent_alerts": _recent_alerts(conn),
-        "rpe_checkin_count": conn.execute("SELECT COUNT(*) FROM activities WHERE type='running' AND rpe IS NOT NULL").fetchone()[0],
-        "rpe_garmin_count": conn.execute("SELECT COUNT(*) FROM activities WHERE type='running' AND aerobic_te IS NOT NULL AND date >= date('now', '-90 days')").fetchone()[0],
-        "run_count": conn.execute("SELECT COUNT(*) FROM activities WHERE type='running'").fetchone()[0],
+        "rpe_checkin_count": conn.execute("SELECT COUNT(*) FROM activities WHERE type IN ('running', 'track_running', 'trail_running') AND rpe IS NOT NULL").fetchone()[0],
+        "rpe_garmin_count": conn.execute("SELECT COUNT(*) FROM activities WHERE type IN ('running', 'track_running', 'trail_running') AND aerobic_te IS NOT NULL AND date >= date('now', '-90 days')").fetchone()[0],
+        "run_count": conn.execute("SELECT COUNT(*) FROM activities WHERE type IN ('running', 'track_running', 'trail_running')").fetchone()[0],
         "milestones": _milestones(conn),
         "goal_progress": _goal_progress(conn),
         "correlation_bars": _correlation_bars(conn),
@@ -351,7 +351,7 @@ def _week_over_week(conn):
 def _run_timeline(conn):
     runs = conn.execute("""
         SELECT date, distance_km, hr_zone, run_type, rpe FROM activities
-        WHERE type = 'running' ORDER BY date DESC LIMIT 12
+        WHERE type IN ('running', 'track_running', 'trail_running') ORDER BY date DESC LIMIT 12
     """).fetchall()
     max_km = max((r["distance_km"] or 0 for r in runs), default=1) or 1
     result = []
@@ -404,7 +404,7 @@ def _all_charts(conn):
         })})
 
     # Load (Training tab)
-    runs = conn.execute("SELECT date, training_load FROM activities WHERE type='running' AND training_load IS NOT NULL ORDER BY date").fetchall()
+    runs = conn.execute("SELECT date, training_load FROM activities WHERE type IN ('running', 'track_running', 'trail_running') AND training_load IS NOT NULL ORDER BY date").fetchall()
     if runs:
         colors = [Z12 + "99" if (r["training_load"] or 0) < 150 else Z3 + "99" if r["training_load"] < 250 else Z45 + "99" if r["training_load"] < 350 else DANGER + "99" for r in runs]
         charts.append({"id": "chart-load", "config": json.dumps({
@@ -551,7 +551,7 @@ def _all_charts(conn):
         })})
 
     # Speed per BPM (Fitness tab — hero chart)
-    eff = conn.execute("SELECT date, speed_per_bpm, speed_per_bpm_z2 FROM activities WHERE type='running' AND speed_per_bpm IS NOT NULL AND date >= date('now','-90 days') ORDER BY date").fetchall()
+    eff = conn.execute("SELECT date, speed_per_bpm, speed_per_bpm_z2 FROM activities WHERE type IN ('running', 'track_running', 'trail_running') AND speed_per_bpm IS NOT NULL AND date >= date('now','-90 days') ORDER BY date").fetchall()
     if eff:
         charts.append({"id": "chart-efficiency", "config": json.dumps({
             "type": "line",
@@ -632,7 +632,7 @@ def _all_charts(conn):
         SELECT strftime('%Y-W', date, 'weekday 0', '-6 days') ||
                substr('0' || (cast(strftime('%W', date) as integer)), -2) as week,
                run_type, COUNT(*) as n
-        FROM activities WHERE type = 'running' AND run_type IS NOT NULL
+        FROM activities WHERE type IN ('running', 'track_running', 'trail_running') AND run_type IS NOT NULL
         GROUP BY week, run_type ORDER BY week
     """).fetchall()
     if type_weeks:
@@ -660,7 +660,7 @@ def _all_charts(conn):
     # Cadence trend (Fitness tab — W3)
     cadence = conn.execute("""
         SELECT date, avg_cadence FROM activities
-        WHERE type='running' AND avg_cadence IS NOT NULL AND date >= date('now','-90 days')
+        WHERE type IN ('running', 'track_running', 'trail_running') AND avg_cadence IS NOT NULL AND date >= date('now','-90 days')
         ORDER BY date
     """).fetchall()
     if cadence:
@@ -683,7 +683,7 @@ def _all_charts(conn):
         SELECT a.date, a.rpe as actual_rpe, a.aerobic_te,
                ROUND(a.aerobic_te * 2, 1) as garmin_rpe
         FROM activities a
-        WHERE a.type='running' AND a.aerobic_te IS NOT NULL
+        WHERE a.type IN ('running', 'track_running', 'trail_running') AND a.aerobic_te IS NOT NULL
         AND a.date >= date('now', '-90 days')
         ORDER BY a.date
     """).fetchall()
@@ -896,7 +896,7 @@ def _definitions(conn):
     avg_sleep_val = avg_sleep["v"] if avg_sleep and avg_sleep["v"] else "?"
     avg_deep = conn.execute("SELECT ROUND(AVG(deep_sleep_hours), 2) as v FROM daily_health WHERE date >= date('now', '-14 days')").fetchone()
     avg_deep_val = avg_deep["v"] if avg_deep and avg_deep["v"] else "?"
-    avg_cadence = conn.execute("SELECT ROUND(AVG(avg_cadence), 0) as v FROM activities WHERE type='running' AND avg_cadence IS NOT NULL AND date >= date('now', '-30 days')").fetchone()
+    avg_cadence = conn.execute("SELECT ROUND(AVG(avg_cadence), 0) as v FROM activities WHERE type IN ('running', 'track_running', 'trail_running') AND avg_cadence IS NOT NULL AND date >= date('now', '-30 days')").fetchone()
     avg_cadence_val = avg_cadence["v"] if avg_cadence and avg_cadence["v"] else "?"
     avg_stress = conn.execute("SELECT ROUND(AVG(avg_stress_level), 0) as v FROM daily_health WHERE date >= date('now', '-7 days')").fetchone()
     avg_stress_val = avg_stress["v"] if avg_stress and avg_stress["v"] else "?"
@@ -1409,7 +1409,7 @@ def _split_data(conn):
         run = conn.execute("""
             SELECT a.id, a.name, a.date, a.distance_km, a.duration_min
             FROM activities a
-            WHERE a.type = 'running' AND a.splits_status = 'parsed'
+            WHERE a.type IN ('running', 'track_running', 'trail_running') AND a.splits_status = 'parsed'
             ORDER BY a.date DESC LIMIT 1
         """).fetchone()
         if not run:

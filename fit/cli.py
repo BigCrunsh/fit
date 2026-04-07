@@ -85,7 +85,7 @@ def splits(backfill: bool, activity_id: str):
         elif backfill:
             rows = conn.execute("""
                 SELECT id FROM activities
-                WHERE type = 'running' AND (splits_status IS NULL OR splits_status = 'download_failed')
+                WHERE type IN ('running', 'track_running', 'trail_running') AND (splits_status IS NULL OR splits_status = 'download_failed')
                 ORDER BY date DESC LIMIT ?
             """, (max_downloads,)).fetchall()
             console.print(f"[bold]Processing {len(rows)} activities (max {max_downloads} per batch)...[/bold]")

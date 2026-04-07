@@ -102,7 +102,7 @@ def get_health_summary(days: int = 7) -> str:
 
         run_count = conn.execute("""
             SELECT COUNT(*) FROM activities
-            WHERE type = 'running' AND date >= date('now', ?)
+            WHERE type IN ('running', 'track_running', 'trail_running') AND date >= date('now', ?)
         """, (f"-{days} days",)).fetchone()[0]
 
         weight = conn.execute("""
@@ -286,18 +286,18 @@ def _ctx_training(conn) -> list[str]:
             s.append(f"  Phase Z1+Z2 target: {phase['z12_pct_target']}%")
     types = conn.execute("""
         SELECT run_type, COUNT(*) as n FROM activities
-        WHERE type = 'running' AND date >= date('now', '-28 days')
+        WHERE type IN ('running', 'track_running', 'trail_running') AND date >= date('now', '-28 days')
         GROUP BY run_type ORDER BY n DESC
     """).fetchall()
     if types:
         s.append("Run types (4wk): " + ", ".join(f"{r['run_type']}:{r['n']}" for r in types))
     spb = conn.execute("""
         SELECT ROUND(AVG(speed_per_bpm), 3) as recent FROM activities
-        WHERE type = 'running' AND speed_per_bpm IS NOT NULL AND date >= date('now', '-28 days')
+        WHERE type IN ('running', 'track_running', 'trail_running') AND speed_per_bpm IS NOT NULL AND date >= date('now', '-28 days')
     """).fetchone()
     spb_prev = conn.execute("""
         SELECT ROUND(AVG(speed_per_bpm), 3) as prev FROM activities
-        WHERE type = 'running' AND speed_per_bpm IS NOT NULL
+        WHERE type IN ('running', 'track_running', 'trail_running') AND speed_per_bpm IS NOT NULL
         AND date BETWEEN date('now', '-56 days') AND date('now', '-29 days')
     """).fetchone()
     if spb and spb["recent"]:
@@ -341,7 +341,7 @@ def _ctx_splits(conn) -> list[str]:
         act = conn.execute("""
             SELECT a.id, a.date, a.name, a.distance_km, a.temp_at_start_c, a.humidity_at_start_pct
             FROM activities a
-            WHERE a.type = 'running' AND a.splits_status = 'done'
+            WHERE a.type IN ('running', 'track_running', 'trail_running') AND a.splits_status = 'done'
             ORDER BY a.date DESC LIMIT 1
         """).fetchone()
         if not act:

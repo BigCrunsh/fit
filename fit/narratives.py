@@ -35,12 +35,12 @@ def generate_trend_badges(conn: sqlite3.Connection) -> list[dict]:
     # Efficiency: compare last 4 weeks avg vs prior 4 weeks
     eff_recent = conn.execute("""
         SELECT AVG(speed_per_bpm_z2) as avg_eff FROM activities
-        WHERE type='running' AND speed_per_bpm_z2 IS NOT NULL
+        WHERE type IN ('running', 'track_running', 'trail_running') AND speed_per_bpm_z2 IS NOT NULL
         AND date >= date('now', '-28 days')
     """).fetchone()
     eff_prior = conn.execute("""
         SELECT AVG(speed_per_bpm_z2) as avg_eff FROM activities
-        WHERE type='running' AND speed_per_bpm_z2 IS NOT NULL
+        WHERE type IN ('running', 'track_running', 'trail_running') AND speed_per_bpm_z2 IS NOT NULL
         AND date >= date('now', '-56 days') AND date < date('now', '-28 days')
     """).fetchone()
 
@@ -138,7 +138,7 @@ def generate_why_connectors(conn: sqlite3.Connection) -> list[dict]:
     run_count = conn.execute("""
         SELECT COUNT(*) as n FROM activities a
         JOIN checkins c ON a.date = c.date OR c.date = date(a.date, '-1 day')
-        WHERE a.type = 'running' AND a.speed_per_bpm IS NOT NULL
+        WHERE a.type IN ('running', 'track_running', 'trail_running') AND a.speed_per_bpm IS NOT NULL
     """).fetchone()
 
     if not run_count or run_count["n"] < 10:
@@ -154,7 +154,7 @@ def generate_why_connectors(conn: sqlite3.Connection) -> list[dict]:
                c.sleep_quality, c.alcohol, c.alcohol_detail
         FROM activities a
         LEFT JOIN checkins c ON c.date = date(a.date, '-1 day')
-        WHERE a.type = 'running' AND a.speed_per_bpm IS NOT NULL
+        WHERE a.type IN ('running', 'track_running', 'trail_running') AND a.speed_per_bpm IS NOT NULL
         ORDER BY a.speed_per_bpm ASC LIMIT 5
     """).fetchall()
 
@@ -415,7 +415,7 @@ def detect_walk_break_need(conn: sqlite3.Connection) -> dict | None:
         SELECT id, date, distance_km, duration_min, pace_sec_per_km,
                avg_hr, speed_per_bpm
         FROM activities
-        WHERE type = 'running' AND hr_zone IN ('Z1', 'Z2')
+        WHERE type IN ('running', 'track_running', 'trail_running') AND hr_zone IN ('Z1', 'Z2')
         AND date >= date('now', '-42 days')
         ORDER BY date DESC LIMIT 10
     """).fetchall()
@@ -510,7 +510,7 @@ def generate_z2_remediation(conn: sqlite3.Connection, config: dict) -> dict | No
     # Calculate target pace from recent Z2 runs
     z2_pace = conn.execute("""
         SELECT AVG(pace_sec_per_km) as avg_pace FROM activities
-        WHERE type='running' AND hr_zone IN ('Z1', 'Z2')
+        WHERE type IN ('running', 'track_running', 'trail_running') AND hr_zone IN ('Z1', 'Z2')
         AND date >= date('now', '-21 days')
     """).fetchone()
 

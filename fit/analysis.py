@@ -529,7 +529,7 @@ def detect_training_gap(conn: sqlite3.Connection) -> dict | None:
     Returns dict with gap info and volume cap recommendations, or None if no gap.
     """
     last_run = conn.execute(
-        "SELECT MAX(date) as last_date FROM activities WHERE type='running'"
+        "SELECT MAX(date) as last_date FROM activities WHERE type IN ('running', 'track_running', 'trail_running')"
     ).fetchone()
 
     if not last_run or not last_run["last_date"]:
@@ -547,7 +547,7 @@ def detect_training_gap(conn: sqlite3.Connection) -> dict | None:
         SELECT AVG(weekly_km) as avg_km FROM (
             SELECT SUM(distance_km) as weekly_km
             FROM activities
-            WHERE type='running' AND date BETWEEN ? AND ?
+            WHERE type IN ('running', 'track_running', 'trail_running') AND date BETWEEN ? AND ?
             GROUP BY strftime('%Y-W%W', date)
         )
     """, (pre_gap_start.isoformat(), last_run["last_date"])).fetchone()

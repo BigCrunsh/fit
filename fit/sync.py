@@ -282,7 +282,7 @@ def _match_race_calendar(conn: sqlite3.Connection) -> None:
     for rc in unmatched:
         activity = conn.execute("""
             SELECT id, distance_km, duration_min FROM activities
-            WHERE date = ? AND type = 'running' ORDER BY distance_km DESC LIMIT 1
+            WHERE date = ? AND type IN ('running', 'track_running', 'trail_running') ORDER BY distance_km DESC LIMIT 1
         """, (rc["date"],)).fetchone()
         if activity:
             dur = activity["duration_min"] or 0
