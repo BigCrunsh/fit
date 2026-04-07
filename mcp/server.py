@@ -247,8 +247,22 @@ def _ctx_profile(conn) -> list[str]:
 
 
 def _ctx_health(conn) -> list[str]:
-    """Recent health metrics, ACWR."""
+    """Recent health metrics, ACWR, today's activity."""
     s = []
+    # Today's completed activity (so coaching knows what was already done)
+    from datetime import date as _date
+    today_runs = conn.execute("""
+        SELECT name, distance_km, duration_min, avg_hr, hr_zone, run_type, pace_sec_per_km
+        FROM activities
+        WHERE type IN ('running', 'track_running', 'trail_running') AND date = date('now')
+    """).fetchall()
+    if today_runs:
+        for r in today_runs:
+            pace = f"{int(r['pace_sec_per_km']//60)}:{int(r['pace_sec_per_km']%60):02d}" if r["pace_sec_per_km"] else "?"
+            s.append(f"TODAY's run (COMPLETED): {r['name']} — {r['distance_km']}km, {pace}/km, HR {r['avg_hr']}, {r['hr_zone']}, {r['run_type']}")
+    else:
+        s.append("No run today (yet)")
+
     acwr_safe = config.get("analysis", {}).get("acwr_safe_range", [0.8, 1.3])
     acwr_danger = config.get("analysis", {}).get("acwr_danger_threshold", 1.5)
     acwr_row = conn.execute("SELECT week, acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
