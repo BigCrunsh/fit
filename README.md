@@ -129,19 +129,23 @@ The dashboard's data health panel shows which sources are active, stale, or miss
 
 | Command | Description |
 |---------|-------------|
-| `fit sync [--days N] [--full]` | Pull Garmin data, enrich with weather + zones + ACWR, compute weekly agg |
-| `fit checkin` | Interactive check-in: hydration, legs, eating, energy, sleep quality, RPE, weight |
+| `fit sync [--days N] [--full] [--splits]` | Pull Garmin data, enrich, weather, sRPE, monotony/strain, plan sync, correlations, alerts |
+| `fit checkin` | Interactive check-in: hydration, legs, eating, energy, sleep quality, RPE, weight + sRPE |
 | `fit report [--daily] [--weekly]` | Generate HTML dashboard (5 tabs: Today/Training/Body/Fitness/Coach) |
-| `fit status` | Quick overview: data counts, calibration, data health, phase, ACWR, streak, goals |
-| `fit doctor` | Validate data pipeline: schema, tables, weekly_agg freshness, calibration, data sources, correlations |
-| `fit correlate` | Compute cross-domain Spearman correlations (5 pairs: alcohol/sleep/temp/water vs HRV/RHR/readiness/efficiency) |
+| `fit status` | Race countdown, objective progress, phase position, ACWR, streak |
+| `fit doctor` | Validate pipeline: schema (9 migrations), 16 tables, freshness, calibrations, correlations |
+| `fit correlate` | Compute Spearman correlations (6 pairs + rolling 8-week windows with effect size filter) |
 | `fit recompute [--all]` | Re-enrich all activities and rebuild weekly aggregations |
 | `fit calibrate max_hr` | Calibrate max HR from race observation |
 | `fit calibrate lthr` | Calibrate LTHR from 30-min time trial |
 | `fit races` | Show race calendar with match status, official times, and Garmin times |
 | `fit goal add` | Add a new goal interactively (race, metric, or habit type) |
-| `fit goal list` | Show all active goals with live progress (VO2max %, weight, streak) |
+| `fit goal list` | Show all active goals with progress linked to target race |
 | `fit goal complete <id>` | Mark a goal as achieved |
+| `fit plan` | Show next 7 days of planned workouts (auto-synced from Runna/Garmin) |
+| `fit plan import <file>` | Import planned workouts from CSV (equally robust fallback) |
+| `fit plan validate <file>` | Dry-run validate CSV format |
+| `fit splits --backfill` | Batch download + parse .fit files for per-km splits (rate-limited) |
 
 ## Dashboard
 
@@ -207,7 +211,7 @@ The coaching context explicitly includes configured zone boundaries so Claude ne
 
 ## Database
 
-SQLite at `~/.fit/fitness.db`. 14 tables, 2 views:
+SQLite at `~/.fit/fitness.db`. 16 tables, 2 views:
 
 | Table | Key data |
 |-------|----------|
@@ -216,14 +220,16 @@ SQLite at `~/.fit/fitness.db`. 14 tables, 2 views:
 | checkins | Hydration, legs, eating, energy, sleep quality, RPE, weight |
 | body_comp | Weight measurements from Fitdays/Apple Health/check-ins |
 | weather | Daily weather data from Open-Meteo |
-| weekly_agg | Run metrics, cross-training, ACWR, zone distribution by time, consistency streak |
+| weekly_agg | Run metrics, cross-training, ACWR, monotony/strain, cycling_km, zone distribution, streak |
 | training_phases | Phased targets + actuals, phase lifecycle (planned → active → completed/revised) |
 | calibration | Max HR, LTHR, weight — with staleness tracking and retest prompts |
 | goals / goal_log | Active goals + append-only event history |
 | correlations | Spearman rank correlations between health/behavior/performance pairs |
-| alerts | Threshold-based coaching alerts (volume ramp, zone compliance, readiness gate, alcohol+HRV) |
-| race_calendar | Race registry with official results, target times, and Garmin activity matching |
+| alerts | Coaching alerts: volume ramp, zone compliance, readiness gate (adaptive), SpO2, deload overdue |
+| race_calendar | Race registry with results, target times, Garmin matching, garmin_time, activity_id FK |
+| activity_splits | Per-km splits from .fit files: pace, HR, cadence, zone time, elevation |
+| planned_workouts | Runna plan sync (from Garmin Calendar + CSV), plan adherence, versioning |
 | import_log | CSV import tracking (filename, hash, row counts) for deduplication |
-| schema_version | Migration version tracking |
+| schema_version | Migration version tracking (9 migrations) |
 
 Views: `v_run_days` (activities + health + checkin + weather + body_comp joined), `v_all_training` (all activity types).
