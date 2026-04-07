@@ -4,12 +4,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-SAFE = "#22c55e"
-CAUTION = "#eab308"
-DANGER = "#ef4444"
-Z12 = "#38bdf8"
-Z3 = "#f59e0b"
-Z45 = "#f97316"
+SAFE = "#34d399"
+CAUTION = "#fbbf24"
+DANGER = "#f87171"
+Z1 = "#93c5fd"
+Z2 = "#60a5fa"
+Z3 = "#fbbf24"
+Z4 = "#f97316"
+Z5 = "#ef4444"
 ACCENT = "#818cf8"
 
 

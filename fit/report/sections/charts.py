@@ -6,12 +6,14 @@ from datetime import date
 
 logger = logging.getLogger(__name__)
 
-SAFE = "#22c55e"
-CAUTION = "#eab308"
-DANGER = "#ef4444"
-Z12 = "#38bdf8"
-Z3 = "#f59e0b"
-Z45 = "#f97316"
+SAFE = "#34d399"
+CAUTION = "#fbbf24"
+DANGER = "#f87171"
+Z1 = "#93c5fd"
+Z2 = "#60a5fa"
+Z3 = "#fbbf24"
+Z4 = "#f97316"
+Z5 = "#ef4444"
 ACCENT = "#818cf8"
 
 
@@ -49,7 +51,7 @@ def _all_charts(conn):
     # Load (Training tab)
     runs = conn.execute("SELECT date, training_load FROM activities WHERE type IN ('running', 'track_running', 'trail_running') AND training_load IS NOT NULL ORDER BY date").fetchall()
     if runs:
-        colors = [Z12 + "99" if (r["training_load"] or 0) < 150 else Z3 + "99" if r["training_load"] < 250 else Z45 + "99" if r["training_load"] < 350 else DANGER + "99" for r in runs]
+        colors = [Z2 + "99" if (r["training_load"] or 0) < 150 else Z3 + "99" if r["training_load"] < 250 else Z4 + "99" if r["training_load"] < 350 else DANGER + "99" for r in runs]
         charts.append({"id": "chart-load", "config": json.dumps({
             "type": "bar",
             "data": {"labels": [r["date"] for r in runs],
@@ -173,10 +175,29 @@ def _all_charts(conn):
                 "borderColor": SAFE + "60", "borderDash": [6, 3],
                 "label": {"content": f"Target {weight_target['target_value']}kg", "display": True, "position": "end", "font": {"size": 8}},
             }
-        datasets = [{"label": "Weight", "data": [w["weight_kg"] for w in weight],
-                      "borderColor": Z3, "backgroundColor": Z3 + "15", "fill": True, "borderWidth": 2, "pointRadius": 3, "yAxisID": "y"}]
+        # Insert nulls in gaps >30 days to break the line
+        weight_labels = []
+        weight_data = []
+        bf_raw = []
+        prev_date = None
+        for w in weight:
+            if prev_date:
+                gap = (date.fromisoformat(w["date"]) - date.fromisoformat(prev_date)).days
+                if gap > 30:
+                    # Insert a null point to break the line
+                    weight_labels.append("")
+                    weight_data.append(None)
+                    bf_raw.append(None)
+            weight_labels.append(w["date"])
+            weight_data.append(w["weight_kg"])
+            bf_raw.append(w["body_fat_pct"])
+            prev_date = w["date"]
+
+        datasets = [{"label": "Weight", "data": weight_data,
+                      "borderColor": Z3, "backgroundColor": Z3 + "15", "fill": True,
+                      "borderWidth": 2, "pointRadius": 3, "yAxisID": "y", "spanGaps": False}]
         # Body fat second y-axis if data exists
-        bf_data = [w["body_fat_pct"] for w in weight]
+        bf_data = bf_raw
         has_bf = any(v is not None for v in bf_data)
         scales = {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
                   "y": {"grid": {"color": "rgba(255,255,255,0.03)"}, "position": "left", "title": {"display": True, "text": "kg"}}}
@@ -187,7 +208,7 @@ def _all_charts(conn):
                             "title": {"display": True, "text": "%"}, "min": 5, "max": 30}
         charts.append({"id": "chart-weight", "config": json.dumps({
             "type": "line",
-            "data": {"labels": [w["date"] for w in weight], "datasets": datasets},
+            "data": {"labels": weight_labels, "datasets": datasets},
             "options": {"responsive": True, "plugins": {"legend": {"display": has_bf, "position": "bottom", "labels": {"boxWidth": 12}},
                                                          "annotation": {"annotations": weight_annots}},
                         "scales": scales}
@@ -200,7 +221,7 @@ def _all_charts(conn):
             "type": "line",
             "data": {"labels": [e["date"] for e in eff],
                      "datasets": [
-                         {"label": "All runs", "data": [e["speed_per_bpm"] for e in eff], "borderColor": Z3 + "50", "borderWidth": 1.5, "pointRadius": 2, "pointBackgroundColor": Z3 + "40", "fill": False},
+                         {"label": "All runs", "data": [e["speed_per_bpm"] for e in eff], "borderColor": Z3 + "99", "borderWidth": 1.5, "pointRadius": 3, "pointBackgroundColor": Z3 + "80", "fill": False},
                          {"label": "Z2 only (key signal)", "data": [e["speed_per_bpm_z2"] for e in eff], "borderColor": ACCENT, "borderWidth": 2.5, "pointRadius": 4, "fill": False, "spanGaps": True},
                      ]},
             "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}},
@@ -234,9 +255,11 @@ def _all_charts(conn):
             "type": "bar",
             "data": {"labels": [w["week"] for w in zone_weeks],
                      "datasets": [
-                         {"label": f"Z1+Z2{phase_note}", "data": [(w["z1_min"] or 0) + (w["z2_min"] or 0) for w in zone_weeks], "backgroundColor": Z12 + "80", "stack": "s"},
-                         {"label": "Z3", "data": [w["z3_min"] or 0 for w in zone_weeks], "backgroundColor": Z3 + "80", "stack": "s"},
-                         {"label": "Z4+Z5", "data": [(w["z4_min"] or 0) + (w["z5_min"] or 0) for w in zone_weeks], "backgroundColor": Z45 + "80", "stack": "s"},
+                         {"label": f"Z1 Recovery{phase_note}", "data": [w["z1_min"] or 0 for w in zone_weeks], "backgroundColor": Z1 + "80", "stack": "s"},
+                         {"label": "Z2 Easy", "data": [w["z2_min"] or 0 for w in zone_weeks], "backgroundColor": Z2 + "80", "stack": "s"},
+                         {"label": "Z3 Moderate", "data": [w["z3_min"] or 0 for w in zone_weeks], "backgroundColor": Z3 + "80", "stack": "s"},
+                         {"label": "Z4 Hard", "data": [w["z4_min"] or 0 for w in zone_weeks], "backgroundColor": Z4 + "80", "stack": "s"},
+                         {"label": "Z5 Very Hard", "data": [w["z5_min"] or 0 for w in zone_weeks], "backgroundColor": Z5 + "80", "stack": "s"},
                      ]},
             "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
                         "scales": {"x": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}},
@@ -301,7 +324,7 @@ def _all_charts(conn):
                 count = sum(r["n"] for r in type_weeks if r["week"] == w and r["run_type"] == t)
                 data.append(count)
             if any(d > 0 for d in data):
-                datasets.append({"label": t, "data": data, "backgroundColor": type_colors.get(t, Z12), "stack": "s"})
+                datasets.append({"label": t, "data": data, "backgroundColor": type_colors.get(t, Z2), "stack": "s"})
         if datasets:
             charts.append({"id": "chart-runtypes", "config": json.dumps({
                 "type": "bar",
@@ -323,7 +346,7 @@ def _all_charts(conn):
             "type": "line",
             "data": {"labels": [c["date"] for c in cadence],
                      "datasets": [{"label": "Cadence (spm)", "data": [c["avg_cadence"] for c in cadence],
-                                   "borderColor": Z12, "borderWidth": 2, "pointRadius": 3, "fill": False}]},
+                                   "borderColor": Z2, "borderWidth": 2, "pointRadius": 3, "fill": False}]},
             "options": {"responsive": True, "plugins": {"legend": {"display": False},
                         "annotation": {"annotations": {**event_annots, "threshold": {"type": "line", "yMin": 165, "yMax": 165,
                                        "borderColor": CAUTION + "60", "borderDash": [6, 3],
@@ -345,13 +368,13 @@ def _all_charts(conn):
     if len(rpe_data) >= 3:
         datasets = [
             {"label": "Garmin Effort (TE×2)", "data": [r["garmin_rpe"] for r in rpe_data],
-             "borderColor": Z12, "borderWidth": 1.5, "borderDash": [4, 2], "pointRadius": 2, "fill": False},
+             "borderColor": Z2, "borderWidth": 1.5, "borderDash": [4, 2], "pointRadius": 2, "fill": False},
         ]
         # Add actual RPE line if any check-in RPE data exists
         actual_rpes = [r["actual_rpe"] for r in rpe_data]
         if any(v is not None for v in actual_rpes):
             datasets.append({"label": "Your RPE (checkin)", "data": actual_rpes,
-                             "borderColor": Z45, "borderWidth": 2, "pointRadius": 4, "fill": False,
+                             "borderColor": Z4, "borderWidth": 2, "pointRadius": 4, "fill": False,
                              "spanGaps": True})
         charts.append({"id": "chart-rpe", "config": json.dumps({
             "type": "line",
@@ -542,7 +565,7 @@ def _all_charts(conn):
                     elif v["status"] == "missed":
                         colors.append("#64748b80")        # gray = not done yet
                     elif v["status"] == "unplanned":
-                        colors.append(Z12 + "80")         # blue = extra run
+                        colors.append(Z2 + "80")         # blue = extra run
                     else:
                         colors.append(Z3 + "80")
 

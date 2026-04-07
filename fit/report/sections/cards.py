@@ -20,12 +20,14 @@ from fit.narratives import (
 
 logger = logging.getLogger(__name__)
 
-SAFE = "#22c55e"
-CAUTION = "#eab308"
-DANGER = "#ef4444"
-Z12 = "#38bdf8"
-Z3 = "#f59e0b"
-Z45 = "#f97316"
+SAFE = "#34d399"
+CAUTION = "#fbbf24"
+DANGER = "#f87171"
+Z1 = "#93c5fd"
+Z2 = "#60a5fa"
+Z3 = "#fbbf24"
+Z4 = "#f97316"
+Z5 = "#ef4444"
 ACCENT = "#818cf8"
 
 
@@ -279,7 +281,7 @@ def _run_timeline(conn):
     for r in runs:
         km = r["distance_km"] or 0
         zone = r["hr_zone"] or "Z2"
-        color = Z12 if zone in ("Z1", "Z2") else Z3 if zone == "Z3" else Z45
+        color = Z2 if zone in ("Z1", "Z2") else Z3 if zone == "Z3" else Z4
         # Detect gap from previous run (list is DESC, so prev_date is more recent)
         gap_days = None
         if prev_date:
@@ -350,7 +352,7 @@ def _coaching(conn):
 
     styles = {
         "critical": {"bg": "rgba(239,68,68,0.06)", "border": "rgba(239,68,68,0.15)", "color": DANGER, "icon": "🚨"},
-        "warning": {"bg": "rgba(249,115,22,0.06)", "border": "rgba(249,115,22,0.15)", "color": Z45, "icon": "⚠️"},
+        "warning": {"bg": "rgba(249,115,22,0.06)", "border": "rgba(249,115,22,0.15)", "color": Z4, "icon": "⚠️"},
         "positive": {"bg": "rgba(34,197,94,0.06)", "border": "rgba(34,197,94,0.15)", "color": SAFE, "icon": "✅"},
         "info": {"bg": "rgba(59,130,246,0.06)", "border": "rgba(59,130,246,0.15)", "color": "#3b82f6", "icon": "📊"},
         "target": {"bg": "rgba(167,139,250,0.06)", "border": "rgba(167,139,250,0.15)", "color": ACCENT, "icon": "🎯"},

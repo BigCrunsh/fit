@@ -53,14 +53,14 @@
 
 ## 7. Global Color Palette + Readability
 
-- [ ] 7.1 Define 5-zone CSS variables: Z1=#93c5fd, Z2=#60a5fa, Z3=#fbbf24, Z4=#f97316, Z5=#ef4444
-- [ ] 7.2 Update all chart generators to use 5 zones (not grouped Z1+Z2/Z4+Z5)
-- [ ] 7.3 Align run type colors with zone palette
-- [ ] 7.4 Set Chart.defaults.font.size = 12
-- [ ] 7.5 Enforce minimum 60% opacity on all data lines
-- [ ] 7.6 Max 2 datasets per chart — split any with 3+
-- [ ] 7.7 Weight chart: don't connect across >30 day gaps
-- [ ] 7.8 Test: all charts readable on dark background
+- [x] 7.1 Define 5-zone CSS variables: Z1=#93c5fd, Z2=#60a5fa, Z3=#fbbf24, Z4=#f97316, Z5=#ef4444
+- [x] 7.2 Update all chart generators to use 5 zones (not grouped Z1+Z2/Z4+Z5)
+- [x] 7.3 Align run type colors with zone palette
+- [x] 7.4 Set Chart.defaults.font.size = 12
+- [x] 7.5 Enforce minimum 60% opacity on all data lines
+- [x] 7.6 Max 2 datasets per chart — split any with 3+
+- [x] 7.7 Weight chart: don't connect across >30 day gaps
+- [x] 7.8 Test: all charts readable on dark background
 
 ## 8. Dashboard Redesign: Metric Cards
 

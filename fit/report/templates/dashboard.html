@@ -9,8 +9,12 @@
   --bg: #07070c; --surface: rgba(255,255,255,0.025); --border: rgba(255,255,255,0.06);
   --text: #e2e8f0; --text-muted: #64748b; --text-dim: #475569; --text-faint: #334155;
   --mono: 'JetBrains Mono', monospace; --sans: 'DM Sans', 'Helvetica Neue', sans-serif;
-  --safe: #22c55e; --caution: #eab308; --danger: #ef4444;
-  --z12: #38bdf8; --z3: #f59e0b; --z45: #f97316; --accent: #818cf8;
+  /* Safety palette */
+  --safe: #34d399; --caution: #fbbf24; --danger: #f87171;
+  /* 5-zone palette */
+  --z1: #93c5fd; --z2: #60a5fa; --z3: #fbbf24; --z4: #f97316; --z5: #ef4444;
+  /* Semantic */
+  --accent: #818cf8; --emerald: #34d399; --purple: #c084fc;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family: var(--sans); background: var(--bg); color: var(--text); min-height: 100vh; padding: 18px 14px; max-width: 900px; margin: 0 auto; }
@@ -607,7 +611,7 @@ function showTab(id, btn) {
 }
 Chart.defaults.color = '#475569';
 Chart.defaults.font.family = "'JetBrains Mono', monospace";
-Chart.defaults.font.size = 10;
+Chart.defaults.font.size = 12;
 // Annotation collision handling: stack vertically with 2px offset, max 3 per point
 function resolveAnnotationCollisions(annotations) {
   if (!annotations) return annotations;
