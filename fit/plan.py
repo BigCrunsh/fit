@@ -486,6 +486,13 @@ def compute_plan_adherence(conn, week_str=None):
                     best["distance_km"] - p["target_distance_km"], 2
                 )
 
+            # Zone/intensity compliance
+            zone_match = _zone_compatible(p["workout_type"], best.get("hr_zone"))
+            intensity_override = (
+                p["workout_type"] in ("easy", "recovery")
+                and best.get("hr_zone") in ("Z3", "Z4", "Z5")
+            )
+
             matches.append({
                 "planned": p,
                 "actual": best,
@@ -493,6 +500,11 @@ def compute_plan_adherence(conn, week_str=None):
                 "type_match": _types_compatible(
                     p["workout_type"], best.get("effort_class")
                 ),
+                "zone_match": zone_match,
+                "intensity_override": intensity_override,
+                "actual_zone": best.get("hr_zone"),
+                "actual_hr": best.get("avg_hr"),
+                "actual_pace": best.get("pace_sec_per_km"),
                 "rest_day": False,
             })
             matched_planned_ids.add(p["id"])
@@ -568,6 +580,23 @@ def _types_compatible(planned_type, effort_class):
     }
     allowed = compat.get(planned_type, ())
     return effort_class in allowed
+
+
+def _zone_compatible(planned_type, actual_zone):
+    """Check if actual HR zone matches what the planned workout type expects."""
+    if not actual_zone:
+        return True  # no data to judge
+
+    expected_zones = {
+        "easy": ("Z1", "Z2"),
+        "recovery": ("Z1", "Z2"),
+        "long": ("Z1", "Z2", "Z3"),  # long runs can be Z2-Z3
+        "tempo": ("Z3", "Z4"),
+        "intervals": ("Z4", "Z5"),
+        "progression": ("Z2", "Z3", "Z4"),
+    }
+    allowed = expected_zones.get(planned_type, ())
+    return actual_zone in allowed
 
 
 def _detect_systematic_override(conn, week_start):

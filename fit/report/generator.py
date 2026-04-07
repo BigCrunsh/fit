@@ -638,7 +638,15 @@ def _all_charts(conn):
     if type_weeks:
         weeks_set = sorted({r["week"] for r in type_weeks})[-12:]  # last 12 weeks
         type_names = ["easy", "long", "tempo", "intervals", "recovery", "race"]
-        type_colors = {"easy": Z12, "long": Z12 + "CC", "tempo": Z3, "intervals": Z45, "recovery": Z12 + "66", "race": Z45 + "CC"}
+        # Distinct colors: blue family for easy, warm for hard, purple for race
+        type_colors = {
+            "easy": "#60a5fa",         # bright blue
+            "recovery": "#93c5fd80",   # light blue (faded)
+            "long": "#34d399",         # emerald green (distinct from easy)
+            "tempo": "#fbbf24",        # amber/yellow
+            "intervals": "#f97316",    # orange
+            "race": "#c084fc",         # purple (clearly different from orange)
+        }
         datasets = []
         for t in type_names:
             data = []
@@ -858,7 +866,14 @@ def _all_charts(conn):
                 d = m.get("planned", {}).get("date", "")
                 if d in day_data and m.get("actual"):
                     day_data[d]["actual_km"] = m["actual"].get("distance_km") or 0
-                    day_data[d]["status"] = "matched"
+                    # Color by zone compliance, not just distance
+                    if m.get("intensity_override"):
+                        day_data[d]["status"] = "override"  # planned easy, ran hard
+                    elif m.get("zone_match", True):
+                        day_data[d]["status"] = "matched"  # right zone
+                    else:
+                        day_data[d]["status"] = "zone_mismatch"  # wrong zone
+                    day_data[d]["zone_info"] = f"HR {m.get('actual_hr', '?')} {m.get('actual_zone', '?')}"
             for u in adherence.get("unplanned", []):
                 d = u.get("date", "")
                 day_data.setdefault(d, {"planned_km": 0, "actual_km": 0, "status": "unplanned"})
@@ -872,11 +887,15 @@ def _all_charts(conn):
                 colors = []
                 for _, v in sorted_days:
                     if v["status"] == "matched":
-                        colors.append(SAFE + "80")
+                        colors.append(SAFE + "80")        # green = right zone
+                    elif v["status"] == "override":
+                        colors.append(DANGER + "80")      # red = planned easy, ran hard
+                    elif v["status"] == "zone_mismatch":
+                        colors.append(CAUTION + "80")     # yellow = wrong zone
                     elif v["status"] == "missed":
-                        colors.append("#64748b80")
+                        colors.append("#64748b80")        # gray = not done yet
                     elif v["status"] == "unplanned":
-                        colors.append(Z12 + "80")
+                        colors.append(Z12 + "80")         # blue = extra run
                     else:
                         colors.append(Z3 + "80")
 
