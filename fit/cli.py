@@ -27,7 +27,8 @@ def main(verbose: bool):
 @main.command()
 @click.option("--days", default=7, help="Number of days to sync.")
 @click.option("--full", is_flag=True, help="Sync all available history.")
-def sync(days: int, full: bool):
+@click.option("--splits", is_flag=True, help="Download .fit files and compute per-km splits.")
+def sync(days: int, full: bool, splits: bool):
     """Pull data from Garmin, enrich with weather, store in SQLite."""
     from fit.config import get_config
     from fit.db import get_db
@@ -37,13 +38,65 @@ def sync(days: int, full: bool):
     conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
 
     try:
-        counts = run_sync(conn, config, days=days, full=full)
+        counts = run_sync(conn, config, days=days, full=full, download_splits=splits)
         console.print(f"\n[green]✓[/green] Synced: {counts['health']} health, {counts['activities']} activities, "
                        f"{counts['enriched']} enriched, {counts['weather']} weather, {counts['weekly_agg']} weeks")
+        if counts.get("splits"):
+            console.print(f"  [green]✓[/green] Processed {counts['splits']} activities for splits")
         console.print("[bold green]Done.[/bold green]")
     except Exception as e:
         console.print(f"[bold red]Sync failed:[/bold red] {e}")
         logger.exception("Sync failed")
+        raise SystemExit(1)
+    finally:
+        conn.close()
+
+
+@main.command("splits")
+@click.option("--backfill", is_flag=True, help="Process all running activities missing splits.")
+@click.option("--activity-id", default=None, help="Process a single activity by ID.")
+def splits(backfill: bool, activity_id: str):
+    """Download .fit files and compute per-km splits."""
+    import time as _time
+
+    from fit.config import get_config
+    from fit.db import get_db
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+
+    try:
+        from fit import garmin
+        from fit.fit_file import process_splits_for_activity
+
+        token_dir = config["sync"]["garmin_token_dir"]
+        api = garmin.connect(token_dir)
+        max_downloads = config.get("sync", {}).get("max_fit_downloads", 20)
+
+        if activity_id:
+            n = process_splits_for_activity(conn, api, activity_id, config)
+            console.print(f"  [green]✓[/green] {n} splits for activity {activity_id}")
+        elif backfill:
+            rows = conn.execute("""
+                SELECT id FROM activities
+                WHERE type = 'running' AND (splits_status IS NULL OR splits_status = 'download_failed')
+                ORDER BY date DESC LIMIT ?
+            """, (max_downloads,)).fetchall()
+            console.print(f"[bold]Processing {len(rows)} activities (max {max_downloads} per batch)...[/bold]")
+            total = 0
+            for i, row in enumerate(rows):
+                n = process_splits_for_activity(conn, api, row["id"], config)
+                total += n
+                if n > 0:
+                    console.print(f"  [green]✓[/green] {n} splits for {row['id']}")
+                if i < len(rows) - 1:
+                    _time.sleep(2)  # Rate control: 2s delay between downloads
+            console.print(f"\n[bold green]Done.[/bold green] Processed {total} total splits across {len(rows)} activities.")
+        else:
+            console.print("Use --backfill to process all missing, or --activity-id for one activity.")
+    except Exception as e:
+        console.print(f"[bold red]Splits failed:[/bold red] {e}")
+        logger.exception("Splits failed")
         raise SystemExit(1)
     finally:
         conn.close()
@@ -231,6 +284,81 @@ def goal_complete(goal_id: int):
         console.print(f"  [green]✓ Goal {goal_id} completed[/green]")
     finally:
         conn.close()
+
+
+@main.group(invoke_without_command=True)
+@click.pass_context
+def plan(ctx):
+    """Manage training plan."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(plan_show)
+
+
+@plan.command("show")
+@click.pass_context
+def plan_show(ctx):
+    """Show next 7 days of planned workouts."""
+    from datetime import date, timedelta
+
+    from fit.config import get_config
+    from fit.db import get_db
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    try:
+        today = date.today()
+        end = today + timedelta(days=7)
+        rows = conn.execute("""
+            SELECT date, workout_name, workout_type, target_distance_km
+            FROM planned_workouts
+            WHERE date BETWEEN ? AND ? AND status = 'active'
+            ORDER BY date, sequence_ordinal
+        """, (today.isoformat(), end.isoformat())).fetchall()
+
+        if not rows:
+            console.print("  No planned workouts for the next 7 days.")
+            return
+        console.print("\n[bold]Plan — next 7 days[/bold]\n")
+        for r in rows:
+            dist = f"{r['target_distance_km']:.1f}km" if r["target_distance_km"] else "—"
+            wtype = r["workout_type"] or "other"
+            color = {"easy": "blue", "long": "green", "tempo": "yellow", "intervals": "red"}.get(wtype, "dim")
+            console.print(f"  {r['date']}  [{color}]{wtype:12s}[/]  {dist:>8s}  {r['workout_name'] or ''}")
+        console.print()
+    finally:
+        conn.close()
+
+
+@plan.command("import")
+@click.argument("file", type=click.Path(exists=True))
+def plan_import(file):
+    """Import planned workouts from CSV."""
+    from fit.config import get_config
+    from fit.db import get_db
+    from fit.plan import import_plan_csv
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    try:
+        count = import_plan_csv(conn, file)
+        console.print(f"  [green]✓ Imported {count} workouts from {file}[/green]")
+    finally:
+        conn.close()
+
+
+@plan.command("validate")
+@click.argument("file", type=click.Path(exists=True))
+def plan_validate(file):
+    """Dry-run validate a plan CSV file."""
+    from fit.plan import validate_plan_csv
+
+    issues = validate_plan_csv(file)
+    if not issues:
+        console.print(f"  [green]✓ {file} is valid[/green]")
+    else:
+        console.print(f"  [yellow]⚠ {len(issues)} issue(s):[/yellow]")
+        for issue in issues:
+            console.print(f"    {issue}")
 
 
 @main.command()
@@ -427,6 +555,51 @@ def status():
                        f"{counts['activities']} activities, {counts['checkins']} check-ins")
         console.print(f"  Last sync: {last_health or 'never'}")
 
+        # Target race countdown
+        from datetime import date as d
+
+        from fit.goals import get_active_phase, get_target_race
+        target_race = get_target_race(conn)
+        if target_race:
+            days_left = (d.fromisoformat(target_race["date"]) - d.today()).days
+            target_time = target_race.get("target_time") or ""
+            console.print(f"  [bold]Target Race:[/bold] {target_race['name']} — [cyan]{days_left} days[/cyan]"
+                          + (f" — target: {target_time}" if target_time else ""))
+
+        # Active phase with position
+        phase = get_active_phase(conn)
+        if phase:
+            total_phases = conn.execute(
+                "SELECT COUNT(*) FROM training_phases WHERE goal_id = ?",
+                (phase["goal_id"],)
+            ).fetchone()[0]
+            phase_pos = f" (of {total_phases})" if total_phases else ""
+            console.print(f"  [bold]Phase:[/bold] {phase['phase']} — {phase['name']}{phase_pos}")
+            if phase.get("z12_pct_target"):
+                console.print(f"    Z1+Z2 target: {phase['z12_pct_target']}%, km: {phase.get('weekly_km_min')}-{phase.get('weekly_km_max')}")
+
+        # Objective progress (active goals)
+        goals = conn.execute("SELECT * FROM goals WHERE active = 1 ORDER BY id").fetchall()
+        if goals:
+            console.print("  [bold]Objectives:[/bold]")
+            for g in goals:
+                progress = ""
+                if g["type"] == "metric" and g["target_value"]:
+                    if "vo2" in g["name"].lower():
+                        cur = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
+                        if cur:
+                            pct = cur["vo2max"] / g["target_value"] * 100
+                            progress = f" [{cur['vo2max']}/{g['target_value']} = {pct:.0f}%]"
+                    elif "weight" in g["name"].lower():
+                        cur = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
+                        if cur:
+                            progress = f" [{cur['weight_kg']:.1f}/{g['target_value']}kg]"
+                elif g["type"] == "habit" and g["target_value"]:
+                    streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
+                    if streak:
+                        progress = f" [{streak[0] or 0}/{int(g['target_value'])} weeks]"
+                console.print(f"    {g['name']} ({g['type']}) — {g['target_date'] or 'no date'}{progress}")
+
         # Calibration status
         from fit.calibration import get_calibration_status
         cal_status = get_calibration_status(conn)
@@ -448,14 +621,6 @@ def status():
                 console.print(f"    {icon} {s['source']}: {s['status']}"
                                + (f" — {s['instruction']}" if s.get("instruction") else ""))
 
-        # Active phase
-        from fit.goals import get_active_phase
-        phase = get_active_phase(conn)
-        if phase:
-            console.print(f"  [bold]Phase:[/bold] {phase['phase']} — {phase['name']}")
-            if phase.get("z12_pct_target"):
-                console.print(f"    Z1+Z2 target: {phase['z12_pct_target']}%, km: {phase.get('weekly_km_min')}-{phase.get('weekly_km_max')}")
-
         # ACWR + streak
         acwr_row = conn.execute("SELECT acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
         streak_row = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
@@ -465,13 +630,6 @@ def status():
             console.print(f"  [bold]ACWR:[/bold] {v:.2f} ({safety})")
         if streak_row and streak_row[0]:
             console.print(f"  [bold]Streak:[/bold] {streak_row[0]} consecutive weeks with 3+ runs")
-
-        # Active goals
-        goals = conn.execute("SELECT name, type, target_date FROM goals WHERE active = 1").fetchall()
-        if goals:
-            console.print("  [bold]Goals:[/bold]")
-            for g in goals:
-                console.print(f"    {g[0]} ({g[1]}) — {g[2] or 'no date'}")
 
         console.print()
     finally:

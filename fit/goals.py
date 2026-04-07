@@ -108,6 +108,63 @@ def log_goal_event(conn: sqlite3.Connection, goal_id: int, phase_id: int | None,
     ))
 
 
+def get_target_race(conn: sqlite3.Connection) -> dict | None:
+    """Get the target race — the organizing anchor for the dashboard.
+
+    Priority: (1) the race that active goals reference via race_id,
+    (2) the furthest registered future race (marathon > half > 10K),
+    (3) the nearest registered future race as fallback.
+    """
+    # 1. Race linked to active goals (the explicit anchor)
+    row = conn.execute("""
+        SELECT rc.* FROM race_calendar rc
+        INNER JOIN goals g ON g.race_id = rc.id
+        WHERE g.active = 1 AND rc.date >= date('now')
+        ORDER BY rc.distance_km DESC
+        LIMIT 1
+    """).fetchone()
+    if row:
+        return dict(row)
+
+    # 2. Furthest future registered race (prefer longest distance)
+    row = conn.execute("""
+        SELECT * FROM race_calendar
+        WHERE date >= date('now') AND status IN ('registered', 'planned')
+        ORDER BY distance_km DESC, date DESC
+        LIMIT 1
+    """).fetchone()
+    if row:
+        return dict(row)
+
+    # 3. Nearest future race as last resort
+    row = conn.execute("""
+        SELECT * FROM race_calendar
+        WHERE date >= date('now') AND status IN ('registered', 'planned')
+        ORDER BY date ASC LIMIT 1
+    """).fetchone()
+    return dict(row) if row else None
+
+
+def get_next_race(conn: sqlite3.Connection) -> dict | None:
+    """Get the nearest upcoming race (for 'next race' countdown, not the anchor)."""
+    row = conn.execute("""
+        SELECT * FROM race_calendar
+        WHERE date >= date('now') AND status IN ('registered', 'planned')
+        ORDER BY date ASC LIMIT 1
+    """).fetchone()
+    return dict(row) if row else None
+
+
+def get_race_calendar_upcoming(conn: sqlite3.Connection) -> list[dict]:
+    """Get all upcoming races as waypoints."""
+    rows = conn.execute("""
+        SELECT * FROM race_calendar
+        WHERE date >= date('now') AND status IN ('registered', 'planned')
+        ORDER BY date ASC
+    """).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_phase_compliance(conn: sqlite3.Connection, phase_id: int) -> dict:
     """Compare current weekly_agg averages to phase targets.
 

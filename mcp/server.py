@@ -333,6 +333,95 @@ def _ctx_correlations(conn) -> list[str]:
     return s
 
 
+def _ctx_splits(conn) -> list[str]:
+    """Split analysis from most recent long run."""
+    s = []
+    try:
+        # Most recent running activity with splits
+        act = conn.execute("""
+            SELECT a.id, a.date, a.name, a.distance_km, a.temp_at_start_c, a.humidity_at_start_pct
+            FROM activities a
+            WHERE a.type = 'running' AND a.splits_status = 'done'
+            ORDER BY a.date DESC LIMIT 1
+        """).fetchone()
+        if not act:
+            return s
+
+        splits = conn.execute("""
+            SELECT split_num, pace_sec_per_km, avg_hr, avg_cadence, time_above_z2_ceiling_sec
+            FROM activity_splits WHERE activity_id = ? ORDER BY split_num
+        """, (act["id"],)).fetchall()
+        if not splits:
+            return s
+
+        split_dicts = [dict(sp) for sp in splits]
+
+        from fit.fit_file import compute_cardiac_drift, compute_pace_variability, compute_cadence_drift, flag_heat_affected
+
+        drift = compute_cardiac_drift(split_dicts)
+        pace_cv = compute_pace_variability(split_dicts)
+        cadence = compute_cadence_drift(split_dicts)
+        heat = flag_heat_affected(dict(act))
+
+        s.append(f"Latest split analysis: {act['name']} ({act['date']}, {act['distance_km']}km)")
+        if drift["status"] == "detected":
+            s.append(f"  Cardiac drift: {drift['drift_pct']:.1f}% (onset at km {drift['drift_onset_km']})")
+        elif drift["status"] == "inconclusive_variable_pace":
+            s.append(f"  Cardiac drift: inconclusive (pace CV={drift['pace_cv_pct']:.1f}%)")
+        elif drift["status"] == "none":
+            s.append(f"  Cardiac drift: none detected ({drift['drift_pct']:.1f}%)")
+
+        if pace_cv is not None:
+            s.append(f"  Pace variability: CV={pace_cv:.1f}%")
+        if cadence:
+            s.append(f"  Cadence drift: {cadence['drift_pct']:+.1f}% ({cadence['status']})")
+        if heat:
+            s.append("  HEAT-AFFECTED: >25C or >70% humidity — HR zones less reliable")
+    except Exception:
+        pass
+    return s
+
+
+def _ctx_plan(conn) -> list[str]:
+    """Plan adherence and next planned workout."""
+    s = []
+    try:
+        from fit.plan import compute_plan_adherence, get_readiness_recommendation
+
+        # Plan adherence
+        adherence = compute_plan_adherence(conn)
+        if adherence and adherence.get("compliance_pct") is not None:
+            s.append(f"Plan adherence: {adherence['compliance_pct']:.0f}% weekly compliance")
+            if adherence.get("missed_count"):
+                s.append(f"  Missed workouts: {adherence['missed_count']}")
+            if adherence.get("override_pattern"):
+                s.append(f"  Override pattern: {adherence['override_pattern']}")
+
+        # Next planned workout
+        next_workout = conn.execute("""
+            SELECT date, workout_name, workout_type, target_distance_km
+            FROM planned_workouts
+            WHERE date >= date('now') AND status = 'active'
+            ORDER BY date, sequence_ordinal LIMIT 1
+        """).fetchone()
+        if next_workout:
+            dist = f"{next_workout['target_distance_km']:.1f}km" if next_workout["target_distance_km"] else ""
+            s.append(f"Next planned: {next_workout['workout_name']} ({next_workout['workout_type']}) "
+                     f"{dist} on {next_workout['date']}")
+
+        # Readiness recommendation
+        try:
+            config = {"coaching": {"readiness_gate_threshold": 40}}
+            rec = get_readiness_recommendation(conn, config)
+            if rec and rec.get("swap_recommended"):
+                s.append(f"  READINESS WARNING: {rec['message']}")
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return s
+
+
 def _ctx_goals(conn) -> list[str]:
     """Active goals."""
     s = []
@@ -353,6 +442,7 @@ def get_coaching_context() -> str:
         sections.extend(_ctx_training(conn))
         sections.extend(_ctx_correlations(conn))
         sections.extend(_ctx_goals(conn))
+        sections.extend(_ctx_plan(conn))
         return "Coaching Context:\n" + "\n".join(f"  {s}" for s in sections)
     finally:
         conn.close()

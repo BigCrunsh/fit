@@ -97,6 +97,17 @@ def run_checkin(conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE activities SET rpe = ? WHERE date = ? AND type = 'running'", (data["rpe"], today))
 
     conn.commit()
+
+    # sRPE computation: if RPE was entered, compute sRPE for same-day activities
+    if data.get("rpe"):
+        try:
+            from fit.analysis import compute_srpe
+            srpe_count = compute_srpe(conn)
+            if srpe_count:
+                console.print(f"  [dim]sRPE computed for {srpe_count} activity(ies)[/dim]")
+        except Exception as e:
+            logger.debug("sRPE computation after checkin failed: %s", e)
+
     console.print(f"\n[bold green]✓ Saved: {today}[/bold green]")
     logger.info("Check-in saved for %s", today)
 

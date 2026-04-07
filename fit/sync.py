@@ -17,8 +17,13 @@ logger = logging.getLogger(__name__)
 _console_suppressed = False
 
 
-def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool = False) -> dict:
+def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool = False,
+             download_splits: bool = False) -> dict:
     """Run the full sync pipeline.
+
+    Args:
+        download_splits: If True (or config sync.download_fit_files), download .fit files
+            and compute per-km splits for running activities.
 
     Returns dict with counts per data type.
     """
@@ -153,7 +158,25 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
         except Exception as e:
             logger.debug("Weight auto-import skipped: %s", e)
 
-    # 8. Auto-compute correlations + run alerts
+    # 8a. Compute sRPE (retroactively join checkin RPE to same-day activities)
+    try:
+        from fit.analysis import compute_srpe
+        srpe_count = compute_srpe(conn)
+        if srpe_count:
+            counts["srpe"] = srpe_count
+    except Exception as e:
+        logger.debug("sRPE computation skipped: %s", e)
+
+    # 8b. Sync planned workouts from Garmin Calendar (Runna)
+    try:
+        from fit.plan import sync_planned_workouts
+        plan_count = sync_planned_workouts(api, conn)
+        if plan_count:
+            counts["planned_workouts"] = plan_count
+    except Exception as e:
+        logger.debug("Plan sync skipped: %s", e)
+
+    # 8c. Auto-compute correlations + run alerts
     try:
         from fit.correlations import compute_all_correlations
         compute_all_correlations(conn)
@@ -167,6 +190,35 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
             counts["alerts"] = len(alerts)
     except Exception as e:
         logger.debug("Alerts skipped: %s", e)
+
+    # 9. Download .fit files and compute splits (if enabled)
+    should_download_splits = download_splits or config.get("sync", {}).get("download_fit_files", False)
+    if should_download_splits:
+        try:
+            import time as _time
+            from fit.fit_file import process_splits_for_activity
+
+            max_downloads = config.get("sync", {}).get("max_fit_downloads", 20)
+            running_ids = [a["id"] for a in activities if a.get("type") == "running"]
+            # Only process activities without splits yet
+            to_process = []
+            for aid in running_ids:
+                row = conn.execute(
+                    "SELECT splits_status FROM activities WHERE id = ?", (aid,)
+                ).fetchone()
+                if not row or row["splits_status"] != "done":
+                    to_process.append(aid)
+            to_process = to_process[:max_downloads]
+
+            splits_count = 0
+            for i, aid in enumerate(to_process):
+                n = process_splits_for_activity(conn, api, aid, config)
+                splits_count += (1 if n > 0 else 0)
+                if i < len(to_process) - 1:
+                    _time.sleep(2)  # Rate control
+            counts["splits"] = splits_count
+        except Exception as e:
+            logger.debug("Splits processing skipped: %s", e)
 
     logger.info("Sync complete: %s", counts)
     return counts
@@ -195,6 +247,17 @@ def _match_race_calendar(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _safe_float(value) -> float | None:
+    """Safely convert a value to float, returning None on failure."""
+    if value is None:
+        return None
+    try:
+        result = float(value)
+        return result if result == result else None  # NaN check
+    except (ValueError, TypeError):
+        return None
+
+
 def _auto_import_weight(conn: sqlite3.Connection, csv_path: Path) -> None:
     """Auto-import new weight measurements from configured CSV path."""
     import csv
@@ -217,8 +280,20 @@ def _auto_import_weight(conn: sqlite3.Connection, csv_path: Path) -> None:
         reader = csv.DictReader(f)
         # Validate header
         headers = reader.fieldnames or []
-        date_col = next((h for h in headers if h.lower() in ("date", "startdate")), None)
-        weight_col = next((h for h in headers if "weight" in h.lower() or h.lower() == "value"), None)
+        # Case-insensitive column name matching
+        header_lower = {h.lower(): h for h in headers}
+        date_col = next((header_lower[k] for k in header_lower
+                         if k in ("date", "startdate")), None)
+        weight_col = next((header_lower[k] for k in header_lower
+                           if "weight" in k or k == "value"), None)
+        # Body composition columns (task 4.8)
+        body_fat_col = next((header_lower[k] for k in header_lower
+                             if "body" in k and "fat" in k), None)
+        muscle_col = next((header_lower[k] for k in header_lower
+                           if "muscle" in k and "mass" in k), None)
+        visceral_col = next((header_lower[k] for k in header_lower
+                             if "visceral" in k), None)
+
         if not date_col or not weight_col:
             logger.warning("Weight CSV has unexpected columns: %s. Expected Date + Weight column.", headers)
             return
@@ -229,10 +304,20 @@ def _auto_import_weight(conn: sqlite3.Connection, csv_path: Path) -> None:
                 w = float(row.get(weight_col, ""))
             except (ValueError, TypeError):
                 continue
+
+            # Parse body composition fields
+            body_fat = _safe_float(row.get(body_fat_col)) if body_fat_col else None
+            muscle_mass = _safe_float(row.get(muscle_col)) if muscle_col else None
+            visceral_fat = _safe_float(row.get(visceral_col)) if visceral_col else None
+
             # Only insert if date not already in body_comp
             existing_w = conn.execute("SELECT 1 FROM body_comp WHERE date = ?", (d,)).fetchone()
             if not existing_w:
-                conn.execute("INSERT INTO body_comp (date, weight_kg, source) VALUES (?, ?, 'fitdays')", (d, w))
+                conn.execute("""
+                    INSERT INTO body_comp (date, weight_kg, body_fat_pct, muscle_mass_kg,
+                                           visceral_fat, source)
+                    VALUES (?, ?, ?, ?, ?, 'fitdays')
+                """, (d, w, body_fat, muscle_mass, visceral_fat))
                 count += 1
 
     # Log the import
