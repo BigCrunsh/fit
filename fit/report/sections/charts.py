@@ -181,37 +181,22 @@ def _all_charts(conn):
                 "borderColor": SAFE + "60", "borderDash": [6, 3],
                 "label": {"content": f"Target {weight_target['target_value']}kg", "display": True, "position": "end", "font": {"size": 8}},
             }
-        # Insert nulls in gaps >30 days to break the line
-        weight_labels = []
-        weight_data = []
-        bf_raw = []
-        prev_date = None
-        for w in weight:
-            if prev_date:
-                gap = (date.fromisoformat(w["date"]) - date.fromisoformat(prev_date)).days
-                if gap > 30:
-                    # Insert a null point to break the line
-                    weight_labels.append("")
-                    weight_data.append(None)
-                    bf_raw.append(None)
-            weight_labels.append(w["date"])
-            weight_data.append(w["weight_kg"])
-            bf_raw.append(w["body_fat_pct"])
-            prev_date = w["date"]
+        # Use real dates only — time scale handles spacing, spanGaps:false breaks line at nulls
+        weight_labels = [w["date"] for w in weight]
+        weight_data = [w["weight_kg"] for w in weight]
+        bf_data = [w["body_fat_pct"] for w in weight]
 
-        datasets = [{"label": "Weight", "data": weight_data,
+        datasets = [{"label": "Weight (kg)", "data": weight_data,
                       "borderColor": Z3, "backgroundColor": Z3 + "15", "fill": True,
-                      "borderWidth": 2, "pointRadius": 3, "yAxisID": "y", "spanGaps": False}]
-        # Body fat second y-axis if data exists
-        bf_data = bf_raw
+                      "borderWidth": 2, "pointRadius": 4, "yAxisID": "y", "spanGaps": False}]
         has_bf = any(v is not None for v in bf_data)
-        scales = {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
-                  "y": {"grid": {"color": "rgba(255,255,255,0.03)"}, "position": "left", "title": {"display": True, "text": "kg"}}}
+        scales = {"x": {"type": "time", "time": {"unit": "month", "displayFormats": {"month": "MMM ''yy"}}, "grid": {"color": "rgba(255,255,255,0.03)"}},
+                  "y": {"grid": {"color": "rgba(255,255,255,0.03)"}, "position": "left", "title": {"display": True, "text": "Weight (kg)"}}}
         if has_bf:
             datasets.append({"label": "Body Fat %", "data": bf_data, "borderColor": DANGER + "60",
                               "borderWidth": 1.5, "pointRadius": 2, "fill": False, "yAxisID": "y1", "spanGaps": True})
             scales["y1"] = {"grid": {"drawOnChartArea": False}, "position": "right",
-                            "title": {"display": True, "text": "%"}, "min": 5, "max": 30}
+                            "title": {"display": True, "text": "Body Fat (%)"}, "min": 5, "max": 30}
         charts.append({"id": "chart-weight", "config": json.dumps({
             "type": "line",
             "data": {"labels": weight_labels, "datasets": datasets},

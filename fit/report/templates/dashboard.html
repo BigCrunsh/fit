@@ -750,7 +750,8 @@ function resolveAnnotationCollisions(annotations) {
   }
   return annotations;
 }
-const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-stress','chart-weight','chart-efficiency','chart-vo2','chart-cadence','chart-rpe','chart-acwr']);
+const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-stress','chart-efficiency','chart-vo2','chart-cadence','chart-rpe','chart-acwr']);
+// chart-weight has its own time scale config (set in charts.py) — not in this set to avoid double-applying
 const chartInstances = {};
 {% for chart in charts %}
 {
