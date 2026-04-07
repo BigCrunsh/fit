@@ -422,17 +422,19 @@ def _ctx_plan(conn) -> list[str]:
             if adherence.get("override_pattern"):
                 s.append(f"  Override pattern: {adherence['override_pattern']}")
 
-        # Next planned workout
-        next_workout = conn.execute("""
+        # This week's plan (all upcoming workouts in next 10 days)
+        upcoming = conn.execute("""
             SELECT date, workout_name, workout_type, target_distance_km
             FROM planned_workouts
-            WHERE date >= date('now') AND status = 'active'
-            ORDER BY date, sequence_ordinal LIMIT 1
-        """).fetchone()
-        if next_workout:
-            dist = f"{next_workout['target_distance_km']:.1f}km" if next_workout["target_distance_km"] else ""
-            s.append(f"Next planned: {next_workout['workout_name']} ({next_workout['workout_type']}) "
-                     f"{dist} on {next_workout['date']}")
+            WHERE date >= date('now') AND date <= date('now', '+10 days') AND status = 'active'
+            ORDER BY date, sequence_ordinal
+        """).fetchall()
+        if upcoming:
+            s.append("Planned workouts (next 10 days):")
+            for w in upcoming:
+                dist = f"{w['target_distance_km']:.1f}km" if w["target_distance_km"] else ""
+                s.append(f"  {w['date']} {w['workout_type']:10s} {dist:>7s}  {w['workout_name']}")
+            s.append("  (Adjust recommendations based on this plan. Override intensity if needed for safety.)")
 
         # Readiness recommendation
         try:
