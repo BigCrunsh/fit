@@ -92,6 +92,18 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
             progress.advance(task_a)
         counts["activities"] = len(activities)
 
+        # Auto-update VO2max calibration from latest activity
+        latest_vo2 = conn.execute(
+            "SELECT date, vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        if latest_vo2 and latest_vo2["vo2max"]:
+            from fit.calibration import add_calibration
+            existing_cal = get_active_calibration(conn, "vo2max")
+            if not existing_cal or existing_cal["value"] != latest_vo2["vo2max"]:
+                add_calibration(conn, "vo2max", latest_vo2["vo2max"],
+                                "garmin_estimate", "medium",
+                                date.fromisoformat(latest_vo2["date"]))
+
         # 4. SpO2
         task_s = progress.add_task("SpO2", total=total_days)
         spo2_data = garmin.fetch_spo2(api, start, end)

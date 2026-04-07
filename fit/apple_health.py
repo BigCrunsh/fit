@@ -111,6 +111,17 @@ def import_apple_health(conn: sqlite3.Connection, export_path: Path) -> dict:
         ))
         imported += 1
 
+    # Auto-update weight calibration from latest body_comp
+    if imported > 0:
+        latest = conn.execute(
+            "SELECT date, weight_kg FROM body_comp WHERE weight_kg IS NOT NULL ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        if latest:
+            from fit.calibration import add_calibration
+            from datetime import date
+            add_calibration(conn, "weight", latest["weight_kg"], "scale", "high",
+                            date.fromisoformat(latest["date"]))
+
     conn.commit()
     logger.info("Imported %d body comp records from Apple Health (%s)", imported, counts)
 
