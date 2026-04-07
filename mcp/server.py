@@ -255,7 +255,18 @@ def _ctx_health(conn) -> list[str]:
     if acwr_row:
         acwr = acwr_row["acwr"]
         safety = "SAFE" if acwr_safe[0] <= acwr <= acwr_safe[1] else "CAUTION" if acwr <= acwr_danger else "DANGER"
-        s.append(f"ACWR: {acwr} ({safety})")
+        # Flag if current week is partial (ACWR is misleadingly low early in the week)
+        from datetime import date as _date
+        iso = _date.today().isocalendar()
+        current_week = f"{iso.year}-W{iso.week:02d}"
+        if acwr_row["week"] == current_week and iso.weekday < 5:
+            s.append(f"ACWR: {acwr} ({safety}) — NOTE: week is only {iso.weekday}/7 days old, ACWR will rise as more runs are added")
+        else:
+            s.append(f"ACWR: {acwr} ({safety})")
+    # Also show last completed week's ACWR for reference
+    acwr_prev = conn.execute("SELECT week, acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1 OFFSET 1").fetchone()
+    if acwr_prev:
+        s.append(f"ACWR last completed week ({acwr_prev['week']}): {acwr_prev['acwr']}")
     health = conn.execute("""
         SELECT ROUND(AVG(resting_heart_rate), 1) as rhr, ROUND(AVG(sleep_duration_hours), 1) as sleep,
                ROUND(AVG(hrv_last_night), 1) as hrv, ROUND(AVG(training_readiness), 0) as readiness
