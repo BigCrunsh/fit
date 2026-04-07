@@ -157,6 +157,10 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
     {% endif %}
 
   </div>
+  {% else %}
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin:14px 0;font-size:11px;color:var(--text-muted)">
+    No target race set. Add a race: <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit races add</code> — the dashboard orients around your target race with countdown, objectives, and predictions.
+  </div>
   {% endif %}
 
   <!-- Upcoming races (waypoints) -->
@@ -184,6 +188,7 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   </div>
 
   <!-- Milestone celebrations -->
+  <!-- Milestones: PBs detected in last 14 days (longest run, best efficiency, streak, VO2max peak) -->
   {% if milestones %}
   <div style="margin:10px 0">
     {% for m in milestones %}
@@ -193,6 +198,8 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
     </div>
     {% endfor %}
   </div>
+  {% else %}
+  <div style="font-size:10px;color:var(--text-faint);margin:6px 0">No recent PBs. Milestones appear here when you set a new longest run, best efficiency, consistency streak (4/8/12 weeks), or VO2max peak.</div>
   {% endif %}
 
   <!-- 7. "This Month" trend badges -->
@@ -242,13 +249,15 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
       {% for f in checkin.fields %}<span>{{ f }}</span>{% endfor %}
     </div>
   </details>
+  {% else %}
+  <div style="font-size:10px;color:var(--text-faint);margin:6px 0">No check-ins yet. Run <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit checkin</code> after training to log RPE, sleep quality, hydration, and legs. Builds correlation data for coaching.</div>
   {% endif %}
 
   <!-- Phase compliance is now integrated into the Race Anchor Card above -->
 
   <!-- 11. Journey timeline -->
-  {% if journey %}
   <details style="margin:10px 0">
+  {% if journey %}
     <summary style="font-size:10px;font-weight:700;color:var(--text-dim);cursor:pointer">Journey: {{ journey.goal_name }}</summary>
     <div class="journey" style="margin-top:6px">
       <div class="journey-bar">
@@ -258,8 +267,11 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
       </div>
       <div style="font-size:10px;color:var(--text-muted);margin-top:4px">{{ journey.position }}</div>
     </div>
-  </details>
+  {% else %}
+    <summary style="font-size:10px;font-weight:700;color:var(--text-dim);cursor:pointer">Journey</summary>
+    <div style="font-size:10px;color:var(--text-faint);margin-top:6px">No training phases defined. Create goals with <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit goal add</code> and set up training phases for a journey timeline.</div>
   {% endif %}
+  </details>
 
   <details style="margin:14px 0">
     <summary style="font-size:10px;font-weight:700;color:var(--text-dim);cursor:pointer">
