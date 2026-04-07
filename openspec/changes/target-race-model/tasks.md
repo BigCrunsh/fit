@@ -11,9 +11,9 @@
 
 ## 2. Schema + Migration
 
-- [ ] 2.1 Create migration 010 (Python): add `derivation_source TEXT DEFAULT 'manual'`, `auto_value REAL`, `is_override BOOLEAN DEFAULT 0` to goals
-- [ ] 2.2 Backfill: set `derivation_source = 'manual'` on all existing goals
-- [ ] 2.3 Test: migration applies cleanly, existing goals preserved
+- [x] 2.1 Create migration 010 (Python): add `derivation_source TEXT DEFAULT 'manual'`, `auto_value REAL`, `is_override BOOLEAN DEFAULT 0` to goals
+- [x] 2.2 Backfill: set `derivation_source = 'manual'` on all existing goals
+- [x] 2.3 Test: migration applies cleanly, existing goals preserved
 
 ## 3. Target Race Lifecycle
 
