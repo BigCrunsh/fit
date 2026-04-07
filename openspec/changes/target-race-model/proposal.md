@@ -1,50 +1,109 @@
+# Target Race Model — Fitness-First Design
+
 ## Why
 
-The current model has races and goals as separate concepts loosely coupled by a `race_id` FK on the goals table. The "target race" is inferred by finding which race goals point to, and objectives (VO2max, weight, streak) are generic — not derived from the target race's requirements. This creates confusion: stepping stone races (S25 5K, Tierparklauf 10K) appear as objectives, the dashboard can't adapt prediction charts to different target distances, and changing the target race requires manual SQL updates to re-link goals.
+The dashboard shows metrics without answering "so what?" because there's no model connecting observations to goals. Charts display VO2max, efficiency, zone distribution as independent data points, but the user has to mentally project: "Is VO2max 49 good enough for a sub-4 marathon in 173 days?"
 
-The race should be the anchor. You set "Berlin Marathon sub-4:00" as the target, and objectives derive automatically from that: VO2max ≥50 (Daniels), weight ≤75kg (user-set), consistency ≥12 weeks (distance-derived). When the target changes, objectives recalculate.
+The deeper problem: objectives (VO2max ≥50, weight ≤75kg) are manually created and static. They don't adapt when the target race changes, don't account for timing, and don't connect to the underlying fitness dimensions that sports science says determine race performance.
+
+## The Model
+
+### Fitness Profile (always tracked, race-independent)
+
+Four dimensions of running fitness, each with observable indicators:
+
+| Dimension | What it measures | How we track it |
+|-----------|-----------------|-----------------|
+| **Aerobic capacity** | Oxygen delivery ceiling | VO2max (Garmin), VDOT (from race results) |
+| **Threshold** | Sustainable hard effort | LTHR, Z2 pace at HR ceiling, tempo pace |
+| **Economy** | Speed per unit of effort | speed_per_bpm, cadence, stride length |
+| **Resilience** | Resistance to fade over distance | Cardiac drift onset km, pace fade %, long run ceiling |
+
+These are always tracked regardless of target race. They represent your actual fitness state.
+
+Supporting indicators (body/recovery state):
+- Weight, body fat % (body composition)
+- RHR, HRV, readiness, sleep (recovery capacity)
+- Consistency streak, weekly volume, Z2 compliance (training load)
+
+### Target Race (the lens)
+
+One race is the current training focus. It projects the fitness profile into race-specific requirements:
+
+- **Required fitness**: Daniels inverse lookup — target_time + distance → minimum VDOT → per-dimension requirements
+- **Time remaining**: Days to race
+- **Gap analysis**: Current value vs required value per dimension
+- **Achievability**: Current + (trend × time remaining) ≥ required?
+- **Training phase**: What should training look like right now given the gap and timeline?
+
+When target changes (marathon → HM), the lens changes but the fitness profile stays. Requirements recalculate. Some gaps close (HM needs less resilience), others open (HM pace needs higher threshold).
+
+### Checkpoints (races before the target)
+
+Races before the target are **measurement opportunities**, not independent goals. Each checkpoint:
+
+- **Derived target time**: Riegel back-calculation from target race ("to be on track for sub-4 marathon, run this 10K in ~44:00")
+- **User target time**: Manual override ("I want 45:00" — already on race_calendar)
+- **Readiness signal**: "If you run X at this checkpoint, your target race projection updates to Y"
+- **VDOT update**: The actual result gives a real VDOT data point — more reliable than Garmin's VO2max estimate
+
+The S25 in 12 days isn't "a 5K goal" — it's "a fitness measurement that updates the marathon prediction."
+
+### Objectives (fitness × target × time)
+
+Objectives are computed projections, not manually created goals:
+
+```
+Objective = what the target race requires (from Daniels)
+          − where you are now (from fitness profile)
+          ÷ time remaining (from race_calendar)
+          = what you need to achieve per week/month
+```
+
+Examples for Berlin Marathon sub-4:00 with 173 days remaining:
+- **VO2max**: Need ≥50, have 49, trend +1/mo → achievable in ~1 month ✓
+- **Weight**: Need ≤75, have 78.6, trend -0.5/mo → tight (75.6 at race) ⚠
+- **Consistency**: Need 12 consecutive weeks, have 0 → must start now, exactly enough time ⚠
+- **Resilience**: Need 30km without drift, current ceiling ~12km → progressive build over 20 weeks
+
+When target switches to Müggelsee HM sub-1:47 with 194 days:
+- **VO2max**: Need ≥52, have 49, trend +1/mo → need 3 months of consistent training ⚠
+- **Weight**: Need ≤76, have 78.6, trend -0.5/mo → achievable in 5 months ✓
+- **Consistency**: Need 8 weeks, have 0 → achievable ✓
+- **Resilience**: Need 21km without drift, current ceiling ~12km → smaller gap than marathon ✓
+
+Objectives carry over when target changes:
+- **Auto-derived** (VO2max, volume, consistency): recalculate for new target
+- **User-set** (weight): preserved, system shows both user target and derived suggestion
+- **Historical**: old objectives become context ("when targeting marathon, needed VO2max 50")
 
 ## What Changes
 
-- **Add `is_target` flag to `race_calendar`** — exactly one race is THE target at any time. All other registered races are waypoints/stepping stones.
-- **Auto-derive objectives from target race** — when a target is set, the system generates objectives based on target_time + Daniels tables + training science + current fitness level.
-- **User-overridable objectives** — auto-derived values are defaults; user can override (e.g., custom weight target). Overrides persist when target changes.
-- **Retire generic goals table** — goals become race-specific objectives. The goals table schema changes to reference the target race explicitly and track derivation source (auto vs manual).
-- **New CLI commands** — `fit target set <race_id>`, `fit target show`, `fit target objectives` to manage the target race and review/edit objectives.
-- **Dashboard + prediction charts adapt** — prediction trend, race prediction table, Forecast section title, and pacing strategy all read from target race distance (marathon, half, 10K).
-- **`get_target_race()` simplified** — reads `is_target = 1` directly instead of inferring from goal FK chains.
+- **Fitness profile module** (`fit/fitness.py`): Track 4 dimensions with trends. VDOT from race results. Achievability projections.
+- **`fit target set <race_id>`**: Updates `goals.race_id` on all active goals + triggers objective re-derivation. No schema change needed for target selection (proven with the marathon→HM switch).
+- **Objective derivation**: Auto-compute from Daniels + distance heuristics + timeline. Store with `derivation_source` and `auto_value` for override tracking.
+- **Checkpoint enrichment**: Derive target times for upcoming races based on current target. Show readiness signal.
+- **Dashboard redesign**: Metric cards with gap-to-target. Charts only where trend shape matters. 5-zone palette. Every element answers "so what?" via the fitness model.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `target-race-lifecycle`: Setting, switching, and managing the target race. Migration to add `is_target` column. CLI commands. Exactly-one constraint enforcement. Waypoint race display.
-- `objective-derivation`: Auto-deriving objectives from target race + target time using Daniels VDOT tables, distance-based volume needs, and timeline-based consistency requirements. User override support. Recalculation on target change.
-- `adaptive-predictions`: Prediction charts and tables adapt to the target race distance. Marathon predictions when target is marathon, half marathon predictions when target is HM, etc. Riegel formula uses target_km from race_calendar.
+- `fitness-profile`: 4-dimension fitness model with VDOT tracking from race results, trend computation, and achievability projection.
+- `objective-derivation`: Auto-derive objectives from target race + Daniels + timeline. Achievability assessment. User override support.
+- `checkpoint-enrichment`: Derive target times for pre-target races. Show readiness signals. Update VDOT from results.
+- `dashboard-redesign`: Metric cards over charts. "So what?" from fitness model. 5-zone palette. Readability.
 
 ### Modified Capabilities
 
-- `race-model`: `race_calendar.is_target` flag replaces the current goal→race FK inference chain. `get_target_race()` simplified.
-- `goal-progress`: Objectives section reads from derived objectives, not generic goals. Progress bars and compliance targets are race-specific.
-
-### New Capabilities (continued)
-
-- `dashboard-redesign`: Replace chart-heavy layout with metric cards + sparklines. Every element answers "so what?" by showing value + action + target + trend. Charts only where time-series tells a story. 5-zone color palette. Readable fonts and contrast.
-
-### Modified Capabilities (continued)
-
-- `dashboard-viz`: Global 5-zone color palette (Z1 through Z5, each distinct). Metric cards replace most standalone charts. "So what?" captions derived from target race objectives (not hardcoded). Bigger fonts, higher contrast.
-
-## Impact
-
-- **User-facing**: `fit target set 36` makes Berlin Marathon the anchor. Objectives auto-populate. Dashboard immediately reorients. Every metric shows how it connects to the race goal.
-- **Dashboard**: Fewer charts, more metric cards. Each card shows value + action + sparkline + target. Charts only for efficiency trend, prediction trend, weight over months, sleep composition. Body tab goes from 6 charts to ~3 cards + 2 charts.
-- **Data model**: Migration adds `is_target` to race_calendar, adds `derivation_source` and `auto_value` to goals for tracking overrides.
-- **No breaking changes to existing data** — migration sets `is_target = 1` on the race that current active goals reference (preserves existing behavior).
+- `race-model`: `fit target set/show/clear` CLI. Target via goals.race_id (no is_target flag).
+- `coaching-signals`: Prediction adapts to target distance (already partially done). Confidence from training progression.
+- `dashboard`: Every metric card shows: value + target (from derivation) + gap + achievability + action.
 
 ## Design Notes
 
-- **Objective derivation from Daniels**: sub-4:00 marathon → VO2max ≥50 (from Daniels table inverse lookup). Sub-1:47 HM → VO2max ≥52. The derivation is a lookup, not a guess.
-- **Carried-over vs race-specific objectives**: Weight target is user-set and carries over when target changes. VO2max target is auto-derived and recalculates. Consistency target scales with race distance (marathon: 12wk, HM: 8wk, 10K: 6wk).
-- **Waypoint races as milestones**: Stepping stone races (S25, Tierparklauf) become milestone markers on the journey timeline, with their own target times but not as dashboard objectives.
-- **Phase targets adapt**: When target race changes, training phase Z2/volume targets should also recalculate (longer races need more Z2 base).
+- **VDOT > Garmin VO2max**: Daniels' VDOT from actual race results is more reliable than Garmin's wrist-based estimate. Each race updates VDOT. The fitness profile should track both but prefer VDOT when available.
+- **Prediction improves over time**: Research shows prediction error drops after week 13 of structured training. Early confidence should be "low" with a specific note: "13 weeks until predictions stabilize."
+- **Resilience is the 4th dimension**: Cardiac drift onset and pace fade measure durability — critical for marathon but less for 5K. The split analysis we built is actually a resilience measurement tool.
+- **Coaching AI adds the judgment layer**: The fitness model computes gaps and achievability. Claude interprets: "Given your 0-week consistency, the VO2max gap is achievable but the consistency gap is the bottleneck. Focus there."
+- **Checkpoint races as VDOT calibration**: The most valuable thing about running S25 isn't the time — it's the VDOT update. A 22:00 5K = VDOT 46, which projects to 3:52 marathon. A 23:00 = VDOT 43, projecting to 4:05. The checkpoint result is a prediction update.

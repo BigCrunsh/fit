@@ -1,41 +1,34 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
-### Requirement: Target race flag on race_calendar
-The system SHALL support marking exactly one race in `race_calendar` as the target via `is_target = 1`. All other races have `is_target = 0`. `get_target_race()` reads this flag directly.
+### Requirement: Target race via goals.race_id
+The system SHALL identify the target race via the `race_id` FK on active goals (existing mechanism, no schema change). `fit target set <race_id>` updates all active goals' race_id and triggers objective re-derivation.
 
 #### Scenario: Set target race
 - **WHEN** user runs `fit target set 36` (Berlin Marathon)
-- **THEN** `race_calendar` row 36 has `is_target = 1`, all others have `is_target = 0`
+- **THEN** all active goals get `race_id = 36`, objectives re-derive from marathon requirements
 
-#### Scenario: Exactly-one constraint
-- **WHEN** user runs `fit target set 35` (Müggelsee HM) while Berlin Marathon is target
-- **THEN** Berlin Marathon `is_target` becomes 0, Müggelsee HM becomes 1
+#### Scenario: Switch target
+- **WHEN** user runs `fit target set 35` (Müggelsee HM) while Berlin Marathon was target
+- **THEN** all active goals get `race_id = 35`, auto-derived objectives recalculate for HM
+- **AND** user-override objectives preserve their target_value
 
 #### Scenario: Clear target
 - **WHEN** user runs `fit target clear`
-- **THEN** all `is_target = 0`, dashboard falls back to nearest future registered race
+- **THEN** all active goals get `race_id = NULL`
+- **AND** dashboard falls back to nearest future registered race
 
 ### Requirement: CLI commands for target management
-The system SHALL provide `fit target set <race_id>`, `fit target show`, `fit target objectives`, and `fit target clear`.
+- `fit target set <race_id>` — set target, derive objectives, show fitness profile summary
+- `fit target show` — display target + fitness profile (4 dimensions) + objectives with gap/achievability
+- `fit target clear` — remove target
 
 #### Scenario: fit target show
-- **WHEN** Berlin Marathon is target with target_time 4:00:00
-- **THEN** output shows race name, date, distance, target time, days remaining, and derived objectives
-
-#### Scenario: fit target set triggers objective derivation
-- **WHEN** user runs `fit target set 36`
-- **THEN** objectives auto-derive (VO2max, volume, consistency, Z2 targets) and display in summary
-
-### Requirement: Migration 010 adds is_target and objective metadata
-Migration SHALL add `is_target` to race_calendar and `derivation_source`, `auto_value`, `is_override` to goals. Backfill sets current target from existing goal FK linkage. Existing goals marked as `derivation_source = 'manual'`.
-
-#### Scenario: Migration preserves existing state
-- **WHEN** migration 010 runs with goals linked to race_id 36
-- **THEN** race_calendar row 36 gets `is_target = 1`, existing goals keep their values with `derivation_source = 'manual'`
+- **WHEN** Berlin Marathon is target with 173 days remaining
+- **THEN** output shows: race info, fitness profile (VDOT, economy, threshold, resilience), objectives with achievability (✓/⚠/✗), upcoming checkpoints with derived targets
 
 ### Requirement: Waypoint race display
-Non-target registered races SHALL appear as compact waypoint pills on Today tab and as milestone markers on the journey timeline, but NOT in the Objectives section.
+Non-target registered races appear as checkpoint waypoints on the Today tab with derived target times from the target race. They are NOT dashboard objectives.
 
-#### Scenario: Waypoints after target set
-- **WHEN** Berlin Marathon is target and S25, Tierparklauf, Müggelsee are registered
-- **THEN** S25/Tierparklauf/Müggelsee appear as waypoint pills with days countdown, not as objective cards
+#### Scenario: Checkpoint waypoint
+- **WHEN** S25 is 12 days away and target is Berlin Marathon sub-4:00
+- **THEN** Today tab shows: "S25 in 12d · target: 22:00 · marathon readiness: 22:30"
