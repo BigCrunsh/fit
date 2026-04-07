@@ -26,13 +26,13 @@
 
 ## 4. Objective Derivation
 
-- [ ] 4.1 Implement Daniels inverse lookup: target_time + distance → required VDOT → per-dimension minimums
-- [ ] 4.2 Distance-based heuristics: peak volume, long run target, consistency weeks (scaled by distance)
-- [ ] 4.3 Achievability projection: current + (trend × months_remaining) vs required. Three levels: ✓/⚠/✗
-- [ ] 4.4 On `set_target_race()`: auto-create/update goals with derivation_source, auto_value. Only update target_value if is_override=0
-- [ ] 4.5 Preserve user overrides: is_override=1 goals keep target_value, auto_value still updates for comparison
-- [ ] 4.6 Preserve manual goals (weight, custom): derivation_source='manual' never recalculated
-- [ ] 4.7 Test: derivation for marathon/HM/10K, override preservation, achievability edge cases (no trend data, 0 days remaining)
+- [x] 4.1 Implement Daniels inverse lookup: target_time + distance → required VDOT → per-dimension minimums
+- [x] 4.2 Distance-based heuristics: peak volume, long run target, consistency weeks (scaled by distance)
+- [x] 4.3 Achievability projection: current + (trend × months_remaining) vs required. Three levels: ✓/⚠/✗
+- [x] 4.4 On `set_target_race()`: auto-create/update goals with derivation_source, auto_value. Only update target_value if is_override=0
+- [x] 4.5 Preserve user overrides: is_override=1 goals keep target_value, auto_value still updates for comparison
+- [x] 4.6 Preserve manual goals (weight, custom): derivation_source='manual' never recalculated
+- [x] 4.7 Test: derivation for marathon/HM/10K, override preservation, achievability edge cases (no trend data, 0 days remaining)
 
 ## 5. Checkpoint Enrichment
 

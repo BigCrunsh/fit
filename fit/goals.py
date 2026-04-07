@@ -121,8 +121,39 @@ def set_target_race(conn: sqlite3.Connection, race_id: int) -> dict:
 
     # Update all active goals to point to this race
     conn.execute("UPDATE goals SET race_id = ? WHERE active = 1", (race_id,))
-    conn.commit()
 
+    # Re-derive auto objectives
+    try:
+        from fit.fitness import derive_objectives
+        derived = derive_objectives(conn, race_id)
+        for obj in derived:
+            # Check if a goal with similar name already exists
+            existing = conn.execute(
+                "SELECT id, is_override FROM goals WHERE name LIKE ? AND active = 1",
+                (f"%{obj['name'][:15]}%",),
+            ).fetchone()
+            if existing:
+                if not existing["is_override"]:
+                    # Auto-derived, not overridden — update
+                    conn.execute("""
+                        UPDATE goals SET target_value = ?, auto_value = ?,
+                            derivation_source = ?, target_unit = ?
+                        WHERE id = ?
+                    """, (obj["target_value"], obj["auto_value"],
+                          obj["derivation_source"], obj.get("target_unit"),
+                          existing["id"]))
+                else:
+                    # User override — update auto_value but not target_value
+                    conn.execute(
+                        "UPDATE goals SET auto_value = ? WHERE id = ?",
+                        (obj["auto_value"], existing["id"]),
+                    )
+            # Don't auto-create new goals — user decides which objectives to track
+        logger.info("Re-derived %d objectives for race %d", len(derived), race_id)
+    except Exception as e:
+        logger.debug("Objective re-derivation skipped: %s", e)
+
+    conn.commit()
     logger.info("Target race set to %s (id=%d)", race["name"], race_id)
     return dict(race)
 

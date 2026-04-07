@@ -373,3 +373,184 @@ def _empty_dimension(message: str) -> dict:
         "data_points": 0,
         "message": message,
     }
+
+
+# ── Objective Derivation ──
+
+
+def derive_objectives(conn, race_id: int) -> list[dict]:
+    """Auto-derive training objectives from a target race.
+
+    Uses Daniels VDOT for aerobic targets, distance heuristics for volume/long run,
+    timeline for consistency requirements.
+
+    Returns list of objective dicts ready for goals table upsert.
+    """
+    race = conn.execute("SELECT * FROM race_calendar WHERE id = ?", (race_id,)).fetchone()
+    if not race:
+        return []
+
+    distance_km = race["distance_km"] or 42.195
+    target_time = race["target_time"]
+
+    # Parse target time
+    target_secs = None
+    if target_time:
+        parts = target_time.split(":")
+        if len(parts) == 3:
+            target_secs = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        elif len(parts) == 2:
+            target_secs = int(parts[0]) * 60 + int(parts[1])
+
+
+
+    objectives = []
+
+    # 1. VO2max / VDOT target (from Daniels)
+    if target_secs:
+        required_vdot = compute_vdot_from_race(distance_km, target_secs)
+        if required_vdot:
+            # VDOT maps roughly to VO2max for trained runners
+            # Garmin VO2max tends to read ~2-4 higher than race VDOT
+            required_vo2max = required_vdot + 3  # conservative: Garmin reads higher
+            objectives.append({
+                "name": f"VO2max ≥{required_vo2max:.0f}",
+                "type": "metric",
+                "target_value": round(required_vo2max),
+                "target_unit": "ml/kg/min",
+                "derivation_source": "auto_daniels",
+                "auto_value": round(required_vo2max),
+            })
+
+    # 2. Peak weekly volume (distance-based heuristic)
+    if distance_km >= 40:
+        volume_range = (50, 65)
+    elif distance_km >= 20:
+        volume_range = (40, 50)
+    elif distance_km >= 10:
+        volume_range = (30, 40)
+    else:
+        volume_range = (20, 30)
+
+    objectives.append({
+        "name": f"Peak volume {volume_range[0]}-{volume_range[1]}km/wk",
+        "type": "metric",
+        "target_value": volume_range[1],
+        "target_unit": "km/week",
+        "derivation_source": "auto_distance",
+        "auto_value": volume_range[1],
+    })
+
+    # 3. Long run target (distance-based)
+    if distance_km >= 40:
+        long_run = 32
+    elif distance_km >= 20:
+        long_run = 21
+    elif distance_km >= 10:
+        long_run = 15
+    else:
+        long_run = 10
+
+    objectives.append({
+        "name": f"Long run {long_run}km",
+        "type": "metric",
+        "target_value": long_run,
+        "target_unit": "km",
+        "derivation_source": "auto_distance",
+        "auto_value": long_run,
+    })
+
+    # 4. Consistency (timeline-based)
+    if distance_km >= 40:
+        consistency_weeks = 12
+    elif distance_km >= 20:
+        consistency_weeks = 8
+    else:
+        consistency_weeks = 6
+
+    objectives.append({
+        "name": f"Consistency {consistency_weeks}wk",
+        "type": "habit",
+        "target_value": consistency_weeks,
+        "target_unit": "consecutive_weeks",
+        "derivation_source": "auto_timeline",
+        "auto_value": consistency_weeks,
+    })
+
+    # 5. Z2 compliance (always 80%+ for base)
+    objectives.append({
+        "name": "Z2 compliance ≥80%",
+        "type": "metric",
+        "target_value": 80,
+        "target_unit": "%",
+        "derivation_source": "auto_distance",
+        "auto_value": 80,
+    })
+
+    return objectives
+
+
+def compute_achievability(conn, objectives: list[dict], days_remaining: int) -> list[dict]:
+    """Compute achievability for each objective: ✓ on track / ⚠ tight / ✗ at risk.
+
+    Adds 'achievability', 'current_value', and 'gap' to each objective dict.
+    """
+    profile = get_fitness_profile(conn)
+    months = max(days_remaining / 30, 0.5)
+
+    for obj in objectives:
+        target = obj.get("target_value")
+        unit = obj.get("target_unit", "")
+        current = None
+        trend_rate = None
+
+        if "vo2max" in obj["name"].lower() or "vo2" in unit.lower():
+            current = profile["garmin_vo2max"]
+            dim = profile["aerobic"]
+            trend_rate = dim.get("rate_per_month")
+
+        elif "volume" in obj["name"].lower() or "km/week" in unit:
+            row = conn.execute("SELECT run_km FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
+            current = row["run_km"] if row else 0
+
+        elif "long run" in obj["name"].lower():
+            row = conn.execute("SELECT longest_run_km FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
+            current = row["longest_run_km"] if row else 0
+
+        elif "consistency" in obj["name"].lower() or "consecutive" in unit:
+            row = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
+            current = row["consecutive_weeks_3plus"] if row and row["consecutive_weeks_3plus"] else 0
+
+        elif "z2" in obj["name"].lower() or "%" in unit:
+            row = conn.execute("SELECT z12_pct FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
+            current = row["z12_pct"] if row and row["z12_pct"] else 0
+
+        obj["current_value"] = current
+        if target and current is not None:
+            gap = target - current
+            obj["gap"] = round(gap, 1)
+
+            # Project: can we close the gap in time?
+            if gap <= 0:
+                obj["achievability"] = "on_track"
+            elif trend_rate and trend_rate > 0:
+                months_needed = gap / trend_rate
+                if months_needed <= months:
+                    obj["achievability"] = "on_track"
+                elif months_needed <= months * 1.2:
+                    obj["achievability"] = "tight"
+                else:
+                    obj["achievability"] = "at_risk"
+            elif "consistency" in obj["name"].lower():
+                weeks_remaining = days_remaining / 7
+                if current + weeks_remaining >= target:
+                    obj["achievability"] = "on_track" if current > 0 else "tight"
+                else:
+                    obj["achievability"] = "at_risk"
+            else:
+                obj["achievability"] = "tight" if gap < target * 0.1 else "at_risk"
+        else:
+            obj["gap"] = None
+            obj["achievability"] = "unknown"
+
+    return objectives
