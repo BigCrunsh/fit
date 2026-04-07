@@ -107,7 +107,9 @@ def _run_pending_migrations(conn: sqlite3.Connection, migrations_dir: Path) -> N
                 )
                 conn.commit()
             elif migration["type"] == ".py":
-                # Python migrations run inside an explicit transaction
+                # Python migrations run inside an explicit transaction.
+                # Disable FK checks for table rebuilds — re-enabled after commit.
+                conn.execute("PRAGMA foreign_keys=OFF")
                 conn.execute("BEGIN")
                 _run_python_migration(conn, migration["path"])
                 conn.execute(
@@ -115,6 +117,8 @@ def _run_pending_migrations(conn: sqlite3.Connection, migrations_dir: Path) -> N
                     (migration["version"], migration["name"]),
                 )
                 conn.commit()
+                # Re-enable FK checks after Python migration
+                conn.execute("PRAGMA foreign_keys=ON")
 
             logger.info("Migration %03d applied successfully", migration["version"])
 

@@ -5,6 +5,8 @@ import logging
 import sqlite3
 from datetime import date
 
+from fit.analysis import detect_training_gap
+
 logger = logging.getLogger(__name__)
 
 
@@ -15,8 +17,9 @@ def run_alerts(conn: sqlite3.Connection, config: dict) -> list[dict]:
 
     # Rule: All runs too hard — Z2 compliance < 50% over 2 weeks
     z12 = conn.execute("""
-        SELECT AVG(z12_pct) as avg_z12 FROM weekly_agg
-        WHERE week >= (SELECT MAX(week) FROM weekly_agg) ORDER BY week DESC LIMIT 2
+        SELECT AVG(z12_pct) as avg_z12 FROM (
+            SELECT z12_pct FROM weekly_agg ORDER BY week DESC LIMIT 2
+        )
     """).fetchone()
     if z12 and z12["avg_z12"] is not None and z12["avg_z12"] < 50:
         fired.append(_fire(conn, today, "all_runs_too_hard",
@@ -36,12 +39,20 @@ def run_alerts(conn: sqlite3.Connection, config: dict) -> list[dict]:
                                f"with only {streak} weeks of consistency. Risk of injury. Keep increase ≤10%.",
                                {"this_km": this_km, "last_km": last_km, "streak": streak}))
 
-    # Rule: Readiness gate — low readiness + planned quality session
+    # Rule: Readiness gate — adaptive threshold (task 4.13)
+    # Default threshold: 40, raised to 50 during return-to-run
+    base_threshold = config.get("coaching", {}).get("readiness_gate_threshold", 40)
+    gap = detect_training_gap(conn)
+    readiness_threshold = 50 if gap else base_threshold
+
     readiness = conn.execute("SELECT training_readiness FROM daily_health ORDER BY date DESC LIMIT 1").fetchone()
-    if readiness and readiness["training_readiness"] and readiness["training_readiness"] < 30:
+    if readiness and readiness["training_readiness"] and readiness["training_readiness"] < readiness_threshold:
+        context = "return-to-run" if gap else "normal"
         fired.append(_fire(conn, today, "readiness_gate",
-                           f"Readiness is {readiness['training_readiness']}. Rest or very easy activity only.",
-                           {"readiness": readiness["training_readiness"]}))
+                           f"Readiness is {readiness['training_readiness']} (threshold: {readiness_threshold}, "
+                           f"context: {context}). Rest or very easy activity only.",
+                           {"readiness": readiness["training_readiness"],
+                            "threshold": readiness_threshold, "context": context}))
 
     # Rule: Alcohol + HRV drop
     last_ci = conn.execute("SELECT date, alcohol FROM checkins ORDER BY date DESC LIMIT 1").fetchone()
@@ -57,8 +68,65 @@ def run_alerts(conn: sqlite3.Connection, config: dict) -> list[dict]:
                                f"{last_ci['alcohol']:.0f} drinks. Rest day recommended.",
                                {"hrv_now": hrv_now, "hrv_avg": hrv_avg, "drinks": last_ci["alcohol"]}))
 
+    # Rule: SpO2 alert — avg_spo2 < threshold for 2+ consecutive days
+    spo2_threshold = config.get("coaching", {}).get("spo2_alert_threshold", 95)
+    spo2_rows = conn.execute("""
+        SELECT date, avg_spo2 FROM daily_health
+        WHERE avg_spo2 IS NOT NULL
+        ORDER BY date DESC LIMIT 7
+    """).fetchall()
+    if len(spo2_rows) >= 2:
+        consecutive_low = 0
+        for row in spo2_rows:
+            if row["avg_spo2"] < spo2_threshold:
+                consecutive_low += 1
+            else:
+                break
+        if consecutive_low >= 2:
+            avg_spo2 = sum(r["avg_spo2"] for r in spo2_rows[:consecutive_low]) / consecutive_low
+            fired.append(_fire(conn, today, "spo2_low",
+                               f"SpO2 averaging {avg_spo2:.1f}% over {consecutive_low} consecutive days "
+                               f"(threshold: {spo2_threshold}%). Possible illness — consider rest.",
+                               {"avg_spo2": avg_spo2, "consecutive_days": consecutive_low,
+                                "threshold": spo2_threshold}))
+
+    # Rule: Deload overdue — no deload week in 4+ consecutive build weeks (task 4.9)
+    deload_alert = _check_deload_overdue(conn, today)
+    if deload_alert:
+        fired.append(deload_alert)
+
     logger.info("Alerts: %d fired", len(fired))
     return fired
+
+
+def _check_deload_overdue(conn: sqlite3.Connection, today: str) -> dict | None:
+    """Alert if no deload week in 4+ consecutive build weeks.
+
+    A deload = volume drops >=30% from prior week.
+    """
+    weeks = conn.execute(
+        "SELECT week, run_km FROM weekly_agg ORDER BY week DESC LIMIT 6"
+    ).fetchall()
+
+    if len(weeks) < 3:
+        return None
+
+    # Count consecutive build weeks (no deload) from most recent
+    consecutive_build = 0
+    for i in range(len(weeks) - 1):
+        current_km = weeks[i]["run_km"] or 0
+        prev_km = weeks[i + 1]["run_km"] or 0
+        if prev_km > 0 and current_km < prev_km * 0.7:
+            # This was a deload week — volume dropped >=30%
+            break
+        consecutive_build += 1
+
+    if consecutive_build >= 4:
+        return _fire(conn, today, "deload_overdue",
+                     f"{consecutive_build} consecutive build weeks without a deload. "
+                     f"Consider reducing volume 30-40% this week for recovery.",
+                     {"consecutive_build_weeks": consecutive_build})
+    return None
 
 
 def _fire(conn: sqlite3.Connection, today: str, alert_type: str, message: str, data: dict) -> dict:

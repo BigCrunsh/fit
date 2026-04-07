@@ -98,11 +98,15 @@ def compute_speed_per_bpm_z2(distance_km: float | None, duration_min: float | No
 # ── Run Type Classification ──
 
 
-def classify_run_type(activity: dict, config: dict = None, recent_long_run_avg: float = None) -> str | None:
+def classify_run_type(activity: dict, config: dict = None, recent_long_run_avg: float = None,
+                      weekly_km: float = None) -> str | None:
     """Auto-classify a running activity into a run type.
 
     Types: easy, long, tempo, intervals, recovery, race, progression.
     Returns None for non-running activities.
+
+    Long run detection uses dual condition:
+    - (>30% of weekly volume AND >=8km) OR (>=12km absolute floor override)
     """
     if activity.get("type") != "running":
         return None
@@ -127,9 +131,16 @@ def classify_run_type(activity: dict, config: dict = None, recent_long_run_avg: 
     if "tempo" in name or (zone in ("Z3", "Z4") and distance >= 6):
         return "tempo"
 
-    # Long run detection
-    long_threshold = max(15, (recent_long_run_avg or 15) * 0.75)
-    if distance >= long_threshold:
+    # Long run detection — dual condition:
+    # 1) >=12km absolute floor (always counts as long), OR
+    # 2) >30% of weekly volume AND >=8km minimum
+    is_long = False
+    if distance >= 12:
+        is_long = True
+    elif weekly_km is not None and weekly_km > 0 and distance >= 8:
+        if distance > weekly_km * 0.3:
+            is_long = True
+    if is_long:
         return "long"
 
     # Recovery detection (very easy, short)
@@ -175,8 +186,14 @@ def enrich_activity(activity: dict, config: dict, lthr: int | None = None,
 # ── Weekly Aggregation ──
 
 
-def compute_weekly_agg(conn: sqlite3.Connection, week_str: str) -> dict:
+def compute_weekly_agg(conn: sqlite3.Connection, week_str: str,
+                       config: dict | None = None) -> dict:
     """Compute weekly aggregation for a given ISO week (e.g., '2026-W14').
+
+    Args:
+        conn: Database connection.
+        week_str: ISO week string (e.g., '2026-W14').
+        config: Optional config dict for cycling load weight.
 
     Returns dict with all weekly_agg fields.
     """
@@ -231,6 +248,14 @@ def compute_weekly_agg(conn: sqlite3.Connection, week_str: str) -> dict:
     z12_pct = ((zone_mins["Z1"] + zone_mins["Z2"]) / total_zone_time * 100) if total_zone_time > 0 else None
     z45_pct = ((zone_mins["Z4"] + zone_mins["Z5"]) / total_zone_time * 100) if total_zone_time > 0 else None
 
+    # Cycling volume (task 4.5)
+    cycling = conn.execute("""
+        SELECT SUM(distance_km) as km, SUM(duration_min) as min
+        FROM activities WHERE type = 'cycling' AND date BETWEEN ? AND ?
+    """, (monday.isoformat(), sunday.isoformat())).fetchone()
+    cycling_km = round(cycling["km"], 1) if cycling and cycling["km"] else 0.0
+    cycling_min = round(cycling["min"], 1) if cycling and cycling["min"] else 0.0
+
     # Cross-training
     cross_count = len(cross)
     cross_min = sum(c["duration_min"] or 0 for c in cross)
@@ -238,6 +263,44 @@ def compute_weekly_agg(conn: sqlite3.Connection, week_str: str) -> dict:
     # Combined load
     all_loads = [r["training_load"] or 0 for r in runs] + [c["training_load"] or 0 for c in cross]
     total_load = sum(all_loads)
+
+    # Training monotony and strain (task 4.4 + 4.11)
+    cycling_load_weight = 1.0
+    if config:
+        cycling_load_weight = config.get("analysis", {}).get("cycling_load_weight", 0.3)
+
+    # Build daily loads for each day of the week (7 days, 0 for rest days)
+    daily_loads = []
+    for day_offset in range(7):
+        d = (monday + timedelta(days=day_offset)).isoformat()
+        day_activities = conn.execute("""
+            SELECT training_load, duration_min, type FROM activities
+            WHERE date = ?
+        """, (d,)).fetchall()
+        day_load = 0.0
+        for act in day_activities:
+            load = act["training_load"] or 0
+            if act["type"] == "cycling":
+                day_load += load * cycling_load_weight
+            else:
+                day_load += load
+        daily_loads.append(day_load)
+
+    n_days = len(daily_loads)
+    mean_load = sum(daily_loads) / n_days if n_days > 0 else 0
+    if n_days > 1:
+        variance = sum((x - mean_load) ** 2 for x in daily_loads) / (n_days - 1)
+        import math
+        stdev_load = math.sqrt(variance) if variance > 0 else 0
+    else:
+        stdev_load = 0
+
+    if stdev_load > 0:
+        monotony = round(mean_load / stdev_load, 2)
+        strain = round(total_load * monotony, 1)
+    else:
+        monotony = None
+        strain = None
 
     # ACWR (this week / avg of previous 4 weeks)
     acwr = _compute_acwr(conn, week_str, total_load)
@@ -286,20 +349,68 @@ def compute_weekly_agg(conn: sqlite3.Connection, week_str: str) -> dict:
         "z45_pct": round(z45_pct, 1) if z45_pct is not None else None,
         "training_days": training_days,
         "consecutive_weeks_3plus": streak,
+        "monotony": monotony,
+        "strain": strain,
+        "cycling_km": cycling_km,
+        "cycling_min": cycling_min,
     }
 
 
-def predict_marathon_time(races: list[dict], vo2max: float | None = None) -> dict:
-    """Predict marathon time using Riegel formula and VDOT tables.
+# ── Daniels VDOT Lookup Table ──
+# VO2max → marathon time in seconds (from Daniels' Running Formula)
+_VDOT_TABLE = [
+    (35, 19800),   # ~5:30:00
+    (38, 18000),   # ~5:00:00
+    (40, 16800),   # ~4:40:00
+    (42, 16080),   # ~4:28:00
+    (45, 14700),   # ~4:05:00
+    (48, 13680),   # ~3:48:00
+    (50, 13080),   # ~3:38:00
+    (52, 12480),   # ~3:28:00
+    (55, 11700),   # ~3:15:00
+    (58, 10980),   # ~3:03:00
+    (60, 10500),   # ~2:55:00
+]
+
+
+def _vdot_to_marathon_seconds(vo2max: float) -> float:
+    """Interpolate marathon time from Daniels VDOT table.
+
+    Uses linear interpolation between table points.
+    Clamps to table boundaries for out-of-range values.
+    """
+    if vo2max <= _VDOT_TABLE[0][0]:
+        return float(_VDOT_TABLE[0][1])
+    if vo2max >= _VDOT_TABLE[-1][0]:
+        return float(_VDOT_TABLE[-1][1])
+
+    for i in range(len(_VDOT_TABLE) - 1):
+        v1, t1 = _VDOT_TABLE[i]
+        v2, t2 = _VDOT_TABLE[i + 1]
+        if v1 <= vo2max <= v2:
+            # Linear interpolation
+            frac = (vo2max - v1) / (v2 - v1)
+            return t1 + frac * (t2 - t1)
+
+    return float(_VDOT_TABLE[-1][1])
+
+
+def predict_marathon_time(conn: sqlite3.Connection | None = None,
+                          races: list[dict] | None = None,
+                          vo2max: float | None = None) -> dict:
+    """Predict marathon time using Riegel formula and Daniels VDOT table.
 
     Args:
+        conn: Optional DB connection for data-quantity confidence assessment.
         races: List of race dicts with keys: distance_km, time_seconds, date.
         vo2max: Current VO2max estimate from Garmin.
 
     Returns:
         Dict with predictions: riegel (from each race), vdot (from VO2max),
-        and a recommended range.
+        confidence band, and a recommended range.
     """
+    if races is None:
+        races = []
     marathon_km = 42.195
     predictions = {}
 
@@ -319,14 +430,9 @@ def predict_marathon_time(races: list[dict], vo2max: float | None = None) -> dic
             })
     predictions["riegel"] = riegel_preds
 
-    # VDOT approximation from VO2max
-    # Simplified: marathon time ≈ (VO2max-based) using Daniels' approximation
-    # At VO2max 49: ~3:55 marathon, 50: ~3:48, 51: ~3:42, 53: ~3:30
+    # VDOT prediction using Daniels lookup table with interpolation
     if vo2max and vo2max > 30:
-        # Rough linear approximation in the 45-55 range
-        base_seconds = 16800  # ~4:40 at VO2max 40
-        seconds_per_unit = -300  # each VO2max point saves ~5 min
-        vdot_seconds = max(7200, base_seconds + (vo2max - 40) * seconds_per_unit)
+        vdot_seconds = _vdot_to_marathon_seconds(vo2max)
         predictions["vdot"] = {
             "vo2max": vo2max,
             "predicted_seconds": round(vdot_seconds),
@@ -335,25 +441,153 @@ def predict_marathon_time(races: list[dict], vo2max: float | None = None) -> dic
     else:
         predictions["vdot"] = None
 
+    # Confidence band based on data quantity and calibration
+    confidence = _compute_prediction_confidence(conn, races)
+    predictions["confidence"] = confidence
+
     return predictions
+
+
+def _compute_prediction_confidence(conn: sqlite3.Connection | None,
+                                   races: list[dict]) -> dict:
+    """Compute prediction confidence band.
+
+    Returns dict with level, margin_seconds, and description.
+    - "low": <8 weeks data, base phase -> +/-15 min (900s)
+    - "moderate": 8-16 weeks -> +/-8 min (480s)
+    - "high": 16+ weeks or recent race calibration -> +/-4 min (240s)
+    """
+    weeks_of_data = 0
+    has_recent_race = len(races) > 0
+
+    if conn is not None:
+        try:
+            row = conn.execute("SELECT COUNT(*) as cnt FROM weekly_agg").fetchone()
+            weeks_of_data = row[0] if row else 0
+        except Exception:
+            weeks_of_data = 0
+
+    if weeks_of_data >= 16 or has_recent_race:
+        return {"level": "high", "margin_seconds": 240,
+                "description": "+-4 min (16+ weeks data or race calibration)"}
+    elif weeks_of_data >= 8:
+        return {"level": "moderate", "margin_seconds": 480,
+                "description": "+-8 min (8-16 weeks data)"}
+    else:
+        return {"level": "low", "margin_seconds": 900,
+                "description": "+-15 min (<8 weeks data)"}
+
+
+# ── sRPE Computation ──
+
+
+def compute_srpe(conn: sqlite3.Connection) -> int:
+    """Compute sRPE for activities that have checkin RPE but no sRPE yet.
+
+    Join strategy: for each date with a checkin RPE, find the activity with
+    the highest training_load on that date and compute srpe = rpe * duration_min.
+
+    Returns count of updated activities.
+    """
+    # Find dates with checkin RPE
+    checkin_rows = conn.execute("""
+        SELECT c.date, c.rpe FROM checkins c
+        WHERE c.rpe IS NOT NULL AND c.rpe > 0
+    """).fetchall()
+
+    count = 0
+    for row in checkin_rows:
+        d = row["date"]
+        rpe = row["rpe"]
+
+        # Find the activity with highest training_load on that date that has no sRPE
+        activity = conn.execute("""
+            SELECT id, duration_min FROM activities
+            WHERE date = ? AND srpe IS NULL AND duration_min IS NOT NULL
+            ORDER BY training_load DESC NULLS LAST
+            LIMIT 1
+        """, (d,)).fetchone()
+
+        if activity and activity["duration_min"]:
+            srpe = rpe * activity["duration_min"]
+            conn.execute("UPDATE activities SET srpe = ? WHERE id = ?",
+                         (round(srpe, 1), activity["id"]))
+            count += 1
+
+    if count > 0:
+        conn.commit()
+        logger.info("Computed sRPE for %d activities", count)
+    return count
+
+
+# ── Return-to-Run Protocol ──
+
+
+def detect_training_gap(conn: sqlite3.Connection) -> dict | None:
+    """Detect if athlete is in return-to-run phase (>=14-day gap).
+
+    Returns dict with gap info and volume cap recommendations, or None if no gap.
+    """
+    last_run = conn.execute(
+        "SELECT MAX(date) as last_date FROM activities WHERE type='running'"
+    ).fetchone()
+
+    if not last_run or not last_run["last_date"]:
+        return None
+
+    last_date = date.fromisoformat(last_run["last_date"])
+    gap_days = (date.today() - last_date).days
+
+    if gap_days < 14:
+        return None
+
+    # Compute pre-gap weekly average (4 weeks before last run)
+    pre_gap_start = last_date - timedelta(days=28)
+    pre_gap = conn.execute("""
+        SELECT AVG(weekly_km) as avg_km FROM (
+            SELECT SUM(distance_km) as weekly_km
+            FROM activities
+            WHERE type='running' AND date BETWEEN ? AND ?
+            GROUP BY strftime('%Y-W%W', date)
+        )
+    """, (pre_gap_start.isoformat(), last_run["last_date"])).fetchone()
+
+    pre_gap_avg = pre_gap["avg_km"] if pre_gap and pre_gap["avg_km"] else 0
+
+    # Volume cap: 50% of pre-gap avg, ramping 10-15%/week for 4 weeks
+    ramp_weeks = []
+    current_cap = pre_gap_avg * 0.5
+    for week in range(1, 5):
+        ramp_weeks.append({"week": week, "volume_cap_km": round(current_cap, 1)})
+        current_cap *= 1.125  # 12.5% increase per week (midpoint of 10-15%)
+
+    return {
+        "gap_days": gap_days,
+        "last_run_date": last_run["last_date"],
+        "pre_gap_weekly_avg_km": round(pre_gap_avg, 1),
+        "volume_cap_km": round(pre_gap_avg * 0.5, 1),
+        "ramp_plan": ramp_weeks,
+        "suppress_acwr_alerts": True,
+    }
 
 
 def _compute_acwr(conn: sqlite3.Connection, week_str: str, current_load: float) -> float | None:
     """Compute Acute:Chronic Workload Ratio.
 
     ACWR = this week's load / average of previous 4 weeks' loads.
+    Uses date.fromisocalendar() for correct year-boundary handling (53-week years).
     """
     year = int(week_str[:4])
     week_num = int(week_str.split("W")[1])
 
+    # Use date arithmetic via fromisocalendar to handle 53-week years correctly
+    current_monday = date.fromisocalendar(year, week_num, 1)
+
     prev_loads = []
     for i in range(1, 5):
-        prev_week = week_num - i
-        prev_year = year
-        if prev_week <= 0:
-            prev_year -= 1
-            prev_week += 52
-        pw_str = f"{prev_year}-W{prev_week:02d}"
+        prev_monday = current_monday - timedelta(weeks=i)
+        prev_iso = prev_monday.isocalendar()
+        pw_str = f"{prev_iso[0]}-W{prev_iso[1]:02d}"
         row = conn.execute("SELECT total_load FROM weekly_agg WHERE week = ?", (pw_str,)).fetchone()
         if row and row["total_load"] is not None:
             prev_loads.append(row["total_load"])
@@ -369,7 +603,10 @@ def _compute_acwr(conn: sqlite3.Connection, week_str: str, current_load: float) 
 
 
 def _compute_streak(conn: sqlite3.Connection, week_str: str, current_run_count: int) -> int:
-    """Compute consecutive weeks with 3+ runs ending at current week."""
+    """Compute consecutive weeks with 3+ runs ending at current week.
+
+    Uses date.fromisocalendar() for correct year-boundary handling (53-week years).
+    """
     if current_run_count < 3:
         return 0
 
@@ -377,13 +614,13 @@ def _compute_streak(conn: sqlite3.Connection, week_str: str, current_run_count: 
     year = int(week_str[:4])
     week_num = int(week_str.split("W")[1])
 
+    # Use date arithmetic via fromisocalendar to handle 53-week years correctly
+    current_monday = date.fromisocalendar(year, week_num, 1)
+
     for i in range(1, 52):
-        prev_week = week_num - i
-        prev_year = year
-        if prev_week <= 0:
-            prev_year -= 1
-            prev_week += 52
-        pw_str = f"{prev_year}-W{prev_week:02d}"
+        prev_monday = current_monday - timedelta(weeks=i)
+        prev_iso = prev_monday.isocalendar()
+        pw_str = f"{prev_iso[0]}-W{prev_iso[1]:02d}"
         row = conn.execute("SELECT run_count FROM weekly_agg WHERE week = ?", (pw_str,)).fetchone()
         if row and row["run_count"] and row["run_count"] >= 3:
             streak += 1
