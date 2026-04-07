@@ -155,8 +155,24 @@ def report(daily: bool, weekly: bool):
         conn.close()
 
 
-@main.command("races")
-def races():
+DISTANCE_ALIASES = {
+    "5k": ("5km", 5.0), "5km": ("5km", 5.0),
+    "10k": ("10km", 10.0), "10km": ("10km", 10.0),
+    "hm": ("Halbmarathon", 21.1), "half": ("Halbmarathon", 21.1), "halbmarathon": ("Halbmarathon", 21.1),
+    "marathon": ("Marathon", 42.195), "m": ("Marathon", 42.195),
+}
+
+
+@main.group(invoke_without_command=True)
+@click.pass_context
+def races(ctx):
+    """Manage race calendar."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(races_list)
+
+
+@races.command("list")
+def races_list():
     """Show race calendar with match status."""
     from fit.config import get_config
     from fit.db import get_db
@@ -165,13 +181,13 @@ def races():
     conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
     try:
         rows = conn.execute("""
-            SELECT rc.date, rc.name, rc.distance, rc.status, rc.target_time, rc.result_time,
+            SELECT rc.id, rc.date, rc.name, rc.distance, rc.status, rc.target_time, rc.result_time,
                    rc.garmin_time, rc.activity_id, rc.organizer
             FROM race_calendar rc ORDER BY rc.date
         """).fetchall()
         console.print(f"\n[bold]Race Calendar ({len(rows)} races)[/bold]\n")
-        console.print(f"  {'':1s} {'Date':10s}  {'Status':10s}  {'Distance':12s}  {'Official':>8s}  {'Garmin':>8s}  {'Target':>8s}  Name")
-        console.print(f"  {'':1s} {'─'*10}  {'─'*10}  {'─'*12}  {'─'*8}  {'─'*8}  {'─'*8}  {'─'*20}")
+        console.print(f"  {'':1s} {'ID':>3s}  {'Date':10s}  {'Status':10s}  {'Distance':12s}  {'Official':>8s}  {'Garmin':>8s}  {'Target':>8s}  Name")
+        console.print(f"  {'':1s} {'─'*3}  {'─'*10}  {'─'*10}  {'─'*12}  {'─'*8}  {'─'*8}  {'─'*8}  {'─'*20}")
         for r in rows:
             matched = "[green]✓[/green]" if r["activity_id"] else "[red]✗[/red]"
             status_color = {"completed": "green", "registered": "cyan", "planned": "dim", "dns": "red", "dnf": "red"}
@@ -179,12 +195,153 @@ def races():
             result = r["result_time"] or "—"
             garmin = r["garmin_time"] or "—"
             target = r["target_time"] or "—"
-            console.print(f"  {matched} {r['date']}  [{sc}]{r['status']:10s}[/]  {r['distance']:12s}  {result:>8s}  {garmin:>8s}  {target:>8s}  {r['name']}")
-        # Show unmatched warning
+            console.print(f"  {matched} {r['id']:3d}  {r['date']}  [{sc}]{r['status']:10s}[/]  {r['distance']:12s}  {result:>8s}  {garmin:>8s}  {target:>8s}  {r['name']}")
         unmatched = [r for r in rows if r["status"] == "completed" and not r["activity_id"]]
         if unmatched:
             console.print(f"\n  [yellow]⚠ {len(unmatched)} completed race(s) without matching activity (pre-sync period)[/yellow]")
         console.print()
+    finally:
+        conn.close()
+
+
+@races.command("add")
+def races_add():
+    """Add a race to the calendar interactively."""
+    from rich.prompt import Prompt
+
+    from fit.config import get_config
+    from fit.db import get_db
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    try:
+        name = Prompt.ask("  Race name")
+        race_date = Prompt.ask("  Date (YYYY-MM-DD)")
+        distance_input = Prompt.ask("  Distance (5k/10k/half/marathon or e.g. 5.7km)").strip().lower()
+
+        # Resolve distance
+        if distance_input in DISTANCE_ALIASES:
+            distance_label, distance_km = DISTANCE_ALIASES[distance_input]
+        else:
+            # Try parsing as number + km
+            import re
+            m = re.match(r"([\d.]+)\s*km?", distance_input)
+            if m:
+                distance_km = float(m.group(1))
+                distance_label = f"{distance_km}km"
+            else:
+                distance_km = None
+                distance_label = distance_input
+
+        status = Prompt.ask("  Status", choices=["registered", "planned", "completed"], default="registered")
+        target_time = Prompt.ask("  Target time (H:MM:SS or M:SS, enter=skip)", default="").strip() or None
+        organizer = Prompt.ask("  Organizer (enter=skip)", default="").strip() or None
+
+        conn.execute("""
+            INSERT INTO race_calendar (date, name, organizer, distance, distance_km, status, target_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (race_date, name, organizer, distance_label, distance_km, status, target_time))
+        race_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.commit()
+
+        console.print(f"\n  [green]✓ Race added: {name} on {race_date} (id={race_id})[/green]")
+        console.print("  [dim]Use 'fit races' to view calendar, 'fit sync' to match with Garmin activities[/dim]")
+    finally:
+        conn.close()
+
+
+@races.command("update")
+@click.argument("race_id", type=int)
+def races_update(race_id):
+    """Update a race in the calendar."""
+    from rich.prompt import Prompt
+
+    from fit.config import get_config
+    from fit.db import get_db
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    try:
+        row = conn.execute("SELECT * FROM race_calendar WHERE id = ?", (race_id,)).fetchone()
+        if not row:
+            console.print(f"  [red]Race {race_id} not found[/red]")
+            return
+
+        console.print(f"\n  [bold]Updating: {row['name']} ({row['date']})[/bold]")
+        console.print("  [dim]Press enter to keep current value[/dim]\n")
+
+        name = Prompt.ask(f"  Name [{row['name']}]", default=row["name"])
+        race_date = Prompt.ask(f"  Date [{row['date']}]", default=row["date"])
+
+        distance_input = Prompt.ask(f"  Distance [{row['distance']}]", default=row["distance"]).strip().lower()
+        if distance_input in DISTANCE_ALIASES:
+            distance_label, distance_km = DISTANCE_ALIASES[distance_input]
+        elif distance_input == row["distance"].lower():
+            distance_label, distance_km = row["distance"], row["distance_km"]
+        else:
+            import re
+            m = re.match(r"([\d.]+)\s*km?", distance_input)
+            if m:
+                distance_km = float(m.group(1))
+                distance_label = f"{distance_km}km"
+            else:
+                distance_km = row["distance_km"]
+                distance_label = distance_input
+
+        status = Prompt.ask(f"  Status [{row['status']}]",
+                            choices=["registered", "planned", "completed", "dns", "dnf"],
+                            default=row["status"])
+        target_time = Prompt.ask(f"  Target time [{row['target_time'] or '—'}]",
+                                 default=row["target_time"] or "").strip() or None
+        result_time = Prompt.ask(f"  Result time [{row['result_time'] or '—'}]",
+                                 default=row["result_time"] or "").strip() or None
+
+        conn.execute("""
+            UPDATE race_calendar SET name=?, date=?, distance=?, distance_km=?,
+                status=?, target_time=?, result_time=?
+            WHERE id=?
+        """, (name, race_date, distance_label, distance_km, status, target_time, result_time, race_id))
+        conn.commit()
+        console.print(f"\n  [green]✓ Updated race {race_id}: {name}[/green]")
+    finally:
+        conn.close()
+
+
+@races.command("delete")
+@click.argument("race_id", type=int)
+def races_delete(race_id):
+    """Delete a race from the calendar."""
+    from rich.prompt import Prompt
+
+    from fit.config import get_config
+    from fit.db import get_db
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    try:
+        row = conn.execute("SELECT name, date, distance FROM race_calendar WHERE id = ?", (race_id,)).fetchone()
+        if not row:
+            console.print(f"  [red]Race {race_id} not found[/red]")
+            return
+
+        confirm = Prompt.ask(
+            f"  Delete {row['name']} ({row['date']}, {row['distance']})? [y/n]",
+            choices=["y", "n"], default="n"
+        )
+        if confirm != "y":
+            console.print("  Cancelled.")
+            return
+
+        # Unlink any goals referencing this race
+        conn.execute("UPDATE goals SET race_id = NULL WHERE race_id = ?", (race_id,))
+        # Untag activity
+        conn.execute("""
+            UPDATE activities SET run_type = NULL
+            WHERE id = (SELECT activity_id FROM race_calendar WHERE id = ?)
+        """, (race_id,))
+        conn.execute("DELETE FROM race_calendar WHERE id = ?", (race_id,))
+        conn.commit()
+        console.print(f"  [green]✓ Deleted race {race_id}: {row['name']}[/green]")
     finally:
         conn.close()
 
