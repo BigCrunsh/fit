@@ -176,6 +176,22 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   </div>
   {% endif %}
 
+  <!-- Checkpoints (races before target with derived targets) -->
+  {% if checkpoints %}
+  <div style="margin:10px 0">
+    {% for cp in checkpoints %}
+    <div style="display:flex;align-items:center;gap:10px;padding:6px 12px;margin:3px 0;font-size:11px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
+      <span style="font-weight:700;color:var(--accent);font-family:var(--mono)">{{ cp.days }}d</span>
+      <span style="color:var(--text)">{{ cp.name }}</span>
+      <span style="color:var(--text-dim)">{{ cp.distance }}</span>
+      {% if cp.user_target %}<span style="font-family:var(--mono)">target: {{ cp.user_target }}</span>{% endif %}
+      {% if cp.derived_target %}<span style="color:var(--text-dim)">· on-track: {{ cp.derived_target }}</span>{% endif %}
+      {% if cp.signal %}<span style="font-size:10px;color:{% if '✓' in cp.signal %}var(--safe){% elif '⚠' in cp.signal %}var(--caution){% else %}var(--text-muted){% endif %}">{{ cp.signal }}</span>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   <!-- Upcoming races (waypoints) -->
   {% if upcoming_races and upcoming_races|length > 1 %}
   <div style="margin:8px 0;display:flex;gap:6px;flex-wrap:wrap">
@@ -419,6 +435,31 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   </div>
 
   <!-- SECTION 1: Aerobic Engine -->
+  <!-- Fitness Profile (4 dimensions) -->
+  {% if fitness_profile %}
+  <div class="cards" style="margin-bottom:16px">
+    {% for dim_name in ["aerobic", "threshold", "economy", "resilience"] %}
+    {% set dim = fitness_profile[dim_name] %}
+    <div class="card" style="min-width:130px">
+      <div class="card-label">{{ dim_name }}</div>
+      {% if dim.current_value is not none %}
+      <div class="card-value" style="font-size:16px;color:{% if dim.trend == 'improving' %}var(--safe){% elif dim.trend == 'declining' %}var(--danger){% else %}var(--accent){% endif %}">{{ dim.current_value }}</div>
+      <div class="card-sub">{% if dim.trend == 'improving' %}↑{% elif dim.trend == 'declining' %}↓{% else %}→{% endif %} {{ dim.unit or '' }}{% if dim.rate_per_month %} ({{ '%+.2f' % dim.rate_per_month }}/mo){% endif %}</div>
+      {% else %}
+      <div style="font-size:10px;color:var(--text-dim);margin-top:4px">{{ dim.message or 'No data' }}</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% if fitness_profile.effective_vdot %}
+    <div class="card" style="min-width:130px">
+      <div class="card-label">VDOT</div>
+      <div class="card-value" style="font-size:16px;color:var(--accent)">{{ fitness_profile.effective_vdot }}</div>
+      <div class="card-sub">{% if fitness_profile.race_vdot %}race {{ fitness_profile.race_vdot }}{% endif %} · Garmin {{ fitness_profile.garmin_vo2max or '—' }}</div>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
   <div class="sec"><h2>Your Aerobic Engine</h2><div class="line"></div></div>
   <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">Can your body deliver enough oxygen to sustain marathon pace? VO2max is the ceiling, efficiency is how much you use, zones determine if your training builds it.</div>
 

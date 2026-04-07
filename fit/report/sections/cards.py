@@ -760,3 +760,21 @@ def _status_cards_with_actions(conn):
         elif label == "HRV":
             card["action"] = "Trends > single values"
     return cards
+
+
+def _fitness_profile_data(conn):
+    """Fitness profile for dashboard rendering."""
+    try:
+        from fit.fitness import get_fitness_profile
+        return get_fitness_profile(conn)
+    except Exception:
+        return None
+
+
+def _checkpoint_data(conn):
+    """Checkpoint races with derived targets."""
+    try:
+        from fit.fitness import derive_checkpoint_targets
+        return derive_checkpoint_targets(conn)
+    except Exception:
+        return []

@@ -47,6 +47,8 @@ from fit.report.sections.cards import (  # noqa: E402
     _volume_story,
     _checkin_progress,
     _status_cards_with_actions,
+    _fitness_profile_data,
+    _checkpoint_data,
 )
 from fit.report.sections.charts import _all_charts  # noqa: E402
 from fit.report.sections.predictions import _prediction_summary, _race_prediction  # noqa: E402
@@ -113,6 +115,8 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "split_data": _split_data(conn),
         "plan_adherence": _plan_adherence(conn),
         "upcoming_races": _upcoming_races(conn),
+        "fitness_profile": _fitness_profile_data(conn),
+        "checkpoints": _checkpoint_data(conn),
         "body_summary": _body_summary(conn),
         "volume_story": _volume_story(conn),
         "checkin_progress": _checkin_progress(conn),

@@ -64,12 +64,12 @@
 
 ## 8. Dashboard Redesign: Metric Cards
 
-- [ ] 8.1 Create metric card component: value + action + sparkline + target
-- [ ] 8.2 Body tab: replace 6 charts with metric cards (readiness, RHR, HRV, stress) + keep charts (weight, sleep, ACWR)
-- [ ] 8.3 Training tab: volume/compliance/frequency as cards with gap-to-target from objectives
-- [ ] 8.4 Today tab: objective cards show gap + achievability from fitness profile
-- [ ] 8.5 Fitness tab: efficiency trend caption, zone distribution as 5-zone %, split analysis as "resilience test"
-- [ ] 8.6 Test: cards render with/without target, empty states, achievability levels
+- [x] 8.1 Create metric card component: value + action + sparkline + target
+- [x] 8.2 Body tab: replace 6 charts with metric cards (readiness, RHR, HRV, stress) + keep charts (weight, sleep, ACWR)
+- [x] 8.3 Training tab: volume/compliance/frequency as cards with gap-to-target from objectives
+- [x] 8.4 Today tab: objective cards show gap + achievability from fitness profile
+- [x] 8.5 Fitness tab: efficiency trend caption, zone distribution as 5-zone %, split analysis as "resilience test"
+- [x] 8.6 Test: cards render with/without target, empty states, achievability levels
 
 ## 9. Documentation
 
