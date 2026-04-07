@@ -972,7 +972,7 @@ def _race_prediction(conn):
         SELECT rc.date, rc.name, rc.distance, rc.distance_km, rc.result_time
         FROM race_calendar rc
         WHERE rc.status = 'completed' AND rc.result_time IS NOT NULL
-        ORDER BY rc.date DESC LIMIT 8
+        ORDER BY rc.date DESC
     """).fetchall()
     vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
     if not races and not vo2:
