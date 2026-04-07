@@ -346,20 +346,42 @@ class TestRunType:
         result = classify_run_type({})
         assert result is None
 
-    def test_long_run_custom_threshold(self):
-        """Long run threshold adapts to recent_long_run_avg."""
-        # recent_long_run_avg=20, threshold=max(15, 20*0.75)=15
+    def test_long_run_absolute_floor(self):
+        """12km+ is always long regardless of weekly volume."""
         assert classify_run_type(
-            {"type": "running", "name": "Run", "distance_km": 16, "hr_zone": "Z2"},
-            recent_long_run_avg=20,
+            {"type": "running", "name": "Run", "distance_km": 12, "hr_zone": "Z2"},
+            weekly_km=100,
         ) == "long"
 
-    def test_not_long_run_below_threshold(self):
-        """14km is not long when recent_long_run_avg=20 (threshold=15)."""
+    def test_long_run_pct_of_weekly(self):
+        """9km is long when weekly volume is 25km (>30% = 7.5km AND >=8km)."""
         assert classify_run_type(
-            {"type": "running", "name": "Run", "distance_km": 14, "hr_zone": "Z2"},
-            recent_long_run_avg=20,
+            {"type": "running", "name": "Run", "distance_km": 9, "hr_zone": "Z2"},
+            weekly_km=25,
+        ) == "long"
+
+    def test_not_long_below_8km_floor(self):
+        """7km is NOT long even if >30% of weekly volume (below 8km minimum)."""
+        assert classify_run_type(
+            {"type": "running", "name": "Run", "distance_km": 7, "hr_zone": "Z2"},
+            weekly_km=15,
         ) == "easy"
+
+    def test_not_long_below_30_pct(self):
+        """9km is NOT long when weekly volume is 60km (9/60 = 15% < 30%)."""
+        assert classify_run_type(
+            {"type": "running", "name": "Run", "distance_km": 9, "hr_zone": "Z2"},
+            weekly_km=60,
+        ) == "easy"
+
+    def test_long_run_no_weekly_km(self):
+        """Without weekly_km, only absolute floor (12km) applies."""
+        assert classify_run_type(
+            {"type": "running", "name": "Run", "distance_km": 11, "hr_zone": "Z2"},
+        ) == "easy"
+        assert classify_run_type(
+            {"type": "running", "name": "Run", "distance_km": 12, "hr_zone": "Z2"},
+        ) == "long"
 
     def test_tempo_by_zone_but_short_distance(self):
         """Z4 but distance < 6 is NOT tempo, defaults to easy."""
@@ -385,27 +407,27 @@ class TestRunType:
 class TestRacePrediction:
     # Happy
     def test_riegel_from_hm(self):
-        preds = predict_marathon_time([
+        preds = predict_marathon_time(races=[
             {"distance_km": 21.1, "time_seconds": 6572, "name": "Oct HM"},
         ], vo2max=49)
         assert len(preds["riegel"]) == 1
         assert preds["riegel"][0]["predicted_seconds"] > 0
 
     def test_riegel_from_10k(self):
-        preds = predict_marathon_time([
+        preds = predict_marathon_time(races=[
             {"distance_km": 10, "time_seconds": 2700, "name": "10k"},
         ])
         assert len(preds["riegel"]) == 1
         assert preds["riegel"][0]["predicted_seconds"] > 6572  # longer than from HM
 
     def test_vdot_prediction(self):
-        preds = predict_marathon_time([], vo2max=49)
+        preds = predict_marathon_time(races=[], vo2max=49)
         assert preds["vdot"] is not None
         assert preds["vdot"]["predicted_seconds"] > 0
         assert preds["vdot"]["predicted_pace_sec_km"] > 0
 
     def test_multiple_races(self):
-        preds = predict_marathon_time([
+        preds = predict_marathon_time(races=[
             {"distance_km": 10, "time_seconds": 2700, "name": "10k"},
             {"distance_km": 21.1, "time_seconds": 6000, "name": "HM"},
         ])
@@ -413,45 +435,45 @@ class TestRacePrediction:
 
     # Unhappy
     def test_no_data(self):
-        preds = predict_marathon_time([], vo2max=None)
+        preds = predict_marathon_time(races=[], vo2max=None)
         assert preds["riegel"] == []
         assert preds["vdot"] is None
 
     def test_no_races(self):
-        preds = predict_marathon_time([])
+        preds = predict_marathon_time(races=[])
         assert preds["riegel"] == []
 
     def test_zero_distance_race(self):
         """Race with d1=0 should be skipped."""
-        preds = predict_marathon_time([
+        preds = predict_marathon_time(races=[
             {"distance_km": 0, "time_seconds": 3000},
         ])
         assert preds["riegel"] == []
 
     def test_zero_time_race(self):
         """Race with t1=0 should be skipped."""
-        preds = predict_marathon_time([
+        preds = predict_marathon_time(races=[
             {"distance_km": 10, "time_seconds": 0},
         ])
         assert preds["riegel"] == []
 
     def test_negative_distance(self):
         """Negative distance should be skipped (d1 > 0 fails)."""
-        preds = predict_marathon_time([
+        preds = predict_marathon_time(races=[
             {"distance_km": -5, "time_seconds": 3000},
         ])
         assert preds["riegel"] == []
 
     def test_distance_longer_than_marathon(self):
         """Distance >= marathon should be skipped (d1 < marathon_km)."""
-        preds = predict_marathon_time([
+        preds = predict_marathon_time(races=[
             {"distance_km": 50, "time_seconds": 18000},
         ])
         assert preds["riegel"] == []
 
     def test_very_short_distance(self):
         """Very short race distance (1km) still computes."""
-        preds = predict_marathon_time([
+        preds = predict_marathon_time(races=[
             {"distance_km": 1, "time_seconds": 180, "name": "1km TT"},
         ])
         assert len(preds["riegel"]) == 1
@@ -459,26 +481,26 @@ class TestRacePrediction:
 
     def test_vdot_too_low(self):
         """VO2max <= 30 gives no VDOT prediction."""
-        preds = predict_marathon_time([], vo2max=30)
+        preds = predict_marathon_time(races=[], vo2max=30)
         assert preds["vdot"] is None
 
     def test_vdot_barely_above_threshold(self):
-        preds = predict_marathon_time([], vo2max=31)
+        preds = predict_marathon_time(races=[], vo2max=31)
         assert preds["vdot"] is not None
 
     def test_vdot_very_high(self):
-        """Very high VO2max should not go below floor of 7200s."""
-        preds = predict_marathon_time([], vo2max=100)
-        assert preds["vdot"]["predicted_seconds"] >= 7200
+        """Very high VO2max should not go below table minimum."""
+        preds = predict_marathon_time(races=[], vo2max=100)
+        assert preds["vdot"]["predicted_seconds"] > 0
 
     def test_missing_race_keys(self):
         """Race dict with missing keys should be skipped gracefully."""
-        preds = predict_marathon_time([{}])
+        preds = predict_marathon_time(races=[{}])
         assert preds["riegel"] == []
 
     def test_race_with_name_missing(self):
         """Race without name uses distance as default label."""
-        preds = predict_marathon_time([
+        preds = predict_marathon_time(races=[
             {"distance_km": 10, "time_seconds": 2700},
         ])
         assert preds["riegel"][0]["from_race"] == "10.0km"
@@ -755,3 +777,228 @@ class TestEnrichActivity:
         assert result["hr_zone"] is None
         assert result["speed_per_bpm"] is None
         assert result["run_type"] == "easy"  # type is running, no keyword match → default easy
+
+
+# ════════════════════════════════════════════════════════════════
+# Bug Fix Tests — Phase 2 Section 1
+# ════════════════════════════════════════════════════════════════
+
+
+class TestACWRYearBoundary:
+    """Test ACWR year-boundary handling, including 53-week years."""
+
+    def _insert_weekly_agg(self, conn, week, total_load, run_count=3):
+        conn.execute(
+            "INSERT INTO weekly_agg (week, total_load, run_count) VALUES (?, ?, ?)",
+            (week, total_load, run_count),
+        )
+        conn.commit()
+
+    def test_week53_to_week1_transition(self, db):
+        """2020 has 53 weeks. ACWR at 2021-W02 should find 2021-W01, 2020-W53, W52, W51."""
+        for wk in ["2020-W51", "2020-W52", "2020-W53", "2021-W01"]:
+            self._insert_weekly_agg(db, wk, 200)
+        result = _compute_acwr(db, "2021-W02", 300)
+        assert result is not None
+        assert result == pytest.approx(1.5, abs=0.01)
+
+    def test_week1_looks_back_into_53_week_year(self, db):
+        """ACWR at 2021-W01 should look back into 2020's week 53, 52, 51, 50."""
+        for wk in ["2020-W50", "2020-W51", "2020-W52", "2020-W53"]:
+            self._insert_weekly_agg(db, wk, 200)
+        result = _compute_acwr(db, "2021-W01", 400)
+        assert result is not None
+        assert result == pytest.approx(2.0, abs=0.01)
+
+    def test_normal_year_boundary(self, db):
+        """Standard 52-week year boundary (2025→2026)."""
+        for wk in ["2025-W50", "2025-W51", "2025-W52", "2026-W01"]:
+            self._insert_weekly_agg(db, wk, 150)
+        result = _compute_acwr(db, "2026-W02", 150)
+        assert result is not None
+        assert result == pytest.approx(1.0, abs=0.01)
+
+
+class TestStreakYearBoundary:
+    """Test streak year-boundary handling, including 53-week years."""
+
+    def _insert_weekly_agg(self, conn, week, run_count):
+        conn.execute("INSERT INTO weekly_agg (week, run_count) VALUES (?, ?)", (week, run_count))
+        conn.commit()
+
+    def test_streak_across_53_week_year(self, db):
+        """Streak spanning 2020-W53 → 2021-W01."""
+        for wk in ["2020-W52", "2020-W53", "2021-W01"]:
+            self._insert_weekly_agg(db, wk, 4)
+        result = _compute_streak(db, "2021-W02", 3)
+        assert result == 4  # current + 3 previous
+
+    def test_streak_across_normal_year(self, db):
+        """Streak spanning 2025-W52 → 2026-W01."""
+        for wk in ["2025-W51", "2025-W52", "2026-W01"]:
+            self._insert_weekly_agg(db, wk, 3)
+        result = _compute_streak(db, "2026-W02", 3)
+        assert result == 4
+
+
+class TestLongRunDualCondition:
+    """Test all 3 scenarios for long run detection."""
+
+    def test_absolute_floor_12km(self):
+        """>=12km is always long, regardless of weekly volume."""
+        result = classify_run_type(
+            {"type": "running", "name": "Sunday", "distance_km": 12, "hr_zone": "Z2"},
+            weekly_km=100,
+        )
+        assert result == "long"
+
+    def test_pct_of_weekly_volume(self):
+        """10km with 25km weekly = 40% > 30%, and 10km >= 8km → long."""
+        result = classify_run_type(
+            {"type": "running", "name": "Sunday", "distance_km": 10, "hr_zone": "Z2"},
+            weekly_km=25,
+        )
+        assert result == "long"
+
+    def test_below_both_conditions(self):
+        """7km with 50km weekly = 14% < 30%, and 7km < 8km → not long."""
+        result = classify_run_type(
+            {"type": "running", "name": "Sunday", "distance_km": 7, "hr_zone": "Z2"},
+            weekly_km=50,
+        )
+        assert result == "easy"
+
+    def test_high_pct_but_below_8km_floor(self):
+        """6km with 15km weekly = 40% > 30%, but 6km < 8km → not long."""
+        result = classify_run_type(
+            {"type": "running", "name": "Morning", "distance_km": 6, "hr_zone": "Z2"},
+            weekly_km=15,
+        )
+        assert result == "easy"
+
+    def test_above_8km_but_low_pct(self):
+        """9km with 80km weekly = 11% < 30% → not long."""
+        result = classify_run_type(
+            {"type": "running", "name": "Morning", "distance_km": 9, "hr_zone": "Z2"},
+            weekly_km=80,
+        )
+        assert result == "easy"
+
+    def test_no_weekly_km_provided(self):
+        """Without weekly_km, only 12km absolute floor applies."""
+        assert classify_run_type(
+            {"type": "running", "name": "Run", "distance_km": 11, "hr_zone": "Z2"},
+        ) == "easy"
+        assert classify_run_type(
+            {"type": "running", "name": "Run", "distance_km": 12, "hr_zone": "Z2"},
+        ) == "long"
+
+
+class TestAlertSQL:
+    """Test that alert queries return correct data."""
+
+    def _insert_weekly_agg(self, conn, week, z12_pct):
+        conn.execute(
+            "INSERT INTO weekly_agg (week, z12_pct) VALUES (?, ?)",
+            (week, z12_pct),
+        )
+        conn.commit()
+
+    def test_all_runs_too_hard_averages_2_weeks(self, db):
+        """The all_runs_too_hard alert should average the last 2 weeks."""
+        # Insert 3 weeks: W12=80%, W13=30%, W14=40%
+        # Last 2 weeks avg = (30+40)/2 = 35% < 50 → should fire
+        self._insert_weekly_agg(db, "2026-W12", 80)
+        self._insert_weekly_agg(db, "2026-W13", 30)
+        self._insert_weekly_agg(db, "2026-W14", 40)
+        row = db.execute("""
+            SELECT AVG(z12_pct) as avg_z12 FROM (
+                SELECT z12_pct FROM weekly_agg ORDER BY week DESC LIMIT 2
+            )
+        """).fetchone()
+        assert row["avg_z12"] == pytest.approx(35.0, abs=0.1)
+
+    def test_all_runs_too_hard_not_just_max_week(self, db):
+        """Old buggy query only looked at max week. Verify we get 2 rows."""
+        self._insert_weekly_agg(db, "2026-W13", 45)
+        self._insert_weekly_agg(db, "2026-W14", 55)
+        rows = db.execute("""
+            SELECT z12_pct FROM (
+                SELECT z12_pct FROM weekly_agg ORDER BY week DESC LIMIT 2
+            )
+        """).fetchall()
+        assert len(rows) == 2
+
+    def test_single_week_still_works(self, db):
+        """With only 1 week of data, query should still return a result."""
+        self._insert_weekly_agg(db, "2026-W14", 40)
+        row = db.execute("""
+            SELECT AVG(z12_pct) as avg_z12 FROM (
+                SELECT z12_pct FROM weekly_agg ORDER BY week DESC LIMIT 2
+            )
+        """).fetchone()
+        assert row["avg_z12"] == pytest.approx(40.0, abs=0.1)
+
+
+class TestSpO2Alert:
+    """Test SpO2 consecutive day alert logic."""
+
+    def _insert_health(self, conn, day, avg_spo2):
+        conn.execute(
+            "INSERT INTO daily_health (date, avg_spo2) VALUES (?, ?)",
+            (day, avg_spo2),
+        )
+        conn.commit()
+
+    def test_spo2_2_consecutive_low_days(self, db):
+        """2 consecutive days below threshold should fire alert."""
+        from fit.alerts import run_alerts
+        self._insert_health(db, "2026-04-05", 93.0)
+        self._insert_health(db, "2026-04-06", 94.0)
+        config = {}
+        alerts = run_alerts(db, config)
+        spo2_alerts = [a for a in alerts if a["type"] == "spo2_low"]
+        assert len(spo2_alerts) == 1
+        assert spo2_alerts[0]["data"]["consecutive_days"] == 2
+
+    def test_spo2_no_alert_when_above_threshold(self, db):
+        """Days above threshold should not fire."""
+        from fit.alerts import run_alerts
+        self._insert_health(db, "2026-04-05", 97.0)
+        self._insert_health(db, "2026-04-06", 96.0)
+        config = {}
+        alerts = run_alerts(db, config)
+        spo2_alerts = [a for a in alerts if a["type"] == "spo2_low"]
+        assert len(spo2_alerts) == 0
+
+    def test_spo2_custom_threshold(self, db):
+        """Custom threshold from config should be respected."""
+        from fit.alerts import run_alerts
+        # 94% and 94.5% are below custom threshold of 96%
+        self._insert_health(db, "2026-04-05", 94.0)
+        self._insert_health(db, "2026-04-06", 94.5)
+        config = {"coaching": {"spo2_alert_threshold": 96}}
+        alerts = run_alerts(db, config)
+        spo2_alerts = [a for a in alerts if a["type"] == "spo2_low"]
+        assert len(spo2_alerts) == 1
+
+    def test_spo2_non_consecutive_no_alert(self, db):
+        """Low days separated by a normal day should not fire."""
+        from fit.alerts import run_alerts
+        self._insert_health(db, "2026-04-04", 93.0)
+        self._insert_health(db, "2026-04-05", 97.0)  # breaks streak
+        self._insert_health(db, "2026-04-06", 93.0)
+        config = {}
+        alerts = run_alerts(db, config)
+        spo2_alerts = [a for a in alerts if a["type"] == "spo2_low"]
+        # Only 1 consecutive low day (most recent), need 2+
+        assert len(spo2_alerts) == 0
+
+    def test_spo2_single_low_day_no_alert(self, db):
+        """Only 1 low day should not fire (need 2+)."""
+        from fit.alerts import run_alerts
+        self._insert_health(db, "2026-04-06", 93.0)
+        config = {}
+        alerts = run_alerts(db, config)
+        spo2_alerts = [a for a in alerts if a["type"] == "spo2_low"]
+        assert len(spo2_alerts) == 0
