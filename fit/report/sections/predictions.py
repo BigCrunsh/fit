@@ -19,7 +19,12 @@ def _prediction_summary(conn):
     Shows range from multiple sources, not just VDOT point estimate.
     """
     try:
-        from fit.analysis import predict_marathon_time
+        from fit.analysis import _vdot_to_marathon_seconds
+        from fit.goals import get_target_race
+
+        target_race = get_target_race(conn)
+        target_km = target_race["distance_km"] if target_race and target_race.get("distance_km") else 42.195
+
         races = conn.execute("""
             SELECT distance_km, result_time FROM race_calendar
             WHERE status = 'completed' AND result_time IS NOT NULL
@@ -35,16 +40,24 @@ def _prediction_summary(conn):
                 return int(parts[0]) * 60 + int(parts[1])
             return 0
 
-        race_data = [{"distance_km": r["distance_km"], "time_seconds": _parse_time(r["result_time"])}
-                     for r in races if r["distance_km"] and r["result_time"]]
-        preds = predict_marathon_time(races=race_data, vo2max=vo2["vo2max"] if vo2 else None)
-
-        # Collect all predictions
+        # Riegel extrapolation to TARGET distance
         all_secs = []
-        if preds.get("riegel"):
-            all_secs.extend(p["predicted_seconds"] for p in preds["riegel"])
-        if preds.get("vdot") and preds["vdot"].get("predicted_seconds"):
-            all_secs.append(preds["vdot"]["predicted_seconds"])
+        for r in races:
+            if r["distance_km"] and r["result_time"]:
+                d1 = r["distance_km"]
+                t1 = _parse_time(r["result_time"])
+                if d1 > 0 and t1 > 0 and d1 != target_km:
+                    t2 = t1 * (target_km / d1) ** 1.06
+                    all_secs.append(round(t2))
+
+        # VDOT prediction scaled to target distance
+        if vo2 and vo2["vo2max"] and vo2["vo2max"] > 30:
+            marathon_secs = _vdot_to_marathon_seconds(vo2["vo2max"])
+            if target_km != 42.195:
+                vdot_secs = round(marathon_secs * (target_km / 42.195) ** 1.06)
+            else:
+                vdot_secs = round(marathon_secs)
+            all_secs.append(vdot_secs)
 
         if not all_secs:
             return None
@@ -55,8 +68,8 @@ def _prediction_summary(conn):
         def _fmt(s):
             return f"{s // 3600}:{(s % 3600) // 60:02d}"
 
-        confidence = preds.get("confidence", {})
-        level = confidence.get("level", "low")
+        # Simple confidence based on data count
+        level = "moderate" if len(all_secs) >= 5 else "low"
         level_label = {"high": "", "moderate": " (moderate confidence)", "low": " (low confidence)"}
 
         if hi - lo < 300:  # within 5 min — show single value
