@@ -1039,37 +1039,55 @@ def _race_prediction(conn):
                  f"<div style='font-size:28px;font-weight:700;color:var(--accent);font-family:var(--mono)'>{target_str}</div>"
                  f"</div>")
 
-    # Build prediction rows
-    rows = []
-    for r in race_data:
-        t = r["predicted_seconds"]
-        dist = r.get("distance_km") or 0
-        if dist > 18:
-            short = "Half Marathon"
-        elif dist > 8:
-            short = "10K"
-        elif dist > 3:
-            short = "5K"
-        else:
-            short = (r.get("from_race") or "")[:20]
-        race_date = (r.get("from_date") or "")[:7]
+    def _delta_html(t):
         delta = t - target_secs
         delta_str = f"{'−' if delta < 0 else '+'}{abs(delta) // 60} min" if abs(delta) > 30 else "= target"
         color = "var(--safe)" if delta < 0 else "var(--caution)" if delta < 300 else "var(--danger)"
-        rows.append(f"<tr><td style='color:var(--text-muted);font-size:10px'>{short}<br>{race_date}</td>"
-                    f"<td style='font-family:var(--mono);font-size:16px;font-weight:600'>{_fmt_time(t)}</td>"
-                    f"<td style='font-size:10px;color:var(--text-dim)'>{_fmt_pace(t)}</td>"
-                    f"<td style='font-size:10px;color:{color};font-weight:600'>{delta_str}</td></tr>")
+        return delta_str, color
 
+    def _row_html(label, sublabel, t):
+        delta_str, color = _delta_html(t)
+        return (f"<tr><td style='color:var(--text-muted);font-size:10px'>{label}<br>"
+                f"<span style='font-size:9px'>{sublabel}</span></td>"
+                f"<td style='font-family:var(--mono);font-size:16px;font-weight:600'>{_fmt_time(t)}</td>"
+                f"<td style='font-size:10px;color:var(--text-dim)'>{_fmt_pace(t)}</td>"
+                f"<td style='font-size:10px;color:{color};font-weight:600'>{delta_str}</td></tr>")
+
+    def _section_header(title):
+        return (f"<tr><td colspan='4' style='padding:8px 4px 4px;font-size:9px;font-weight:700;"
+                f"color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;"
+                f"border-bottom:1px solid rgba(255,255,255,0.04)'>{title}</td></tr>")
+
+    # VO2max prediction (separate section)
+    rows = []
     if vdot_pred:
-        t = vdot_pred["predicted_seconds"]
-        delta = t - target_secs
-        delta_str = f"{'−' if delta < 0 else '+'}{abs(delta) // 60} min" if abs(delta) > 30 else "= target"
-        color = "var(--safe)" if delta < 0 else "var(--caution)" if delta < 300 else "var(--danger)"
-        rows.append(f"<tr><td style='color:var(--text-muted);font-size:10px'>VO2max<br>{vdot_pred['vo2max']}</td>"
-                    f"<td style='font-family:var(--mono);font-size:16px;font-weight:600'>{_fmt_time(t)}</td>"
-                    f"<td style='font-size:10px;color:var(--text-dim)'>{_fmt_pace(t)}</td>"
-                    f"<td style='font-size:10px;color:{color};font-weight:600'>{delta_str}</td></tr>")
+        rows.append(_section_header("VO2max Estimate (Daniels)"))
+        rows.append(_row_html("VO2max", str(vdot_pred["vo2max"]), vdot_pred["predicted_seconds"]))
+
+    # Group races by distance category
+    distance_groups = {}
+    for r in race_data:
+        d = r.get("distance_km") or 0
+        if d > 18:
+            group = "Half Marathon"
+        elif d > 8:
+            group = "10K"
+        elif d > 3:
+            group = "5K"
+        else:
+            group = "Other"
+        distance_groups.setdefault(group, []).append(r)
+
+    # Render each group (order: HM → 10K → 5K → Other)
+    for group_name in ["Half Marathon", "10K", "5K", "Other"]:
+        group_races = distance_groups.get(group_name, [])
+        if not group_races:
+            continue
+        rows.append(_section_header(f"From {group_name} races ({len(group_races)})"))
+        for r in group_races:  # already sorted by date DESC
+            race_date = (r.get("from_date") or "")[:10]
+            name = (r.get("from_race") or "")[:25]
+            rows.append(_row_html(name, race_date, r["predicted_seconds"]))
 
     if rows:
         parts.append("<table style='width:100%;border-collapse:collapse;margin:8px 0'>"
