@@ -461,7 +461,7 @@ def target_show():
             # VDOT line
             if profile["effective_vdot"]:
                 src = f"race {profile['race_vdot']}" if profile["race_vdot"] else "Garmin"
-                vdot_obj = next((o for o in derived if "vo2max" in o["name"].lower()), None)
+                vdot_obj = next((o for o in derived if "vdot" in o["name"].lower()), None)
                 if vdot_obj:
                     required = vdot_obj.get("target_value", "—")
                     gap = profile["effective_vdot"] - required if required and required != "—" else None
@@ -480,7 +480,7 @@ def target_show():
                     obj = None
                     for o in derived:
                         oname = o["name"].lower()
-                        if dim_name == "aerobic" and "vo2max" in oname:
+                        if False and dim_name == "aerobic":  # Aerobic shown via VDOT line, not duplicated
                             obj = o
                         elif dim_name == "resilience" and "long run" in oname:
                             obj = o

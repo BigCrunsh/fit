@@ -153,22 +153,26 @@ class TestInverseVDOT:
 
 class TestEffectiveVDOT:
     def test_recent_race_preferred(self):
-        """Recent race VDOT should be weighted 70%."""
+        """Recent race VDOT should be used directly (no Garmin blend)."""
         recent_date = (date.today() - timedelta(days=14)).isoformat()
         result = _compute_effective_vdot(49.0, 46.0, recent_date)
-        # 46 * 0.7 + 49 * 0.3 = 32.2 + 14.7 = 46.9
-        assert result is not None
-        assert 46.5 <= result <= 47.5
+        assert result == 46.0  # Race VDOT used directly, Garmin ignored
 
-    def test_stale_race_uses_garmin(self):
-        """Race VDOT older than 8 weeks should fall back to Garmin."""
-        stale_date = (date.today() - timedelta(days=60)).isoformat()
-        result = _compute_effective_vdot(49.0, 46.0, stale_date)
-        assert result == 49.0
+    def test_stale_race_still_used_within_6mo(self):
+        """Race VDOT within 6 months still preferred over Garmin."""
+        date_4mo = (date.today() - timedelta(days=120)).isoformat()
+        result = _compute_effective_vdot(49.0, 42.0, date_4mo)
+        assert result == 42.0  # Race still within 6 months
 
-    def test_no_race_uses_garmin(self):
+    def test_very_stale_race_uses_discounted_garmin(self):
+        """Race older than 6 months falls back to Garmin - 5."""
+        stale_date = (date.today() - timedelta(days=200)).isoformat()
+        result = _compute_effective_vdot(49.0, 42.0, stale_date)
+        assert result == 44.0  # Garmin 49 - 5 = 44
+
+    def test_no_race_uses_discounted_garmin(self):
         result = _compute_effective_vdot(49.0, None, None)
-        assert result == 49.0
+        assert result == 44.0  # Garmin 49 - 5 = 44
 
     def test_no_garmin_uses_race(self):
         recent_date = (date.today() - timedelta(days=7)).isoformat()

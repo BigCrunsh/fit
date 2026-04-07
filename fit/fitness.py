@@ -270,11 +270,18 @@ def _get_garmin_vo2max(conn: sqlite3.Connection) -> float | None:
 
 
 def _get_race_vdot(conn: sqlite3.Connection) -> tuple[float | None, str | None]:
-    """Most recent VDOT from a completed race result."""
+    """Best VDOT from recent race results (last 6 months).
+
+    Uses the BEST (highest) VDOT from recent races, not the most recent.
+    This avoids a single bad race (wind, illness, pacing) dragging down
+    the effective VDOT. The best recent race is the most representative
+    of actual fitness potential.
+    """
     races = conn.execute("""
         SELECT date, distance_km, result_time FROM race_calendar
         WHERE status = 'completed' AND result_time IS NOT NULL AND distance_km IS NOT NULL
-        ORDER BY date DESC LIMIT 3
+        AND date >= date('now', '-180 days')
+        ORDER BY date DESC
     """).fetchall()
 
     if not races:
@@ -288,27 +295,42 @@ def _get_race_vdot(conn: sqlite3.Connection) -> tuple[float | None, str | None]:
             return int(parts[0]) * 60 + int(parts[1])
         return 0
 
-    # Use the most recent race
-    r = races[0]
-    time_sec = _parse_time(r["result_time"])
-    vdot = compute_vdot_from_race(r["distance_km"], time_sec)
-    return vdot, r["date"]
+    # Compute VDOT for each recent race, pick the best
+    best_vdot = None
+    best_date = None
+    for r in races:
+        time_sec = _parse_time(r["result_time"])
+        vdot = compute_vdot_from_race(r["distance_km"], time_sec)
+        if vdot and (best_vdot is None or vdot > best_vdot):
+            best_vdot = vdot
+            best_date = r["date"]
+
+    return best_vdot, best_date
 
 
 def _compute_effective_vdot(garmin_vo2: float | None, race_vdot: float | None,
                              race_date: str | None) -> float | None:
-    """Blend Garmin VO2max and race VDOT. Prefer race when <8 weeks old."""
+    """Compute effective VDOT from race results and Garmin VO2max.
+
+    Race VDOT is ALWAYS preferred over Garmin VO2max because:
+    - Race VDOT comes from actual performance (you ran that time)
+    - Garmin VO2max is estimated from wrist HR during short GPS runs
+    - Garmin consistently overestimates by 5-10 VDOT points
+
+    When race data exists (<6 months), use race VDOT directly.
+    Fall back to Garmin only when no recent races exist, and even then
+    apply a discount factor (Garmin reads high).
+    """
     if race_vdot and race_date:
         days_ago = (date.today() - date.fromisoformat(race_date)).days
-        if days_ago <= 56:  # 8 weeks
-            # Race VDOT is recent — use it, with slight blend toward Garmin
-            if garmin_vo2:
-                # 70% race, 30% Garmin
-                return round(race_vdot * 0.7 + garmin_vo2 * 0.3, 1)
+        if days_ago <= 180:  # 6 months
             return race_vdot
 
-    # Race VDOT is stale or missing — use Garmin
-    return garmin_vo2
+    # No recent race — use Garmin with discount (tends to read ~5 VDOT high)
+    if garmin_vo2:
+        return round(garmin_vo2 - 5, 1)
+
+    return None
 
 
 # ── Trend Computation ──
@@ -410,16 +432,15 @@ def derive_objectives(conn, race_id: int) -> list[dict]:
     if target_secs:
         required_vdot = compute_vdot_from_race(distance_km, target_secs)
         if required_vdot:
-            # VDOT maps roughly to VO2max for trained runners
-            # Garmin VO2max tends to read ~2-4 higher than race VDOT
-            required_vo2max = required_vdot + 3  # conservative: Garmin reads higher
+            # Target is the VDOT needed — no Garmin offset since we now
+            # use race VDOT (not Garmin VO2max) for achievability
             objectives.append({
-                "name": f"VO2max ≥{required_vo2max:.0f}",
+                "name": f"VDOT ≥{required_vdot:.0f}",
                 "type": "metric",
-                "target_value": round(required_vo2max),
-                "target_unit": "ml/kg/min",
+                "target_value": round(required_vdot),
+                "target_unit": "VDOT",
                 "derivation_source": "auto_daniels",
-                "auto_value": round(required_vo2max),
+                "auto_value": round(required_vdot),
             })
 
     # 2. Peak weekly volume (distance-based heuristic)
@@ -504,8 +525,9 @@ def compute_achievability(conn, objectives: list[dict], days_remaining: int) -> 
         current = None
         trend_rate = None
 
-        if "vo2max" in obj["name"].lower() or "vo2" in unit.lower():
-            current = profile["garmin_vo2max"]
+        if "vdot" in obj["name"].lower() or "vdot" in unit.lower():
+            # Use effective_vdot (race-based), not Garmin VO2max
+            current = profile["effective_vdot"]
             dim = profile["aerobic"]
             trend_rate = dim.get("rate_per_month")
 
@@ -522,8 +544,11 @@ def compute_achievability(conn, objectives: list[dict], days_remaining: int) -> 
             current = row["consecutive_weeks_3plus"] if row and row["consecutive_weeks_3plus"] else 0
 
         elif "z2" in obj["name"].lower() or "%" in unit:
-            row = conn.execute("SELECT z12_pct FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
-            current = row["z12_pct"] if row and row["z12_pct"] else 0
+            # Use 4-week rolling average (not just current week which may have only 1 run)
+            row = conn.execute(
+                "SELECT ROUND(AVG(z12_pct), 1) as avg FROM (SELECT z12_pct FROM weekly_agg ORDER BY week DESC LIMIT 4)"
+            ).fetchone()
+            current = row["avg"] if row and row["avg"] else 0
 
         obj["current_value"] = current
         if target and current is not None:
