@@ -108,7 +108,7 @@ def classify_run_type(activity: dict, config: dict = None, recent_long_run_avg: 
     Long run detection uses dual condition:
     - (>30% of weekly volume AND >=8km) OR (>=12km absolute floor override)
     """
-    if activity.get("type") != "running":
+    if activity.get("type") not in ("running", "track_running", "trail_running"):
         return None
 
     name = (activity.get("name") or "").lower()
@@ -166,7 +166,7 @@ def enrich_activity(activity: dict, config: dict, lthr: int | None = None,
 
     z2_range = config.get("analysis", {}).get("speed_per_bpm_hr_range", [115, 134])
     # Speed per BPM only for running activities
-    if activity.get("type") == "running":
+    if activity.get("type") in ("running", "track_running", "trail_running"):
         activity["speed_per_bpm"] = compute_speed_per_bpm(
             activity.get("distance_km"), activity.get("duration_min"), activity.get("avg_hr")
         )
@@ -207,13 +207,13 @@ def compute_weekly_agg(conn: sqlite3.Connection, week_str: str,
         SELECT distance_km, duration_min, pace_sec_per_km, avg_hr, avg_cadence,
                training_load, hr_zone, run_type
         FROM activities
-        WHERE type = 'running' AND date BETWEEN ? AND ?
+        WHERE type IN ('running', 'track_running', 'trail_running') AND date BETWEEN ? AND ?
     """, (monday.isoformat(), sunday.isoformat())).fetchall()
 
     cross = conn.execute("""
         SELECT duration_min, training_load
         FROM activities
-        WHERE type != 'running' AND date BETWEEN ? AND ?
+        WHERE type NOT IN ('running', 'track_running', 'trail_running') AND date BETWEEN ? AND ?
     """, (monday.isoformat(), sunday.isoformat())).fetchall()
 
     health = conn.execute("""
