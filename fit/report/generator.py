@@ -1479,7 +1479,7 @@ def _split_data(conn):
         run = conn.execute("""
             SELECT a.id, a.name, a.date, a.distance_km, a.duration_min
             FROM activities a
-            WHERE a.type IN ('running', 'track_running', 'trail_running') AND a.splits_status = 'parsed'
+            WHERE a.type IN ('running', 'track_running', 'trail_running') AND a.splits_status = 'done'
             ORDER BY a.date DESC LIMIT 1
         """).fetchone()
         if not run:
