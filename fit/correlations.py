@@ -1,8 +1,10 @@
 """Cross-domain correlation analysis using Spearman rank correlation."""
 
+import hashlib
 import logging
 import math
 import sqlite3
+from datetime import date, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,9 @@ CORRELATION_PAIRS = [
     ("water→HRV (lag 1)", "water_lag1_hrv", 1, 20, 30,
      "SELECT c.date, c.water_liters as x FROM checkins c WHERE c.water_liters IS NOT NULL",
      "SELECT h.date, h.hrv_last_night as y FROM daily_health h WHERE h.hrv_last_night IS NOT NULL"),
+    ("SpO2→readiness", "spo2_readiness", 0, 20, 30,
+     "SELECT h.date, h.avg_spo2 as x FROM daily_health h WHERE h.avg_spo2 IS NOT NULL",
+     "SELECT h.date, h.training_readiness as y FROM daily_health h WHERE h.training_readiness IS NOT NULL"),
 ]
 
 
@@ -78,6 +83,15 @@ def compute_all_correlations(conn: sqlite3.Connection) -> list[dict]:
                 "status": "computed", "data_count_at_compute": len(x_rows) + len(y_rows),
             }
 
+        # Effect size filter (task 4.14): actionable if n>=15 AND |r|>=0.2
+        sr = result.get("spearman_r")
+        is_actionable = (
+            n >= 15
+            and sr is not None
+            and abs(sr) >= 0.2
+        )
+        result["is_actionable"] = is_actionable
+
         # Upsert
         conn.execute("""
             INSERT INTO correlations (metric_pair, lag_days, spearman_r, pearson_r, p_value,
@@ -91,10 +105,27 @@ def compute_all_correlations(conn: sqlite3.Connection) -> list[dict]:
                 last_computed = excluded.last_computed, data_count_at_compute = excluded.data_count_at_compute
         """, result)
         results.append({**result, "name": name})
-        logger.info("Correlation %s: r=%.3f, n=%d, %s", name, result.get("spearman_r") or 0, n, result["status"])
+        logger.info("Correlation %s: r=%.3f, n=%d, %s, actionable=%s",
+                     name, result.get("spearman_r") or 0, n, result["status"], is_actionable)
 
     conn.commit()
     return results
+
+
+def get_actionable_correlations(conn: sqlite3.Connection) -> list[dict]:
+    """Return only correlations that meet the effect size filter: n>=15 AND |r|>=0.2."""
+    rows = conn.execute("""
+        SELECT metric_pair, lag_days, spearman_r, pearson_r, p_value,
+               sample_size, confidence, status
+        FROM correlations WHERE status = 'computed'
+    """).fetchall()
+    actionable = []
+    for row in rows:
+        sr = row["spearman_r"]
+        n = row["sample_size"] or 0
+        if n >= 15 and sr is not None and abs(sr) >= 0.2:
+            actionable.append({**dict(row), "is_actionable": True})
+    return actionable
 
 
 def _rank(values: list[float]) -> list[float]:
@@ -150,3 +181,78 @@ def _p_value(r: float, n: int) -> float | None:
 def _norm_cdf(x: float) -> float:
     """Standard normal CDF approximation."""
     return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+
+# ── 3.5: Rolling 8-week Correlation Windows ──
+
+
+def compute_rolling_correlations(conn: sqlite3.Connection) -> list[dict]:
+    """Compute Spearman r over the most recent 8-week window for each pair.
+
+    Returns list of rolling results per pair. Effect size filter: only return
+    pairs with n>=15 AND |r|>=0.2. Sparklines use fixed y-axis -1.0 to +1.0.
+    """
+    window_end = date.today()
+    window_start = window_end - timedelta(weeks=8)
+    window_start_str = window_start.isoformat()
+    window_end_str = window_end.isoformat()
+
+    results = []
+    for name, metric_pair, lag_days, min_report, min_coaching, sql_x, sql_y in CORRELATION_PAIRS:
+        # Fetch data within window
+        x_rows = conn.execute(sql_x).fetchall()
+        y_rows = conn.execute(sql_y).fetchall()
+
+        # Filter to window
+        x_window = {r["date"]: r["x"] for r in x_rows
+                     if window_start_str <= r["date"] <= window_end_str}
+        y_window = {r["date"]: r["y"] for r in y_rows
+                     if window_start_str <= r["date"] <= window_end_str}
+
+        # Build paired data with lag
+        pairs = []
+        for d, xv in x_window.items():
+            if lag_days > 0:
+                try:
+                    target_date = (date.fromisoformat(d) + timedelta(days=lag_days)).isoformat()
+                except (ValueError, TypeError):
+                    continue
+            else:
+                target_date = d
+            if target_date in y_window and xv is not None and y_window[target_date] is not None:
+                pairs.append((float(xv), float(y_window[target_date])))
+
+        n = len(pairs)
+
+        # Compute data hash for skip-recompute
+        data_str = str(sorted(pairs))
+        data_hash = hashlib.md5(data_str.encode()).hexdigest()[:16]
+
+        if n < 15:
+            continue
+
+        xs = [p[0] for p in pairs]
+        ys = [p[1] for p in pairs]
+        sr = _spearman_r(xs, ys)
+
+        if sr is None or abs(sr) < 0.2:
+            continue
+
+        results.append({
+            "name": name,
+            "metric_pair": metric_pair,
+            "spearman_r": round(sr, 4),
+            "sample_size": n,
+            "window_start": window_start_str,
+            "window_end": window_end_str,
+            "data_hash": data_hash,
+            # Sparkline axis config
+            "y_min": -1.0,
+            "y_max": 1.0,
+        })
+        logger.info(
+            "Rolling correlation %s: r=%.3f, n=%d (8-week window)",
+            name, sr, n
+        )
+
+    return results
