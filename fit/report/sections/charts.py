@@ -636,6 +636,49 @@ def _get_event_annotations(conn) -> dict:
                           "font": {"size": 7}, "color": DANGER + "60"},
             }
 
+    # ACWR danger spike annotations
+    try:
+        acwr_spikes = conn.execute("""
+            SELECT week, acwr FROM weekly_agg
+            WHERE acwr IS NOT NULL AND acwr > 1.5
+            ORDER BY week
+        """).fetchall()
+        for i, spike in enumerate(acwr_spikes):
+            # Convert ISO week to approximate date (Monday of that week)
+            week_str = spike["week"]
+            year = int(week_str[:4])
+            week_num = int(week_str.split("W")[1])
+            try:
+                spike_date = date.fromisocalendar(year, week_num, 1).isoformat()
+                annotations[f"acwr_spike_{i}"] = {
+                    "type": "line", "xMin": spike_date, "xMax": spike_date,
+                    "borderColor": DANGER + "60", "borderWidth": 1.5,
+                    "label": {"content": f"ACWR {spike['acwr']:.1f}", "display": True,
+                              "position": "start", "font": {"size": 7}, "color": DANGER + "80"},
+                }
+            except ValueError:
+                pass
+    except Exception:
+        pass
+
+    # First Z2 run (milestone annotation)
+    try:
+        first_z2 = conn.execute("""
+            SELECT date FROM activities
+            WHERE type IN ('running','track_running','trail_running')
+            AND hr_zone IN ('Z1', 'Z2') AND date >= date('now', '-30 days')
+            ORDER BY date ASC LIMIT 1
+        """).fetchone()
+        if first_z2:
+            annotations["first_z2"] = {
+                "type": "line", "xMin": first_z2["date"], "xMax": first_z2["date"],
+                "borderColor": SAFE + "60", "borderWidth": 1.5,
+                "label": {"content": "First Z2 ✓", "display": True,
+                          "position": "end", "font": {"size": 7}, "color": SAFE + "80"},
+            }
+    except Exception:
+        pass
+
     return annotations
 
 

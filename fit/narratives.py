@@ -534,3 +534,188 @@ def generate_z2_remediation(conn: sqlite3.Connection, config: dict) -> dict | No
             f"Slow down — if you can't hold a conversation, you're too fast."
         ),
     }
+
+
+# ── Data Storytelling Generators ──
+
+
+def generate_wow_sentence(conn: sqlite3.Connection) -> str | None:
+    """Generate a one-sentence WoW narrative instead of raw numbers.
+
+    E.g. "Volume down 58% (8km from 19km) but zone compliance flipped 0%→100%
+    — the first truly easy week."
+    """
+    weeks = conn.execute(
+        "SELECT * FROM weekly_agg ORDER BY week DESC LIMIT 2"
+    ).fetchall()
+    if len(weeks) < 2:
+        return None
+
+    this = weeks[0]
+    last = weeks[1]
+    parts = []
+
+    # Volume change
+    this_km = this["run_km"] or 0
+    last_km = last["run_km"] or 0
+    if last_km > 0:
+        vol_pct = ((this_km - last_km) / last_km) * 100
+        direction = "up" if vol_pct > 0 else "down"
+        parts.append(f"Volume {direction} {abs(vol_pct):.0f}% ({this_km:.0f}km from {last_km:.0f}km)")
+    else:
+        parts.append(f"Volume: {this_km:.0f}km (no runs last week)")
+
+    # Zone compliance change
+    this_z12 = this["z12_pct"]
+    last_z12 = last["z12_pct"]
+    if this_z12 is not None and last_z12 is not None:
+        if this_z12 > 80 and last_z12 < 50:
+            parts.append(f"zone compliance flipped {last_z12:.0f}%→{this_z12:.0f}% — first truly easy week")
+        elif this_z12 > last_z12 + 10:
+            parts.append(f"zone compliance improved {last_z12:.0f}%→{this_z12:.0f}%")
+        elif this_z12 < last_z12 - 10:
+            parts.append(f"zone compliance dropped {last_z12:.0f}%→{this_z12:.0f}%")
+
+    # Run count
+    this_runs = this["run_count"] or 0
+    last_runs = last["run_count"] or 0
+    if this_runs != last_runs:
+        parts.append(f"{this_runs} runs ({'↑' if this_runs > last_runs else '↓'}{abs(this_runs - last_runs)})")
+
+    # ACWR context
+    acwr = this["acwr"]
+    if acwr is not None:
+        # Flag if partial week
+        from datetime import date as _d
+        iso = _d.today().isocalendar()
+        current_week = f"{iso.year}-W{iso.week:02d}"
+        partial = " (week in progress)" if this["week"] == current_week and iso.weekday < 5 else ""
+        parts.append(f"ACWR {acwr:.2f}{partial}")
+
+    return " · ".join(parts) if parts else None
+
+
+def generate_body_summary(conn: sqlite3.Connection) -> str | None:
+    """One-line narrative for the Body tab: connect recovery signals.
+
+    E.g. "Recovery improving: readiness 6→67 in 3 days. RHR stable. HRV low but trending up."
+    """
+    recent = conn.execute("""
+        SELECT date, training_readiness, resting_heart_rate, hrv_last_night
+        FROM daily_health WHERE date >= date('now', '-7 days')
+        ORDER BY date DESC
+    """).fetchall()
+    if len(recent) < 2:
+        return None
+
+    parts = []
+
+    # Readiness trend
+    r_now = recent[0]["training_readiness"]
+    r_min = min((r["training_readiness"] for r in recent if r["training_readiness"]), default=None)
+    r_max = max((r["training_readiness"] for r in recent if r["training_readiness"]), default=None)
+    if r_now and r_min and r_max and r_max - r_min > 20:
+        if r_now > r_min + 15:
+            parts.append(f"Recovery improving: readiness {r_min}→{r_now}")
+        elif r_now < r_max - 15:
+            parts.append(f"Recovery declining: readiness {r_max}→{r_now}")
+    elif r_now:
+        if r_now >= 75:
+            parts.append(f"Readiness {r_now} — ready for quality")
+        elif r_now >= 50:
+            parts.append(f"Readiness {r_now} — easy day")
+        else:
+            parts.append(f"Readiness {r_now} — rest recommended")
+
+    # RHR trend
+    rhr_vals = [r["resting_heart_rate"] for r in recent if r["resting_heart_rate"]]
+    if len(rhr_vals) >= 3:
+        rhr_trend = rhr_vals[0] - rhr_vals[-1]
+        if abs(rhr_trend) <= 2:
+            parts.append("RHR stable")
+        elif rhr_trend < 0:
+            parts.append("RHR dropping (good)")
+        else:
+            parts.append(f"RHR rising (+{rhr_trend})")
+
+    # HRV
+    hrv_vals = [r["hrv_last_night"] for r in recent if r["hrv_last_night"]]
+    if hrv_vals:
+        hrv_avg = sum(hrv_vals) / len(hrv_vals)
+        if hrv_avg < 30:
+            parts.append("HRV low")
+        elif hrv_vals[0] > hrv_avg * 1.1:
+            parts.append("HRV trending up")
+        else:
+            parts.append(f"HRV {hrv_avg:.0f}ms avg")
+
+    # Weight vs target
+    weight = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
+    target = conn.execute(
+        "SELECT target_value FROM goals WHERE type='metric' AND name LIKE '%eight%' AND active=1 LIMIT 1"
+    ).fetchone()
+    if weight and target and target["target_value"]:
+        diff = weight["weight_kg"] - target["target_value"]
+        if diff > 0:
+            parts.append(f"Weight: {diff:.1f}kg above target")
+        else:
+            parts.append("Weight: at target")
+
+    return ". ".join(parts) + "." if parts else None
+
+
+def generate_volume_story(conn: sqlite3.Connection) -> dict | None:
+    """Detect training gaps and key volume story points for chart annotations.
+
+    Returns dict with gap_annotations and milestone_annotations for the volume chart.
+    """
+    dates = conn.execute(
+        "SELECT DISTINCT date FROM activities WHERE type IN ('running','track_running','trail_running') ORDER BY date"
+    ).fetchall()
+    if len(dates) < 2:
+        return None
+
+    date_list = [d["date"] for d in dates]
+    gaps = []
+    for i in range(1, len(date_list)):
+        d1 = date.fromisoformat(date_list[i - 1])
+        d2 = date.fromisoformat(date_list[i])
+        gap_days = (d2 - d1).days
+        if gap_days > 14:
+            gaps.append({"start": date_list[i - 1], "end": date_list[i], "days": gap_days})
+
+    # Find first Z2 run (ever or after a gap)
+    first_z2 = conn.execute("""
+        SELECT date, distance_km FROM activities
+        WHERE type IN ('running','track_running','trail_running')
+        AND hr_zone IN ('Z1', 'Z2') AND date >= date('now', '-30 days')
+        ORDER BY date ASC LIMIT 1
+    """).fetchone()
+
+    return {
+        "gaps": gaps,
+        "first_z2": {"date": first_z2["date"], "km": first_z2["distance_km"]} if first_z2 else None,
+    }
+
+
+def generate_checkin_progress(conn: sqlite3.Connection) -> dict:
+    """Progress toward correlation unlock thresholds.
+
+    Returns dict with counts and progress percentages.
+    """
+    total = conn.execute("SELECT COUNT(*) FROM checkins").fetchone()[0]
+    with_alcohol = conn.execute("SELECT COUNT(*) FROM checkins WHERE alcohol IS NOT NULL").fetchone()[0]
+    with_sleep = conn.execute("SELECT COUNT(*) FROM checkins WHERE sleep_quality IS NOT NULL").fetchone()[0]
+    with_rpe = conn.execute("SELECT COUNT(*) FROM checkins WHERE rpe IS NOT NULL").fetchone()[0]
+
+    target = 20  # minimum for correlations
+
+    return {
+        "total": total,
+        "target": target,
+        "pct": min(total / target * 100, 100),
+        "remaining": max(0, target - total),
+        "with_alcohol": with_alcohol,
+        "with_sleep": with_sleep,
+        "with_rpe": with_rpe,
+    }

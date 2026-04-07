@@ -141,6 +141,15 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
     </div>
     {% endif %}
 
+    <!-- Trend badges (inside race card) -->
+    {% if trend_badges %}
+    <div style="padding:8px 20px;border-bottom:1px solid rgba(129,140,248,0.08);display:flex;flex-wrap:wrap;gap:4px">
+      {% for badge in trend_badges %}
+      <span class="badge badge-{{ badge.color }}" title="{{ badge.detail or '' }}">{{ badge.metric }} {% if badge.direction == 'up' %}↑{% elif badge.direction == 'down' %}↓{% elif badge.direction == 'flat' %}→{% endif %} {{ badge.value }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+
     <!-- Phase compliance -->
     {% if phase_compliance and not phase_compliance.no_data %}
     <div style="padding:12px 20px">
@@ -176,13 +185,14 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   </div>
   {% endif %}
 
-  <!-- Status cards (biometrics) -->
+  <!-- Key biometrics (compact, with action) -->
   <div class="cards">
-  {% for card in status_cards %}
+  {% for card in status_cards_actions %}
     <div class="card" {% if card.tooltip %}title="{{ card.tooltip }}"{% endif %}>
       <div class="card-label">{{ card.label }}</div>
       <div class="card-value" style="color:{{ card.color }}">{{ card.value }}<span style="font-size:11px;font-weight:400;color:var(--text-dim);margin-left:2px">{{ card.unit }}</span></div>
-      {% if card.sub %}<div class="card-sub">{{ card.sub }}</div>{% endif %}
+      {% if card.action %}<div class="card-sub" style="color:{{ card.color }}">{{ card.action }}</div>
+      {% elif card.sub %}<div class="card-sub">{{ card.sub }}</div>{% endif %}
     </div>
   {% endfor %}
   </div>
@@ -202,18 +212,7 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div style="font-size:10px;color:var(--text-faint);margin:6px 0">No recent PBs. Milestones appear here when you set a new longest run, best efficiency, consistency streak (4/8/12 weeks), or VO2max peak.</div>
   {% endif %}
 
-  <!-- 7. "This Month" trend badges -->
-  {% if trend_badges %}
-  <div class="sec"><h2>This Month</h2><div class="line"></div></div>
-  <div style="margin:6px 0">
-    {% for badge in trend_badges %}
-    <span class="badge badge-{{ badge.color }}" title="{{ badge.detail or '' }}">{{ badge.metric }} {% if badge.direction == 'up' %}↑{% elif badge.direction == 'down' %}↓{% elif badge.direction == 'flat' %}→{% endif %} {{ badge.value }}</span>
-    {% endfor %}
-  </div>
-  {% elif trend_badges is defined and trend_badges is not none %}
-  <div class="sec"><h2>This Month</h2><div class="line"></div></div>
-  <div style="font-size:11px;color:var(--text-muted);margin:6px 0">Keep logging — more weeks until trends emerge.</div>
-  {% endif %}
+  <!-- Trend badges moved into Race Anchor Card -->
 
   <!-- 8. Narrative connectors (why-connectors, walk-break, z2 remediation) -->
   {% set narratives = [] %}
@@ -360,6 +359,9 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
     <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f97316;vertical-align:middle"></span> Z4–Z5 (hard)</span>
   </div>
   {% for run in run_timeline %}
+  {% if run.gap_days is defined and run.gap_days and run.gap_days > 14 %}
+  <div style="text-align:center;color:var(--text-faint);font-size:9px;margin:4px 0;font-family:var(--mono)">── {{ run.gap_days }}d gap ──</div>
+  {% endif %}
   <div class="run-bar">
     <span style="color:var(--text-muted);width:60px;font-family:var(--mono);font-size:9px">{{ run.date }}</span>
     <div class="run-bar-fill" style="width:{{ run.width }}%;background:{{ run.color }};min-width:40px">{{ run.distance_km }}km</div>
@@ -370,6 +372,9 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
 
 <!-- BODY -->
 <div id="tab-body" class="tab-content">
+  {% if body_summary %}
+  <div style="font-size:12px;color:#94a3b8;line-height:1.6;padding:8px 0;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.04)">{{ body_summary }}</div>
+  {% endif %}
   <div class="sec"><h2>Readiness</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.readiness | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-readiness" height="160"></canvas></div>
 
@@ -492,9 +497,17 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
 
   <div class="sec"><h2>Marathon Prediction (from Race Results)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.race_prediction | safe }}</div><div class="line"></div></div>
   {% if race_prediction %}
-  <div style="background:rgba(167,139,250,0.04);border:1px solid rgba(167,139,250,0.12);border-radius:12px;padding:15px">
-    {{ race_prediction | safe }}
+  {% if prediction_summary %}
+  <div style="text-align:center;padding:12px 0 8px">
+    <span style="font-size:18px;font-weight:700;color:var(--accent);font-family:var(--mono)">{{ prediction_summary }}</span>
   </div>
+  {% endif %}
+  <details>
+    <summary style="font-size:10px;color:var(--text-dim);cursor:pointer;text-align:center;padding:4px 0">Show all race sources</summary>
+    <div style="background:rgba(167,139,250,0.04);border:1px solid rgba(167,139,250,0.12);border-radius:12px;padding:15px;margin-top:6px">
+      {{ race_prediction | safe }}
+    </div>
+  </details>
   {% else %}
   <div style="color:var(--text-muted);font-size:11px;padding:8px 0">No completed races with official times yet. Add via <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit races add</code> with status=completed and result time.</div>
   {% endif %}
@@ -519,7 +532,13 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div style="font-size:9px;color:var(--text-dim);margin-top:6px">Spearman rank correlation. Bars show effect strength. Build more data through daily <code>fit checkin</code> to unlock more correlations.</div>
   </div>
   {% else %}
-  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">Not enough data yet for correlations. Need 20+ check-ins with alcohol, sleep quality, and water data. Run <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit checkin</code> daily to build the dataset.</div>
+  <div style="padding:8px 0">
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">{{ checkin_progress.total }}/{{ checkin_progress.target }} check-ins ({{ checkin_progress.remaining }} more to unlock correlations)</div>
+    <div style="height:6px;background:rgba(255,255,255,0.04);border-radius:3px;overflow:hidden">
+      <div style="height:100%;width:{{ checkin_progress.pct }}%;background:var(--accent);border-radius:3px;transition:width 0.3s"></div>
+    </div>
+    <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Run <code style="background:rgba(255,255,255,0.05);padding:1px 4px;border-radius:3px">fit checkin</code> daily to build the dataset.</div>
+  </div>
   {% endif %}
 
   <!-- Rolling correlation sparklines -->
@@ -551,7 +570,14 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
 
   {% if coaching %}
     <div class="sec"><h2>Coaching Notes</h2><div class="line"></div></div>
-    <div style="font-size:10px;color:var(--text-muted);margin-bottom:12px">Generated: {{ coaching.generated_at }} {% if coaching.stale %}<span class="stale-badge">STALE</span>{% endif %}</div>
+    {% if coaching.stale %}
+    <div style="background:rgba(234,179,8,0.08);border:1px solid rgba(234,179,8,0.2);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:11px">
+      <span style="color:var(--caution);font-weight:700">Coaching notes are outdated</span>
+      <span style="color:#94a3b8"> ({{ coaching.generated_at[:10] }}). Ask Claude for a fresh analysis — your data has changed since then.</span>
+    </div>
+    {% else %}
+    <div style="font-size:10px;color:var(--text-muted);margin-bottom:12px">Generated: {{ coaching.generated_at }}</div>
+    {% endif %}
     {% for insight in coaching.insights %}
     <details class="insight-box" style="background:{{ insight.bg }};border:1px solid {{ insight.border }}" {% if loop.first %}open{% endif %}>
       <summary style="cursor:pointer;list-style:none">

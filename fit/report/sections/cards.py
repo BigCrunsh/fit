@@ -12,6 +12,10 @@ from fit.narratives import (
     generate_race_countdown,
     detect_walk_break_need,
     generate_z2_remediation,
+    generate_wow_sentence,
+    generate_body_summary,
+    generate_volume_story,
+    generate_checkin_progress,
 )
 
 logger = logging.getLogger(__name__)
@@ -255,23 +259,11 @@ def _journey(conn):
 # ── Week over Week ──
 
 def _week_over_week(conn):
-    weeks = conn.execute("SELECT * FROM weekly_agg ORDER BY week DESC LIMIT 2").fetchall()
-    if len(weeks) < 2:
+    """Narrative WoW sentence instead of raw numbers."""
+    try:
+        return generate_wow_sentence(conn)
+    except Exception:
         return None
-    this, last = weeks[0], weeks[1]
-    km_delta = (this["run_km"] or 0) - (last["run_km"] or 0)
-    runs_delta = (this["run_count"] or 0) - (last["run_count"] or 0)
-    parts = []
-    parts.append(f"{this['run_km'] or 0:.0f}km ({'+' if km_delta >= 0 else ''}{km_delta:.0f}km)")
-    parts.append(f"{this['run_count'] or 0} runs ({'+' if runs_delta >= 0 else ''}{runs_delta})")
-    if this["z12_pct"] is not None and last["z12_pct"] is not None:
-        parts.append(f"Z1+Z2: {last['z12_pct']:.0f}%→{this['z12_pct']:.0f}%")
-    if this["acwr"] is not None:
-        parts.append(f"ACWR {this['acwr']:.2f}")
-    # Check if current week is incomplete
-    if date.today().weekday() < 6:  # Not Sunday
-        parts.append("(week in progress)")
-    return " · ".join(parts)
 
 
 # ── Run Timeline ──
@@ -283,13 +275,24 @@ def _run_timeline(conn):
     """).fetchall()
     max_km = max((r["distance_km"] or 0 for r in runs), default=1) or 1
     result = []
+    prev_date = None
     for r in runs:
         km = r["distance_km"] or 0
         zone = r["hr_zone"] or "Z2"
         color = Z12 if zone in ("Z1", "Z2") else Z3 if zone == "Z3" else Z45
+        # Detect gap from previous run (list is DESC, so prev_date is more recent)
+        gap_days = None
+        if prev_date:
+            d1 = date.fromisoformat(r["date"])
+            d2 = date.fromisoformat(prev_date)
+            gap = (d2 - d1).days
+            if gap > 14:
+                gap_days = gap
+        prev_date = r["date"]
         result.append({
             "date": r["date"][5:],  # MM-DD
             "distance_km": f"{km:.1f}",
+            "gap_days": gap_days,
             "width": max(10, int(km / max_km * 100)),
             "color": color,
             "zone": zone,
@@ -700,3 +703,58 @@ def _subtitle(conn):
 
 
 
+
+
+def _body_summary(conn):
+    """One-line narrative for the Body tab."""
+    try:
+        return generate_body_summary(conn)
+    except Exception:
+        return None
+
+
+def _volume_story(conn):
+    """Gap and milestone annotations for volume/timeline charts."""
+    try:
+        return generate_volume_story(conn)
+    except Exception:
+        return None
+
+
+def _checkin_progress(conn):
+    """Progress toward correlation unlock thresholds."""
+    try:
+        return generate_checkin_progress(conn)
+    except Exception:
+        return {"total": 0, "target": 20, "pct": 0, "remaining": 20}
+
+
+def _status_cards_with_actions(conn):
+    """Status cards with actionable recommendation text."""
+    cards = _status_cards(conn)
+    for card in cards:
+        label = card.get("label", "")
+        value = card.get("value")
+        if label == "Readiness" and value and isinstance(value, (int, float)):
+            if value >= 75:
+                card["action"] = "Ready for quality session"
+            elif value >= 50:
+                card["action"] = "Easy run or rest"
+            else:
+                card["action"] = "Rest day"
+        elif label == "ACWR" and value and value != "—":
+            try:
+                v = float(value)
+                if 0.8 <= v <= 1.3:
+                    card["action"] = "Safe zone"
+                elif v < 0.6:
+                    card["action"] = "Build volume"
+                elif v <= 1.5:
+                    card["action"] = "Reduce load"
+                else:
+                    card["action"] = "Rest immediately"
+            except (ValueError, TypeError):
+                pass
+        elif label == "HRV":
+            card["action"] = "Trends > single values"
+    return cards
