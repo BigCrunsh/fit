@@ -150,13 +150,36 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     # 7. Match activities to race calendar
     _match_race_calendar(conn)
 
-    # 8. Auto-import weight CSV if configured
+    # 8. Auto-import weight/body comp CSV
     weight_csv = config.get("sync", {}).get("weight_csv_path", "")
     if weight_csv:
-        try:
-            _auto_import_weight(conn, Path(weight_csv).expanduser())
-        except Exception as e:
-            logger.debug("Weight auto-import skipped: %s", e)
+        csv_path = Path(weight_csv).expanduser()
+        if not csv_path.exists():
+            logger.warning(
+                "FitDays CSV not found at %s. "
+                "Download from FitDays app → Export → CSV, save to %s",
+                csv_path, csv_path,
+            )
+        else:
+            # Check staleness (warn if file >14 days old)
+            import os
+            mtime = date.fromtimestamp(os.path.getmtime(csv_path))
+            days_old = (date.today() - mtime).days
+            if days_old > 14:
+                logger.warning(
+                    "FitDays CSV is %d days old (%s). "
+                    "Re-export from FitDays app to get latest body comp data.",
+                    days_old, csv_path,
+                )
+            try:
+                _auto_import_weight(conn, csv_path)
+            except Exception as e:
+                logger.debug("Weight auto-import failed: %s", e)
+    else:
+        logger.info(
+            "No weight CSV configured. To auto-import FitDays data, set "
+            "sync.weight_csv_path in config.local.yaml (e.g., ~/.fit/fitdays.csv)"
+        )
 
     # 8a. Compute sRPE (retroactively join checkin RPE to same-day activities)
     try:

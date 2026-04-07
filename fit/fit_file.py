@@ -61,6 +61,23 @@ def parse_fit_to_splits(fit_path, z2_ceiling_hr=134):
         logger.warning(".fit file not found: %s", fit_path)
         return []
 
+    # Garmin downloads are often ZIP files containing the .fit file — extract if needed
+    import zipfile
+    if zipfile.is_zipfile(fit_path):
+        try:
+            with zipfile.ZipFile(fit_path) as zf:
+                fit_names = [n for n in zf.namelist() if n.endswith(".fit")]
+                if not fit_names:
+                    logger.warning("ZIP contains no .fit file: %s", fit_path)
+                    return []
+                extracted = fit_path.parent / fit_names[0]
+                if not extracted.exists():
+                    zf.extract(fit_names[0], fit_path.parent)
+                fit_path = extracted
+        except zipfile.BadZipFile:
+            logger.warning("Corrupt ZIP file: %s", fit_path)
+            return []
+
     try:
         fitfile = FitFile(str(fit_path))
         records = list(fitfile.get_messages("record"))
