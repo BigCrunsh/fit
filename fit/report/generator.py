@@ -851,14 +851,13 @@ def _all_charts(conn):
             day_data = {}
             for p in adherence.get("planned", []):
                 d = p.get("date", "")
-                day_data.setdefault(d, {"planned_km": 0, "actual_km": 0, "status": "missed"})
+                day_data.setdefault(d, {"planned_km": 0, "actual_km": 0, "status": "missed", "label": ""})
                 day_data[d]["planned_km"] = p.get("target_distance_km") or 0
                 day_data[d]["label"] = p.get("workout_type", "")
             for m in adherence.get("matches", []):
-                d = m.get("date", m.get("planned", {}).get("date", ""))
-                if d in day_data:
-                    actual = m.get("actual", {})
-                    day_data[d]["actual_km"] = actual.get("distance_km") or 0
+                d = m.get("planned", {}).get("date", "")
+                if d in day_data and m.get("actual"):
+                    day_data[d]["actual_km"] = m["actual"].get("distance_km") or 0
                     day_data[d]["status"] = "matched"
             for u in adherence.get("unplanned", []):
                 d = u.get("date", "")
@@ -868,7 +867,6 @@ def _all_charts(conn):
 
             if day_data:
                 sorted_days = sorted(day_data.items())
-                labels = [d for d, _ in sorted_days]
                 planned_vals = [-(v["planned_km"]) for _, v in sorted_days]
                 actual_vals = [v["actual_km"] for _, v in sorted_days]
                 colors = []
@@ -882,20 +880,28 @@ def _all_charts(conn):
                     else:
                         colors.append(Z3 + "80")
 
+                # Short labels for readability
+                short_labels = []
+                for d, v in sorted_days:
+                    day = d[5:]  # "04-07"
+                    wtype = v.get("label", "")
+                    short_labels.append(f"{day} ({wtype})" if wtype else day)
+
                 charts.append({"id": "chart-plan-adherence", "config": json.dumps({
                     "type": "bar",
-                    "data": {"labels": labels,
+                    "data": {"labels": short_labels,
                              "datasets": [
-                                 {"label": "Planned", "data": planned_vals, "backgroundColor": ACCENT + "40",
-                                  "borderColor": ACCENT + "60", "borderWidth": 1},
-                                 {"label": "Actual", "data": actual_vals, "backgroundColor": colors,
+                                 {"label": "Planned", "data": [abs(v) for v in planned_vals],
+                                  "backgroundColor": ACCENT + "40", "borderColor": ACCENT + "60", "borderWidth": 1},
+                                 {"label": "Actual", "data": actual_vals,
+                                  "backgroundColor": colors,
                                   "borderColor": [c.replace("80", "cc") for c in colors], "borderWidth": 1},
                              ]},
-                    "options": {"responsive": True, "indexAxis": "y",
+                    "options": {"responsive": True,
                                 "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
-                                "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"},
-                                                 "title": {"display": True, "text": "km (left=planned, right=actual)"}},
-                                           "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
+                                "scales": {"y": {"grid": {"color": "rgba(255,255,255,0.03)"},
+                                                 "title": {"display": True, "text": "km"}},
+                                           "x": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
                 })})
     except Exception:
         pass
