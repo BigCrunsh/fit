@@ -313,7 +313,7 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div class="chart-box"><canvas id="chart-runtypes" height="120"></canvas></div>
 
   <!-- Plan adherence (if plan data exists) -->
-  {% if plan_adherence is defined and plan_adherence %}
+  {% if plan_adherence is defined and plan_adherence and (plan_adherence.planned or plan_adherence.actuals) %}
   <div class="sec"><h2>Plan Adherence</h2><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-plan-adherence" height="140"></canvas></div>
   {% endif %}
