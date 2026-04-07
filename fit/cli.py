@@ -455,6 +455,8 @@ def target_show():
             derived = derive_objectives(conn, race["id"])
             derived = compute_achievability(conn, derived, days_left)
 
+            from rich.table import Table
+
             def _ach_icon(a):
                 return {"on_track": "[green]✓[/green]", "tight": "[yellow]⚠[/yellow]", "at_risk": "[red]✗[/red]"}.get(a, " ")
 
@@ -462,68 +464,97 @@ def target_show():
                 return next((o for o in derived if keyword in o["name"].lower()), None)
 
             # ── Fitness Profile ──
-            console.print("\n  [bold]Fitness Profile[/bold]")
+            t = Table(title="Fitness Profile", show_header=True, header_style="bold dim",
+                      box=None, padding=(0, 1), show_edge=False, expand=False)
+            t.add_column("Dimension", style="bold", min_width=15)
+            t.add_column("Current", justify="right", min_width=8)
+            t.add_column("Trend", min_width=12)
+            t.add_column("Need", justify="right", min_width=6)
+            t.add_column("Gap", justify="right", min_width=6)
+            t.add_column("", min_width=2)
+            t.add_column("Notes", style="dim")
 
-            # VDOT (the primary fitness score)
+            # VDOT row
             vdot = profile["effective_vdot"]
             vdot_obj = _find_obj("vdot")
             if vdot:
                 vdot_src = f"from {profile['race_vdot_date'][:7]} race" if profile["race_vdot_date"] else "estimated"
-                vdot_required = vdot_obj["target_value"] if vdot_obj else "—"
-                vdot_gap = f"{vdot - vdot_required:+.1f}" if vdot_obj else ""
-                vdot_status = _ach_icon(vdot_obj.get("achievability")) if vdot_obj else ""
-                console.print(f"    VDOT             {vdot:>6.1f}   need ≥{vdot_required}  ({vdot_gap})  {vdot_status}  [dim]({vdot_src})[/dim]")
+                req = f"≥{vdot_obj['target_value']}" if vdot_obj else "—"
+                gap = f"{vdot - vdot_obj['target_value']:+.1f}" if vdot_obj else ""
+                ach = _ach_icon(vdot_obj.get("achievability")) if vdot_obj else ""
+                t.add_row("VDOT", f"{vdot:.1f}", "", req, gap, ach, vdot_src)
                 if profile["garmin_vo2max"]:
-                    console.print(f"    [dim]Garmin VO2max  {profile['garmin_vo2max']:>6.1f}   (wrist estimate — race VDOT is more reliable)[/dim]")
+                    t.add_row("[dim]Garmin VO2max[/]", f"[dim]{profile['garmin_vo2max']:.1f}[/]", "", "", "", "", "[dim]wrist est.[/]")
 
-            # 4 dimensions with context
+            # 4 dimensions
             dims = [
-                ("Aerobic", "aerobic", "VO2max ceiling — how much oxygen your body can use"),
-                ("Threshold", "threshold", "Z2 pace at HR 134 — your easy running speed"),
-                ("Economy", "economy", "Speed per heartbeat — how efficiently you run"),
-                ("Resilience", "resilience", "Drift onset — how far before HR decouples from pace"),
+                ("Aerobic", "aerobic", None, "VO2max"),
+                ("Threshold", "threshold", None, "Z2 pace"),
+                ("Economy", "economy", None, "m/min/bpm"),
+                ("Resilience", "resilience", "long run", "drift km"),
             ]
-            for label, key, context in dims:
+            for label, key, obj_keyword, note in dims:
                 dim = profile[key]
                 if dim.get("current_value") is not None:
                     trend = {"improving": "[green]↑[/green]", "declining": "[red]↓[/red]", "flat": "→"}.get(dim["trend"], "?")
-                    rate = f" {dim['rate_per_month']:+.2f}/mo" if dim.get("rate_per_month") else ""
+                    rate = f"{dim['rate_per_month']:+.2f}/mo" if dim.get("rate_per_month") else ""
+                    trend_str = f"{trend} {rate}".strip()
 
-                    # Find matching objective for target
-                    obj = None
-                    if key == "resilience":
-                        obj = _find_obj("long run")
-
+                    obj = _find_obj(obj_keyword) if obj_keyword else None
                     if obj and obj.get("target_value") is not None:
                         gap = obj.get("gap", 0)
-                        console.print(f"    {label:12s}  {dim['current_value']:>8} {trend}{rate:>12s}   need {obj['target_value']}  ({gap:+.1f})  {_ach_icon(obj.get('achievability'))}")
+                        t.add_row(label, str(dim["current_value"]), trend_str,
+                                  str(obj["target_value"]), f"{gap:+.1f}", _ach_icon(obj.get("achievability")), note)
                     else:
-                        console.print(f"    {label:12s}  {dim['current_value']:>8} {trend}{rate:>12s}   [dim]{context}[/dim]")
+                        t.add_row(label, str(dim["current_value"]), trend_str, "", "", "", note)
                 elif dim.get("message"):
-                    console.print(f"    {label:12s}  [dim]{dim['message']}[/dim]")
+                    t.add_row(label, "—", "", "", "", "", f"[dim]{dim['message']}[/dim]")
 
-            # ── Objectives (derived from target race) ──
-            console.print(f"\n  [bold]Objectives[/bold]  [dim](auto-derived from {race['name']} {race['target_time']})[/dim]")
+            console.print()
+            console.print(t)
+
+            # ── Objectives ──
+            ot = Table(title=f"Objectives [dim](from {race['name']} {race['target_time']})[/dim]",
+                       show_header=True, header_style="bold dim", box=None, padding=(0, 1), show_edge=False, expand=False)
+            ot.add_column("", no_wrap=True)
+            ot.add_column("Objective", no_wrap=True)
+            ot.add_column("Current", justify="right", no_wrap=True)
+            ot.add_column("Target", justify="right", no_wrap=True)
+            ot.add_column("Source", style="dim", no_wrap=True)
+
             for obj in derived:
                 if "vdot" in obj["name"].lower():
-                    continue  # shown in profile
+                    continue
                 current = obj.get("current_value")
-                target = obj.get("target_value")
                 current_str = f"{current}" if current is not None else "—"
                 src = {"auto_daniels": "Daniels", "auto_distance": "distance", "auto_timeline": "timeline"}.get(obj.get("derivation_source", ""), "")
-                console.print(f"    {_ach_icon(obj.get('achievability'))}  {obj['name']:28s}  {current_str:>6} / {target:>4}   [dim]{src}[/dim]")
+                ot.add_row(_ach_icon(obj.get("achievability")), obj["name"],
+                           current_str, str(obj["target_value"]), src)
 
-            # ── Checkpoint Races (milestones toward target) ──
+            console.print()
+            console.print(ot)
+
+            # ── Checkpoints ──
             from fit.fitness import derive_checkpoint_targets
             checkpoints = derive_checkpoint_targets(conn)
             if checkpoints:
-                console.print(f"\n  [bold]Checkpoints[/bold]  [dim](derived target times for {race['name']})[/dim]")
+                ct = Table(title=f"Checkpoints [dim](target times for {race['name']})[/dim]",
+                           show_header=True, header_style="bold dim", box=None, padding=(0, 1), show_edge=False, expand=False)
+                ct.add_column("Days", justify="right", no_wrap=True)
+                ct.add_column("Race", no_wrap=True)
+                ct.add_column("Dist", no_wrap=True)
+                ct.add_column("Your Target", justify="right", no_wrap=True)
+                ct.add_column("On-Track", justify="right", no_wrap=True)
+                ct.add_column("Signal", no_wrap=True)
+
                 for cp in checkpoints:
                     signal_color = "green" if cp.get("signal") and "✓" in cp["signal"] else "yellow" if cp.get("signal") and "⚠" in cp["signal"] else "dim"
-                    user_t = cp["user_target"] or "—"
-                    console.print(f"    {cp['days']:>3d}d  {cp['name']:22s}  {cp['distance']:>5s}  "
-                                  f"your: {user_t:>8s}  on-track: {cp['derived_target']:>8s}  "
-                                  f"[{signal_color}]{cp.get('signal', '')}[/]")
+                    ct.add_row(str(cp["days"]), cp["name"], cp["distance"],
+                               cp["user_target"] or "—", cp["derived_target"],
+                               f"[{signal_color}]{cp.get('signal', '')}[/]")
+
+                console.print()
+                console.print(ct)
 
         except Exception as e:
             console.print(f"  [dim]Fitness profile unavailable: {e}[/dim]")
