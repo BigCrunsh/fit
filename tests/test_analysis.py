@@ -9,7 +9,7 @@ from fit.analysis import (
     compute_speed_per_bpm,
     compute_speed_per_bpm_z2,
     classify_run_type,
-    predict_marathon_time,
+    predict_race_time,
     compute_weekly_agg,
     enrich_activity,
     _classify_zone_lthr,
@@ -407,27 +407,27 @@ class TestRunType:
 class TestRacePrediction:
     # Happy
     def test_riegel_from_hm(self):
-        preds = predict_marathon_time(races=[
+        preds = predict_race_time(races=[
             {"distance_km": 21.1, "time_seconds": 6572, "name": "Oct HM"},
         ], vo2max=49)
         assert len(preds["riegel"]) == 1
         assert preds["riegel"][0]["predicted_seconds"] > 0
 
     def test_riegel_from_10k(self):
-        preds = predict_marathon_time(races=[
+        preds = predict_race_time(races=[
             {"distance_km": 10, "time_seconds": 2700, "name": "10k"},
         ])
         assert len(preds["riegel"]) == 1
         assert preds["riegel"][0]["predicted_seconds"] > 6572  # longer than from HM
 
     def test_vdot_prediction(self):
-        preds = predict_marathon_time(races=[], vo2max=49)
+        preds = predict_race_time(races=[], vo2max=49)
         assert preds["vdot"] is not None
         assert preds["vdot"]["predicted_seconds"] > 0
         assert preds["vdot"]["predicted_pace_sec_km"] > 0
 
     def test_multiple_races(self):
-        preds = predict_marathon_time(races=[
+        preds = predict_race_time(races=[
             {"distance_km": 10, "time_seconds": 2700, "name": "10k"},
             {"distance_km": 21.1, "time_seconds": 6000, "name": "HM"},
         ])
@@ -435,45 +435,45 @@ class TestRacePrediction:
 
     # Unhappy
     def test_no_data(self):
-        preds = predict_marathon_time(races=[], vo2max=None)
+        preds = predict_race_time(races=[], vo2max=None)
         assert preds["riegel"] == []
         assert preds["vdot"] is None
 
     def test_no_races(self):
-        preds = predict_marathon_time(races=[])
+        preds = predict_race_time(races=[])
         assert preds["riegel"] == []
 
     def test_zero_distance_race(self):
         """Race with d1=0 should be skipped."""
-        preds = predict_marathon_time(races=[
+        preds = predict_race_time(races=[
             {"distance_km": 0, "time_seconds": 3000},
         ])
         assert preds["riegel"] == []
 
     def test_zero_time_race(self):
         """Race with t1=0 should be skipped."""
-        preds = predict_marathon_time(races=[
+        preds = predict_race_time(races=[
             {"distance_km": 10, "time_seconds": 0},
         ])
         assert preds["riegel"] == []
 
     def test_negative_distance(self):
         """Negative distance should be skipped (d1 > 0 fails)."""
-        preds = predict_marathon_time(races=[
+        preds = predict_race_time(races=[
             {"distance_km": -5, "time_seconds": 3000},
         ])
         assert preds["riegel"] == []
 
     def test_distance_longer_than_marathon(self):
         """Distance >= marathon should be skipped (d1 < marathon_km)."""
-        preds = predict_marathon_time(races=[
+        preds = predict_race_time(races=[
             {"distance_km": 50, "time_seconds": 18000},
         ])
         assert preds["riegel"] == []
 
     def test_very_short_distance(self):
         """Very short race distance (1km) still computes."""
-        preds = predict_marathon_time(races=[
+        preds = predict_race_time(races=[
             {"distance_km": 1, "time_seconds": 180, "name": "1km TT"},
         ])
         assert len(preds["riegel"]) == 1
@@ -481,26 +481,26 @@ class TestRacePrediction:
 
     def test_vdot_too_low(self):
         """VO2max <= 30 gives no VDOT prediction."""
-        preds = predict_marathon_time(races=[], vo2max=30)
+        preds = predict_race_time(races=[], vo2max=30)
         assert preds["vdot"] is None
 
     def test_vdot_barely_above_threshold(self):
-        preds = predict_marathon_time(races=[], vo2max=31)
+        preds = predict_race_time(races=[], vo2max=31)
         assert preds["vdot"] is not None
 
     def test_vdot_very_high(self):
         """Very high VO2max should not go below table minimum."""
-        preds = predict_marathon_time(races=[], vo2max=100)
+        preds = predict_race_time(races=[], vo2max=100)
         assert preds["vdot"]["predicted_seconds"] > 0
 
     def test_missing_race_keys(self):
         """Race dict with missing keys should be skipped gracefully."""
-        preds = predict_marathon_time(races=[{}])
+        preds = predict_race_time(races=[{}])
         assert preds["riegel"] == []
 
     def test_race_with_name_missing(self):
         """Race without name uses distance as default label."""
-        preds = predict_marathon_time(races=[
+        preds = predict_race_time(races=[
             {"distance_km": 10, "time_seconds": 2700},
         ])
         assert preds["riegel"][0]["from_race"] == "10.0km"

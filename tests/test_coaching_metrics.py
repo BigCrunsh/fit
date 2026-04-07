@@ -9,7 +9,7 @@ from fit.analysis import (
     compute_srpe,
     compute_weekly_agg,
     detect_training_gap,
-    predict_marathon_time,
+    predict_race_time,
 )
 
 
@@ -57,15 +57,15 @@ class TestDanielsVDOT:
         assert result == 10500.0
 
     def test_predict_marathon_uses_daniels(self):
-        """predict_marathon_time should use Daniels table, not linear approx."""
-        preds = predict_marathon_time(races=[], vo2max=42)
+        """predict_race_time should use Daniels table, not linear approx."""
+        preds = predict_race_time(races=[], vo2max=42)
         assert preds["vdot"] is not None
         # Should be ~16080s, not the old linear approx
         assert abs(preds["vdot"]["predicted_seconds"] - 16080) < 60
 
     def test_predict_marathon_vo2max_55(self):
         """VO2max 55 prediction accuracy."""
-        preds = predict_marathon_time(races=[], vo2max=55)
+        preds = predict_race_time(races=[], vo2max=55)
         assert abs(preds["vdot"]["predicted_seconds"] - 11700) < 60
 
     def test_interpolation_between_points(self):
@@ -434,7 +434,7 @@ class TestPredictionConfidence:
         """<8 weeks of data should give low confidence."""
         for i in range(5):
             self._insert_weekly(db, f"2026-W{10 + i:02d}")
-        preds = predict_marathon_time(conn=db, races=[], vo2max=50)
+        preds = predict_race_time(conn=db, races=[], vo2max=50)
         assert preds["confidence"]["level"] == "low"
         assert preds["confidence"]["margin_seconds"] == 900
 
@@ -442,7 +442,7 @@ class TestPredictionConfidence:
         """8-15 weeks of data should give moderate confidence."""
         for i in range(12):
             self._insert_weekly(db, f"2026-W{i + 1:02d}")
-        preds = predict_marathon_time(conn=db, races=[], vo2max=50)
+        preds = predict_race_time(conn=db, races=[], vo2max=50)
         assert preds["confidence"]["level"] == "moderate"
         assert preds["confidence"]["margin_seconds"] == 480
 
@@ -450,19 +450,19 @@ class TestPredictionConfidence:
         """16+ weeks should give high confidence."""
         for i in range(20):
             self._insert_weekly(db, f"2026-W{i + 1:02d}")
-        preds = predict_marathon_time(conn=db, races=[], vo2max=50)
+        preds = predict_race_time(conn=db, races=[], vo2max=50)
         assert preds["confidence"]["level"] == "high"
 
     def test_high_confidence_with_race(self, db):
         """Having a recent race should give high confidence."""
         races = [{"distance_km": 21.1, "time_seconds": 6000, "name": "HM"}]
-        preds = predict_marathon_time(conn=db, races=races, vo2max=50)
+        preds = predict_race_time(conn=db, races=races, vo2max=50)
         assert preds["confidence"]["level"] == "high"
         assert preds["confidence"]["margin_seconds"] == 240
 
     def test_no_conn_low_confidence(self):
         """No DB connection should default to low confidence."""
-        preds = predict_marathon_time(conn=None, races=[], vo2max=50)
+        preds = predict_race_time(conn=None, races=[], vo2max=50)
         assert preds["confidence"]["level"] == "low"
 
 

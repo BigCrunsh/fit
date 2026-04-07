@@ -44,12 +44,12 @@
 
 ## 6. Adaptive Predictions
 
-- [ ] 6.1 Rename `predict_marathon_time()` → `predict_race_time(target_km=42.195)` with backward compat
-- [ ] 6.2 Verify prediction trend chart adapts to target_km (already partially implemented)
-- [ ] 6.3 Verify race prediction table adapts (already implemented)
-- [ ] 6.4 Verify prediction summary adapts (already implemented)
-- [ ] 6.5 Update pacing strategy for non-marathon distances
-- [ ] 6.6 Test: predictions for marathon/HM/10K, backward compat
+- [x] 6.1 Rename `predict_marathon_time()` → `predict_race_time(target_km=42.195)` with backward compat
+- [x] 6.2 Verify prediction trend chart adapts to target_km (already partially implemented)
+- [x] 6.3 Verify race prediction table adapts (already implemented)
+- [x] 6.4 Verify prediction summary adapts (already implemented)
+- [x] 6.5 Update pacing strategy for non-marathon distances
+- [x] 6.6 Test: predictions for marathon/HM/10K, backward compat
 
 ## 7. Global Color Palette + Readability
 

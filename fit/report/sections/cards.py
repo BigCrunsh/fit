@@ -68,7 +68,7 @@ def _prediction_summary(conn):
     Shows range from multiple sources, not just VDOT point estimate.
     """
     try:
-        from fit.analysis import predict_marathon_time
+        from fit.analysis import predict_race_time
         races = conn.execute("""
             SELECT distance_km, result_time FROM race_calendar
             WHERE status = 'completed' AND result_time IS NOT NULL
@@ -86,7 +86,7 @@ def _prediction_summary(conn):
 
         race_data = [{"distance_km": r["distance_km"], "time_seconds": _parse_time(r["result_time"])}
                      for r in races if r["distance_km"] and r["result_time"]]
-        preds = predict_marathon_time(races=race_data, vo2max=vo2["vo2max"] if vo2 else None)
+        preds = predict_race_time(races=race_data, vo2max=vo2["vo2max"] if vo2 else None)
 
         # Collect all predictions
         all_secs = []

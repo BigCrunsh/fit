@@ -60,7 +60,7 @@ def _race_anchored_headline(conn: sqlite3.Connection, phase: dict | None) -> str
 
     # Latest race prediction
     try:
-        from fit.analysis import predict_marathon_time
+        from fit.analysis import predict_race_time
         races = conn.execute("""
             SELECT distance_km, result_time FROM race_calendar
             WHERE status = 'completed' AND result_time IS NOT NULL
@@ -82,7 +82,7 @@ def _race_anchored_headline(conn: sqlite3.Connection, phase: dict | None) -> str
             {"distance_km": r["distance_km"], "time_seconds": _parse_time(r["result_time"])}
             for r in races if r["distance_km"] and r["result_time"]
         ]
-        preds = predict_marathon_time(race_data, vo2max=vo2_row["vo2max"] if vo2_row else None)
+        preds = predict_race_time(race_data, vo2max=vo2_row["vo2max"] if vo2_row else None)
 
         # Pick best prediction
         best_secs = None

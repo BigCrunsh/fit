@@ -395,10 +395,10 @@ def _vdot_to_marathon_seconds(vo2max: float) -> float:
     return float(_VDOT_TABLE[-1][1])
 
 
-def predict_marathon_time(conn: sqlite3.Connection | None = None,
-                          races: list[dict] | None = None,
-                          vo2max: float | None = None) -> dict:
-    """Predict marathon time using Riegel formula and Daniels VDOT table.
+def predict_race_time(conn: sqlite3.Connection | None = None,
+                      races: list[dict] | None = None,
+                      vo2max: float | None = None) -> dict:
+    """Predict race time using Riegel formula and Daniels VDOT table.
 
     Args:
         conn: Optional DB connection for data-quantity confidence assessment.
