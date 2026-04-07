@@ -53,6 +53,7 @@ fit/                 # Python package (pip install -e .)
   plan.py            # Runna plan sync (Garmin Calendar + CSV fallback), plan adherence, readiness gate, compliance scoring
   fit_file.py        # .fit file download/parse, per-km splits, cardiac drift, cadence drift, heat flags
   periodization.py   # Run Story narrative, periodization feedback loop, heat acclimatization, race-day pacing
+  fitness.py         # 4-dimension fitness profile, Daniels VDOT formula, objective derivation, checkpoint enrichment
   logging_config.py  # Logging setup
   report/
     generator.py     # Thin wrapper re-exporting from sections/
@@ -112,7 +113,12 @@ tests/               # pytest suite (500+ tests)
 - **Heat data fallback chain** — .fit file → Open-Meteo weather → skip
 - **Python migrations for table rebuilds** — executescript auto-commits, Python gets transactional safety
 - **FK disabled during Python migrations** — SQLite can't DROP parent table with FK checks ON
-- **Two-palette color system** — safety (green/yellow/red) for "is this good?" vs intensity (blue/amber/orange) for "how hard?"
+- **5-zone color palette** — Z1=#93c5fd (light blue), Z2=#60a5fa (blue), Z3=#fbbf24 (amber), Z4=#f97316 (orange), Z5=#ef4444 (red). Safety: emerald/amber/red.
+- **Fitness profile = 4 dimensions** — aerobic (VO2max/VDOT), threshold (Z2 pace), economy (speed_per_bpm), resilience (drift onset)
+- **VDOT from Daniels formula** — not lookup table. `compute_vdot_from_race(distance_km, time_seconds)`. More accurate for 5K-HM. Marathon underestimates by ~2.
+- **Objectives auto-derive from target race** — Daniels inverse + distance heuristics + timeline. `derive_objectives(conn, race_id)`. Achievability = current + trend × time vs required.
+- **Checkpoints = fitness calibration** — pre-target races with derived target times (Riegel back-calculation). VDOT from results updates projection.
+- **Target race via goals.race_id** — `fit target set <id>` updates all active goals. No is_target flag needed.
 - **Coaching notes body validation** — `save_coaching_notes` rejects insights with missing/short body text (<20 chars)
 
 ## Design Principles

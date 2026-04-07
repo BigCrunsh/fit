@@ -73,7 +73,7 @@
 
 ## 9. Documentation
 
-- [ ] 9.1 Update CLAUDE.md: fitness profile, VDOT tracking, objective derivation, checkpoint model
-- [ ] 9.2 Update README: fit target commands, fitness model explanation
-- [ ] 9.3 Update all specs to match implementation
-- [ ] 9.4 Test: dashboard renders correctly with marathon/HM/10K targets, all tabs consistent
+- [x] 9.1 Update CLAUDE.md: fitness profile, VDOT tracking, objective derivation, checkpoint model
+- [x] 9.2 Update README: fit target commands, fitness model explanation
+- [x] 9.3 Update all specs to match implementation
+- [x] 9.4 Test: dashboard renders correctly with marathon/HM/10K targets, all tabs consistent
