@@ -316,9 +316,37 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   {% if plan_adherence is defined and plan_adherence and (plan_adherence.planned or plan_adherence.actuals) %}
   <div class="sec"><h2>Plan Adherence</h2><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-plan-adherence" height="140"></canvas></div>
+  <!-- Compliance detail table -->
+  <div style="margin:-8px 0 16px">
+    {% for m in plan_adherence.matches %}
+    {% set p = m.planned %}
+    {% set a = m.actual %}
+    <div style="display:flex;align-items:center;gap:8px;padding:4px 10px;margin:2px 0;font-size:10px;border-radius:6px;background:{% if m.intensity_override %}rgba(239,68,68,0.06){% elif a and m.zone_match %}rgba(34,197,94,0.06){% elif a %}rgba(234,179,8,0.06){% else %}var(--surface){% endif %}">
+      <span style="color:var(--text-dim);width:50px;font-family:var(--mono)">{{ p.date[5:] }}</span>
+      <span style="width:65px;color:var(--text-muted)">{{ p.workout_type }}</span>
+      <span style="width:45px;font-family:var(--mono);color:var(--accent)">{{ p.target_distance_km }}km</span>
+      <span style="color:var(--text-dim)">→</span>
+      {% if a %}
+      <span style="width:45px;font-family:var(--mono);color:var(--text)">{{ '%.1f' % a.distance_km }}km</span>
+      <span style="width:55px;font-family:var(--mono);color:{% if m.zone_match %}var(--safe){% elif m.intensity_override %}var(--danger){% else %}var(--caution){% endif %}">{{ a.hr_zone }} {{ a.avg_hr }}</span>
+      <span style="font-size:9px;color:{% if m.zone_match %}var(--safe){% elif m.intensity_override %}var(--danger){% else %}var(--caution){% endif %}">{% if m.intensity_override %}overridden{% elif m.zone_match %}zone ✓{% else %}zone ✗{% endif %}</span>
+      {% else %}
+      <span style="color:var(--text-dim)">—</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% if plan_adherence.weekly_compliance_pct is not none %}
+    <div style="font-size:9px;color:var(--text-dim);margin-top:4px;padding:0 10px">Weekly compliance: {{ plan_adherence.weekly_compliance_pct }}% · <span style="color:var(--safe)">green=zone ✓</span> <span style="color:var(--caution)">yellow=zone ✗</span> <span style="color:var(--danger)">red=intensity override</span> <span style="color:var(--text-dim)">gray=upcoming</span></div>
+    {% endif %}
+  </div>
   {% endif %}
 
   <div class="sec"><h2>Run Timeline</h2><div class="line"></div></div>
+  <div style="font-size:9px;color:var(--text-dim);margin-bottom:6px;display:flex;gap:12px">
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#38bdf8;vertical-align:middle"></span> Z1–Z2 (easy)</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f59e0b;vertical-align:middle"></span> Z3 (moderate)</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f97316;vertical-align:middle"></span> Z4–Z5 (hard)</span>
+  </div>
   {% for run in run_timeline %}
   <div class="run-bar">
     <span style="color:var(--text-muted);width:60px;font-family:var(--mono);font-size:9px">{{ run.date }}</span>
