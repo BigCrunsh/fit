@@ -27,9 +27,18 @@ The race should be the anchor. You set "Berlin Marathon sub-4:00" as the target,
 - `race-model`: `race_calendar.is_target` flag replaces the current goal→race FK inference chain. `get_target_race()` simplified.
 - `goal-progress`: Objectives section reads from derived objectives, not generic goals. Progress bars and compliance targets are race-specific.
 
+### New Capabilities (continued)
+
+- `dashboard-redesign`: Replace chart-heavy layout with metric cards + sparklines. Every element answers "so what?" by showing value + action + target + trend. Charts only where time-series tells a story. 5-zone color palette. Readable fonts and contrast.
+
+### Modified Capabilities (continued)
+
+- `dashboard-viz`: Global 5-zone color palette (Z1 through Z5, each distinct). Metric cards replace most standalone charts. "So what?" captions derived from target race objectives (not hardcoded). Bigger fonts, higher contrast.
+
 ## Impact
 
-- **User-facing**: `fit target set 36` makes Berlin Marathon the anchor. Objectives auto-populate. Dashboard immediately reorients.
+- **User-facing**: `fit target set 36` makes Berlin Marathon the anchor. Objectives auto-populate. Dashboard immediately reorients. Every metric shows how it connects to the race goal.
+- **Dashboard**: Fewer charts, more metric cards. Each card shows value + action + sparkline + target. Charts only for efficiency trend, prediction trend, weight over months, sleep composition. Body tab goes from 6 charts to ~3 cards + 2 charts.
 - **Data model**: Migration adds `is_target` to race_calendar, adds `derivation_source` and `auto_value` to goals for tracking overrides.
 - **No breaking changes to existing data** — migration sets `is_target = 1` on the race that current active goals reference (preserves existing behavior).
 

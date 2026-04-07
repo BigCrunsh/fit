@@ -76,6 +76,75 @@ Python migration (for transactional safety):
 - `fit target objectives` — show objectives with auto vs manual values, allow editing
 - `fit target clear` — remove target (dashboard falls back to nearest race)
 
+### 8. Dashboard redesign: metric cards over charts
+
+Most current charts fail the "so what?" test — they show data without context or action. The fix is NOT adding captions to every chart (that's additive complexity). The fix is replacing most charts with **metric cards**: value + action + sparkline + target in one compact unit.
+
+**What stays as a chart** (time-series where the shape tells a story):
+- Efficiency trend (is my aerobic engine improving?)
+- Prediction trend (am I getting closer to my target time?)
+- Weight trend (long-term body comp trajectory)
+- Sleep composition (stacked bars — visual pattern)
+- ACWR trend (spike/recovery pattern)
+
+**What becomes a metric card** (single-number-with-context):
+- Readiness → card: "67 — easy day" with 7d sparkline
+- RHR → card: "60 bpm ↓5" with trend arrow
+- HRV → card: "29ms — low" with 7d sparkline
+- Volume → card: "8km / 25-30km target" with progress bar
+- Z2 compliance → card: "50% / 90% target" with progress bar
+- Runs/week → card: "1 / 3-4 target"
+- Stress/Battery → card: "Stress 26, Battery 85→42" (two numbers, no chart)
+
+### 9. Global 5-zone color palette
+
+Every chart and card uses the same colors for the same meaning. 5 zones, not 3 groups:
+
+```
+Z1 Recovery   = #93c5fd (blue-300, lighter)
+Z2 Easy       = #60a5fa (blue-400)
+Z3 Moderate   = #fbbf24 (amber-400)
+Z4 Hard       = #f97316 (orange-400)
+Z5 Very Hard  = #ef4444 (red-400)
+```
+
+Run type colors align with zone colors:
+- easy/recovery = Z1/Z2 blue
+- long = #34d399 (emerald — distinct, not a zone)
+- tempo = Z3 amber
+- intervals = Z4 orange
+- race = #c084fc (purple — special events)
+
+Safety/status:
+- On track = #34d399 (emerald)
+- Caution = #fbbf24 (amber, same as Z3 — intentional)
+- Danger = #f87171 (red-400, brighter than current)
+
+Neutral:
+- Accent/primary = #818cf8 (indigo)
+- Muted text = #94a3b8 (slate-400)
+
+All colors at minimum 60% opacity on #07070c background. No more 20% ghost lines.
+
+### 10. Every element answers four questions
+
+Inspired by Duarte's *Data Story* framework, every dashboard element must answer:
+1. **What is it?** (label)
+2. **Where am I?** (current value)
+3. **Where should I be?** (target — derived from target race)
+4. **What should I do?** (action)
+
+If an element can't answer all four, it either needs a target (from objective derivation) or should be removed.
+
+### 11. Chart readability minimums
+
+- Font size: 12px minimum (was 10px)
+- Line opacity: 60% minimum (was 20% for some datasets)
+- Point radius: 4px minimum for interactive charts
+- Axis labels: always visible, never truncated
+- Maximum 2 datasets per chart (3 = confusing, split into separate charts)
+- Weight/body fat: don't connect across >30 day gaps (`segment` option)
+
 ## Risks / Trade-offs
 
 **[Objective drift]** Auto-derived objectives may not match user expectations.
