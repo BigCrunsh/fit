@@ -145,6 +145,17 @@ If an element can't answer all four, it either needs a target (from objective de
 - Maximum 2 datasets per chart (3 = confusing, split into separate charts)
 - Weight/body fat: don't connect across >30 day gaps (`segment` option)
 
+### 12. Build on post-archive foundations
+
+Several features implemented after Phase 2 archive provide foundations for this change:
+
+- **Apple Health XML import** (`fit/apple_health.py`): Body comp data source for weight objectives. Auto-populates weight calibration. `sync.apple_health_export` config for auto-import.
+- **`fit races add/update/delete`**: CRUD CLI already exists. `fit target set` builds on this — it's a flag on an existing race, not a new entity.
+- **track_running/trail_running**: All queries already include these types. New objective-derived queries must also use `type IN ('running','track_running','trail_running')`.
+- **Coaching history** (`coaching_history.json`): When target changes, the coaching context includes previous coaching summary. AI coaching can reference "last time when your target was marathon, I recommended X."
+- **Prediction adapts to target_km**: `_prediction_summary()` and the prediction trend chart already scale Riegel/VDOT to the target race distance. `fit target set` just changes which race `get_target_race()` returns.
+- **Plan adherence zone compliance**: Zone matching already implemented. Derived objectives can set zone targets that feed into plan adherence evaluation.
+
 ## Risks / Trade-offs
 
 **[Objective drift]** Auto-derived objectives may not match user expectations.

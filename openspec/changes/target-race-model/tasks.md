@@ -33,9 +33,9 @@
 ## 4. Adaptive Predictions
 
 - [ ] 4.1 Rename `predict_marathon_time()` → `predict_race_time(target_km=42.195, ...)` with backward compat
-- [ ] 4.2 Update prediction trend chart: use target_km from `get_target_race()`, scale VDOT to target distance
-- [ ] 4.3 Update race prediction table: Riegel extrapolates to target_km, target annotation uses target_time
-- [ ] 4.4 Update prediction summary in Race Anchor Card: range for target distance
+- [ ] 4.2 Verify prediction trend chart adapts to target_km (already partially implemented — uses get_target_race() for distance scaling, verify it works with is_target flag)
+- [ ] 4.3 Verify race prediction table adapts (already implemented — Riegel extrapolates to target_km, grouped by distance, original pace shown)
+- [ ] 4.4 Verify prediction summary adapts (already implemented — _prediction_summary scales to target_km)
 - [ ] 4.5 Update pacing strategy: adapt segment count and HR ceilings to target distance
 - [ ] 4.6 Update all callers of predict_marathon_time to use predict_race_time
 - [ ] 4.7 Test: predictions for marathon/HM/10K, backward compat, pacing for different distances

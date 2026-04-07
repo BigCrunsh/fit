@@ -53,3 +53,48 @@ Migration 007 SHALL consolidate ALL Phase 2a schema changes into ONE migration: 
 #### Scenario: Single migration covers all changes
 - **WHEN** migration 007 runs
 - **THEN** goals, activities, and weekly_agg all have their new columns in one transaction
+
+## Post-Phase 2 Additions
+
+### Requirement: Race CRUD via CLI
+The `fit races` command SHALL be a Click group with subcommands for full CRUD operations on the `race_calendar` table.
+
+**`fit races add`** — interactive CLI prompting for: name, date, distance (with aliases: 5k, 10k, half, marathon mapped to km), status (planned/registered/completed/dns/dnf), target_time, and result_time (for completed races).
+
+**`fit races update <id>`** — edit any field of an existing race by ID.
+
+**`fit races delete <id>`** — delete a race with confirmation prompt. Unlinks associated goals (sets `goals.race_id = NULL`) and activities (sets `race_calendar.activity_id = NULL`) before deletion.
+
+**`fit races list`** — shows all races with their IDs visible, enabling CRUD operations.
+
+#### Scenario: Add a race interactively
+- **WHEN** user runs `fit races add`
+- **THEN** CLI prompts for name, date, distance (accepting "half" → 21.1km, "marathon" → 42.195km, "10k" → 10.0km, "5k" → 5.0km), status, target_time
+- **AND** race is inserted into race_calendar
+
+#### Scenario: Update a race
+- **WHEN** user runs `fit races update 3` and changes target_time
+- **THEN** race_calendar row 3 is updated with the new target_time
+
+#### Scenario: Delete a race with linked goals
+- **WHEN** user runs `fit races delete 2` and race 2 has goals linked via race_id
+- **THEN** confirmation prompt shown, goals.race_id set to NULL, race deleted
+
+#### Scenario: Race list shows IDs
+- **WHEN** user runs `fit races list`
+- **THEN** output table includes an ID column for each race
+
+### Requirement: get_target_race() priority logic
+`get_target_race(conn)` SHALL use the following priority to determine the anchor race: (1) race linked to an active goal via `goals.race_id`, (2) longest distance among upcoming registered races, (3) nearest upcoming registered race by date.
+
+#### Scenario: Goal-linked race takes priority
+- **WHEN** goal has race_id=2 (10K) and race_id=3 (marathon) is also registered
+- **THEN** `get_target_race()` returns race 2 (goal-linked)
+
+#### Scenario: No goal-linked race, longest distance wins
+- **WHEN** no goals have race_id set, but two races are registered (10K on Jun 1, marathon on Sep 27)
+- **THEN** `get_target_race()` returns the marathon (longest distance)
+
+#### Scenario: Same distance, nearest wins
+- **WHEN** two half marathons are registered (Jun 1 and Sep 27), no goal link
+- **THEN** `get_target_race()` returns Jun 1 (nearest)

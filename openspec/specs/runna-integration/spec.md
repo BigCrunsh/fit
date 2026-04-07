@@ -87,3 +87,42 @@ Detect phase transition readiness: "Phase 1 objectives met (Z2 ≥80%, volume �
 #### Scenario: Struggling detection
 - **WHEN** weekly km below phase target for 3+ consecutive weeks
 - **THEN** coaching: "Below volume target for 3 weeks — consider extending Phase 1"
+
+## Post-Phase 2 Additions
+
+### Requirement: Plan adherence tracks zone/intensity compliance
+Plan adherence SHALL track not just distance compliance but also zone and intensity compliance per workout. Two new fields per adherence record: `zone_match` (boolean: did actual HR zone match planned zone?) and `intensity_override` (boolean: was a planned easy/Z2 workout executed at Z3+ intensity?).
+
+#### Scenario: Zone match tracked
+- **WHEN** planned workout is Dauerlauf (Z2) and actual run was in Z2
+- **THEN** zone_match=True, intensity_override=False
+
+#### Scenario: Intensity override detected
+- **WHEN** planned workout is Dauerlauf (Z2) and actual run avg HR was in Z3
+- **THEN** zone_match=False, intensity_override=True
+
+### Requirement: Plan adherence chart colors
+The plan adherence mirrored bar chart SHALL use semantic colors: green for zone match (planned and actual zones aligned), yellow for zone mismatch (different zone but not an intensity override), red for intensity override (easy plan executed as hard).
+
+#### Scenario: Color coding in chart
+- **WHEN** adherence chart renders 3 workouts: 1 zone match, 1 zone mismatch, 1 override
+- **THEN** bars colored green, yellow, red respectively
+
+### Requirement: Compliance detail table
+A compliance detail table SHALL render below the plan adherence chart, showing per-workout breakdown: date, workout type, planned km vs actual km, planned HR zone vs actual HR zone, and compliance status (match/mismatch/override/missed/unplanned).
+
+#### Scenario: Detail table content
+- **WHEN** compliance detail table renders for a week with 4 planned workouts
+- **THEN** table shows 4 rows with columns: date, type, planned km, actual km, HR zone, status
+
+#### Scenario: Missed workout in table
+- **WHEN** a planned Tempo workout was not executed
+- **THEN** table row shows: date, "Tempo", "7.5 km", "--", "--", "missed"
+
+## Post-Phase 2 Additions
+
+### Requirement: Zone and intensity compliance in plan adherence
+Plan adherence SHALL track per-match: zone_match (was HR in expected zone for workout type), intensity_override (planned easy but ran Z3+), actual_zone, actual_hr, actual_pace. Chart colors: green=zone match, yellow=zone mismatch, red=intensity override.
+
+### Requirement: Compliance detail table
+Dashboard SHALL show a per-workout compliance table below the plan adherence chart: date, type, planned km → actual km, HR zone, compliance status. Color-coded rows: green=zone match, yellow=mismatch, red=override, gray=upcoming.

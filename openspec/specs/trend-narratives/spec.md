@@ -98,3 +98,17 @@ All sparklines in the rolling correlation grid SHALL use a consistent y-axis ran
 #### Scenario: Weak vs strong correlation visual comparison
 - **WHEN** alcohol→HRV is r=-0.6 and sleep→efficiency is r=0.2
 - **THEN** both sparklines use -1 to +1 y-axis, making the alcohol effect visually stronger
+
+## Post-Phase 2 Additions
+
+### Requirement: Run Timeline zone color legend
+Run Timeline SHALL display a color legend: Z1-Z2 (blue), Z3 (amber), Z4-Z5 (orange).
+
+### Requirement: Run Timeline gap markers
+When runs are >14 days apart in the timeline, a gap marker SHALL appear: "── Nd gap ──" in muted text between the run bars.
+
+### Requirement: WoW as narrative sentence
+Week-over-week SHALL render as a narrative sentence from generate_wow_sentence(), e.g. "Volume down 58% (8km from 19km) but zone compliance flipped 0%→100% — first truly easy week." Not raw data dump.
+
+### Requirement: Body tab narrative thread
+Body tab SHALL open with a one-line narrative from generate_body_summary() connecting recovery signals: "Recovery improving: readiness 6→67. RHR stable. HRV low. Weight: 3.6kg above target."

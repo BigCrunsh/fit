@@ -47,3 +47,11 @@ The sync pipeline SHALL include an `enrich_srpe` stage that retroactively joins 
 #### Scenario: Week 53 ACWR
 - **WHEN** current week is 2027-W01 and computing ACWR with 4 prior weeks
 - **THEN** correctly references 2026-W52, 2026-W51, 2026-W50, 2026-W49 (not 2026-W00)
+
+## Post-Phase 2 Additions
+
+### Requirement: Doctor expects 17 tables
+`fit doctor` table check SHALL expect 17 tables: the original 14 + race_calendar + activity_splits + planned_workouts.
+
+### Requirement: Sync warnings surfaced to console
+Sync pipeline warnings (missing body comp source, stale CSV, sRPE/plan sync results) SHALL display in CLI output via the counts["warnings"] mechanism, not only in the log file.

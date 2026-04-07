@@ -417,3 +417,20 @@ When `sync.weight_csv_path` is configured, `fit sync` SHALL check for the weight
 #### Scenario: Weight CSV configured and new data available
 - **WHEN** `fit sync` runs and `weight_csv_path` points to an existing CSV with new data
 - **THEN** new weight rows are imported into body_comp and an import_log entry is created
+
+## Post-Phase 2 Additions
+
+### Requirement: track_running and trail_running treated as running
+The system SHALL treat `track_running` and `trail_running` activity types as running everywhere: queries, views, enrichment (zone computation, efficiency, run_type classification), and weekly_agg aggregation. These are running variants and must not be excluded from running statistics.
+
+#### Scenario: track_running included in v_run_days
+- **WHEN** an activity has `type = 'track_running'`
+- **THEN** it appears in the `v_run_days` view alongside regular running activities
+
+#### Scenario: trail_running enriched as running
+- **WHEN** a trail_running activity is synced
+- **THEN** it receives zone classification, speed_per_bpm, run_type, and is counted in weekly_agg run metrics
+
+#### Scenario: v_run_days view includes all running variants
+- **WHEN** `v_run_days` is queried
+- **THEN** results include activities where `type IN ('running', 'track_running', 'trail_running')`

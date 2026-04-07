@@ -135,3 +135,41 @@ The system SHALL translate a marathon prediction into a race-day plan: target sp
 #### Scenario: Sub-4:00 pacing plan
 - **WHEN** prediction is 3:52
 - **THEN** show: "5km splits: 27:20 | HR ceiling: 165 | Fuel: gel at 45min, then every 30min"
+
+## Post-Phase 2 Additions
+
+### Requirement: Auto-populate weight calibration from Apple Health import
+When Apple Health body comp data is imported (via `fit import-health` or auto-sync), the system SHALL automatically create or update a weight calibration entry with `method = 'scale'`, `confidence = 'high'`, using the most recent weight value.
+
+#### Scenario: Weight calibration from Apple Health
+- **WHEN** Apple Health import adds weight data with latest value 76.2kg
+- **THEN** calibration table has an active weight entry: value=76.2, method='scale', confidence='high'
+
+### Requirement: Auto-populate VO2max calibration from Garmin sync
+When `fit sync` imports activities that include a VO2max estimate from Garmin, the system SHALL automatically create or update a VO2max calibration entry with `method = 'garmin_estimate'`, `confidence = 'medium'`, using the latest activity's VO2max value.
+
+#### Scenario: VO2max calibration from sync
+- **WHEN** sync imports an activity with vo2max=49.5
+- **THEN** calibration table has an active vo2max entry: value=49.5, method='garmin_estimate', confidence='medium'
+
+### Requirement: Prediction table shows all completed races grouped by distance
+The race prediction section SHALL display ALL completed races (no LIMIT), grouped by distance category (HM, 10K, 5K, Other). VO2max-based predictions are shown in a separate row. Each race shows the original pace alongside the extrapolated pace for the target race distance.
+
+#### Scenario: All races shown grouped
+- **WHEN** race_calendar has 3 completed races (1x HM, 2x 10K) and VO2max is 49
+- **THEN** prediction table shows HM group (1 row), 10K group (2 rows), VO2max row, no LIMIT applied
+
+#### Scenario: Original pace alongside extrapolated
+- **WHEN** a completed 10K race had pace 5:53/km and Riegel extrapolation to marathon gives 6:20/km
+- **THEN** prediction row shows "6:20/km (ran 5:53/km)" for that race
+
+### Requirement: Prediction summary adapts to target race distance
+The prediction summary SHALL use the target race distance (from `get_target_race()`) for all extrapolations. Both Riegel and VDOT predictions are scaled to `target_km`. If no target race exists, default to marathon (42.195km).
+
+#### Scenario: Target race is half marathon
+- **WHEN** target race is a half marathon (21.1km)
+- **THEN** all Riegel and VDOT predictions are extrapolated to 21.1km, not marathon
+
+#### Scenario: No target race defaults to marathon
+- **WHEN** no target race exists
+- **THEN** predictions use 42.195km as default target distance

@@ -24,3 +24,30 @@ Do NOT build an Apple Health integration for body comp. The data originates from
 #### Scenario: Apple Health not proposed
 - **WHEN** evaluating body comp data sources
 - **THEN** FitDays CSV is the path, not Apple Health (decision recorded, prevents re-proposal)
+
+## Post-Phase 2 Additions
+
+### Requirement: Apple Health XML import as primary body comp source
+The previous "Apple Health out of scope" decision is SUPERSEDED. FitDays CSV export proved unreliable in practice. Apple Health XML export (`Export.zip`) is now the recommended primary body comp source. A new module `fit/apple_health.py` SHALL parse the Apple Health XML export and extract weight, body fat, muscle mass, and visceral fat data.
+
+#### Scenario: Apple Health import via CLI
+- **WHEN** user runs `fit import-health ~/Downloads/Export.zip`
+- **THEN** body comp data is parsed from the Apple Health XML and imported into the `body_comp` table
+
+#### Scenario: Auto-import during sync
+- **WHEN** `sync.apple_health_export` is configured in config.yaml with a path to Export.zip
+- **THEN** `fit sync` automatically imports new body comp data from that file
+
+### Requirement: Sync pipeline warns when no body comp source configured
+The sync pipeline SHALL check whether any body comp source is configured and warn if none is found. The warning SHALL list the 3 available options.
+
+#### Scenario: No body comp source
+- **WHEN** `fit sync` runs and neither `sync.weight_csv_path` nor `sync.apple_health_export` is configured and no manual body_comp rows exist
+- **THEN** sync outputs a warning: "No body comp source configured. Options: (1) fit import-health ~/Downloads/Export.zip, (2) sync.apple_health_export in config, (3) sync.weight_csv_path for FitDays CSV"
+
+### Requirement: FitDays CSV deprecated in favor of Apple Health
+FitDays CSV export is unreliable (inconsistent column names, manual export steps). Apple Health is the recommended path. FitDays CSV import continues to work but documentation and warnings guide users toward Apple Health.
+
+#### Scenario: FitDays CSV still works
+- **WHEN** user has `sync.weight_csv_path` configured
+- **THEN** CSV import continues to function, but sync logs an info message: "Consider switching to Apple Health import for more reliable body comp data"

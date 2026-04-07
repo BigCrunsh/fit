@@ -109,3 +109,63 @@ The `get_coaching_context()` tool SHALL include 5 sections: (1) **Profile** — 
 #### Scenario: Insight with empty body rejected
 - **WHEN** Claude calls `save_coaching_notes()` with an insight that has a title but no body
 - **THEN** the tool returns an error listing the invalid insight and explaining the body requirement
+
+## Post-Phase 2 Additions
+
+### Requirement: get_coaching_context() includes today's run and plan
+`get_coaching_context()` SHALL include: (1) today's completed run (if any) with distance, pace, HR, zone, run_type, (2) the full week's Runna plan (next 10 days of planned_workouts), (3) a partial-week ACWR flag indicating whether ACWR is based on incomplete week data, (4) previous coaching summary (titles from last session's coaching.json for continuity).
+
+#### Scenario: Today's run in context
+- **WHEN** Claude calls `get_coaching_context()` and a run was completed today
+- **THEN** context includes: "Today's run: 8.2km, 5:42/km, HR 142, Z2, easy"
+
+#### Scenario: Runna plan in context
+- **WHEN** Claude calls `get_coaching_context()` and planned_workouts exist for next 10 days
+- **THEN** context includes the full plan: dates, workout types, target distances, target zones
+
+#### Scenario: Partial-week ACWR flag
+- **WHEN** it is Wednesday and ACWR is computed from 3 days of data
+- **THEN** context includes: "ACWR note: partial week (3/7 days), current value may not reflect full week"
+
+#### Scenario: Previous coaching summary
+- **WHEN** coaching.json exists from a prior session
+- **THEN** context includes: "Previous coaching (Apr 5): [insight titles from last session]"
+
+### Requirement: save_coaching_notes() archives previous notes
+`save_coaching_notes()` SHALL archive the previous coaching.json to `coaching_history.json` (append) before overwriting with new notes. This preserves coaching history for trend analysis.
+
+#### Scenario: Previous notes archived
+- **WHEN** Claude calls `save_coaching_notes()` and coaching.json already exists
+- **THEN** existing coaching.json content is appended to coaching_history.json, then coaching.json is overwritten with new notes
+
+#### Scenario: First coaching session
+- **WHEN** Claude calls `save_coaching_notes()` and no coaching.json exists
+- **THEN** coaching.json is created directly, no archival needed
+
+### Requirement: Plan adherence in coaching context
+`get_coaching_context()` SHALL include plan adherence data: weekly compliance percentage, list of missed workouts (date + type), intensity override pattern (% of easy runs executed too hard), and readiness-based recommendation for today's planned workout.
+
+#### Scenario: Plan adherence summary
+- **WHEN** Claude calls `get_coaching_context()` and planned_workouts + activities exist
+- **THEN** context includes: "Plan adherence: 75% compliance, 1 missed (Tue tempo), 40% intensity override on easy runs"
+
+#### Scenario: Readiness recommendation
+- **WHEN** readiness=35 and today's plan is Intervals
+- **THEN** context includes: "Readiness gate: 35 < 40 threshold. Recommend swapping Intervals to easy Dauerlauf"
+
+## Post-Phase 2 Additions
+
+### Requirement: Today's completed run in coaching context
+get_coaching_context() SHALL include today's completed running activity at the top of the output, clearly labeled "TODAY's run (COMPLETED):" with name, distance, pace, HR, zone, and run_type. This prevents the coaching AI from treating a completed run as upcoming.
+
+### Requirement: Full week's plan in coaching context
+get_coaching_context() SHALL include all planned workouts for the next 10 days from planned_workouts table. This enables the coaching AI to give plan-aware recommendations ("your plan has a tempo Friday, but given readiness I'd swap to easy").
+
+### Requirement: Partial-week ACWR flag
+When the most recent ACWR value is from the current (incomplete) week, coaching context SHALL note "week is only N/7 days old, ACWR will rise as more runs are added." Also shows last completed week's ACWR for reference.
+
+### Requirement: Coaching history preservation
+save_coaching_notes() SHALL archive the previous coaching.json to coaching_history.json (append-only array) before overwriting. get_coaching_context() includes a summary of previous coaching (date + insight titles) so the AI can reference what it recommended last time.
+
+### Requirement: Plan adherence in coaching context
+Coaching context SHALL include plan adherence data: weekly compliance %, missed workout count, override pattern detection, next planned workout, and readiness-based swap recommendation.

@@ -77,3 +77,20 @@ Bundle a minimal synthetic .fit fixture in tests/fixtures/ (not real files — k
 #### Scenario: Synthetic fixture test
 - **WHEN** test parses the synthetic .fit fixture
 - **THEN** correct splits, drift detection, and DB storage verified
+
+## Post-Phase 2 Additions
+
+### Requirement: Garmin .fit file ZIP extraction
+Garmin downloads .fit files as ZIP archives, not raw .fit files. The system SHALL detect ZIP files using `zipfile.is_zipfile()` and automatically extract the .fit file before parsing.
+
+#### Scenario: ZIP file downloaded from Garmin
+- **WHEN** a downloaded file is a ZIP archive containing a .fit file
+- **THEN** the system extracts the .fit file from the ZIP before parsing
+
+#### Scenario: Raw .fit file (not zipped)
+- **WHEN** a downloaded file is already a raw .fit file (not a ZIP)
+- **THEN** the system parses it directly without extraction
+
+#### Scenario: ZIP with no .fit file inside
+- **WHEN** a downloaded ZIP does not contain a .fit file
+- **THEN** splits_status='failed', error logged, processing continues
