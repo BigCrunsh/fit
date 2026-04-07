@@ -164,13 +164,14 @@ def _all_charts(conn):
                                    "x": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
-    # Weight (Body tab) — start from first activity (aligned with training age)
-    first_activity = conn.execute("SELECT MIN(date) FROM activities").fetchone()[0]
-    weight_start = first_activity or "2024-01-01"
+    # Weight (Body tab) — last 6 months by default (the actionable trend)
+    # Older data creates visual gaps and scale jumps that obscure the trend
     weight = conn.execute(
-        "SELECT date, weight_kg, body_fat_pct FROM body_comp WHERE date >= ? ORDER BY date",
-        (weight_start,),
+        "SELECT date, weight_kg, body_fat_pct FROM body_comp WHERE date >= date('now', '-180 days') ORDER BY date"
     ).fetchall()
+    # Fallback to all data if <5 records in last 6 months
+    if len(weight) < 5:
+        weight = conn.execute("SELECT date, weight_kg, body_fat_pct FROM body_comp ORDER BY date").fetchall()
     if weight:
         weight_target = conn.execute("SELECT target_value FROM goals WHERE type = 'metric' AND name LIKE '%eight%' AND active = 1 LIMIT 1").fetchone()
         weight_annots = dict(event_annots)
