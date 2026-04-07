@@ -454,9 +454,33 @@ def get_coaching_context() -> str:
         sections.extend(_ctx_correlations(conn))
         sections.extend(_ctx_goals(conn))
         sections.extend(_ctx_plan(conn))
+        sections.extend(_ctx_previous_coaching())
         return "Coaching Context:\n" + "\n".join(f"  {s}" for s in sections)
     finally:
         conn.close()
+
+
+def _ctx_previous_coaching() -> list[str]:
+    """Summary of previous coaching notes for continuity."""
+    s = []
+    try:
+        reports_dir = Path(config["sync"]["db_path"]).expanduser().parent / "reports"
+        coaching_path = reports_dir / "coaching.json"
+        if coaching_path.exists():
+            data = json.loads(coaching_path.read_text())
+            gen_date = data.get("report_date", data.get("generated_at", "?"))
+            insights = data.get("insights", [])
+            if insights:
+                s.append(f"Previous coaching ({gen_date}): {len(insights)} insights")
+                # Show titles + types as summary (not full body — too long)
+                for i in insights[:5]:
+                    s.append(f"  [{i.get('type', '?')}] {i.get('title', '?')}")
+                if len(insights) > 5:
+                    s.append(f"  ... and {len(insights) - 5} more")
+                s.append("  (Full previous coaching available in coaching.json. Reference what you recommended last time.)")
+    except Exception:
+        pass
+    return s
 
 
 @mcp.tool()
@@ -496,13 +520,24 @@ def save_coaching_notes(insights_json: str) -> str:
     reports_dir.mkdir(parents=True, exist_ok=True)
     coaching_path = reports_dir / "coaching.json"
 
+    # Archive previous coaching notes to history (append, never lose)
+    history_path = reports_dir / "coaching_history.json"
+    if coaching_path.exists():
+        try:
+            prev = json.loads(coaching_path.read_text())
+            history = json.loads(history_path.read_text()) if history_path.exists() else []
+            history.append(prev)
+            history_path.write_text(json.dumps(history, indent=2))
+        except Exception:
+            pass  # Don't fail the save if archiving fails
+
     # Atomic write: temp file + rename
     tmp_path = coaching_path.with_suffix(".tmp")
     tmp_path.write_text(json.dumps(data, indent=2))
     tmp_path.rename(coaching_path)
 
     n = len(data.get("insights", []))
-    return f"Saved {n} coaching insights to {coaching_path}"
+    return f"Saved {n} coaching insights to {coaching_path} (previous notes archived to coaching_history.json)"
 
 
 if __name__ == "__main__":
