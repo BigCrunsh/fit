@@ -43,6 +43,12 @@ def sync(days: int, full: bool, splits: bool):
                        f"{counts['enriched']} enriched, {counts['weather']} weather, {counts['weekly_agg']} weeks")
         if counts.get("splits"):
             console.print(f"  [green]✓[/green] Processed {counts['splits']} activities for splits")
+        if counts.get("srpe"):
+            console.print(f"  [green]✓[/green] Computed sRPE for {counts['srpe']} activities")
+        if counts.get("planned_workouts"):
+            console.print(f"  [green]✓[/green] Synced {counts['planned_workouts']} planned workouts")
+        for w in counts.get("warnings", []):
+            console.print(f"  [yellow]⚠ {w}[/yellow]")
         console.print("[bold green]Done.[/bold green]")
     except Exception as e:
         console.print(f"[bold red]Sync failed:[/bold red] {e}")

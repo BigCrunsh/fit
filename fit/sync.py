@@ -37,6 +37,7 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     end = date.today()
 
     counts = {"health": 0, "activities": 0, "spo2": 0, "weather": 0, "enriched": 0, "weekly_agg": 0}
+    warnings = []
 
     # Get LTHR calibration for zone computation
     lthr_cal = get_active_calibration(conn, "lthr")
@@ -155,10 +156,9 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     if weight_csv:
         csv_path = Path(weight_csv).expanduser()
         if not csv_path.exists():
-            logger.warning(
-                "FitDays CSV not found at %s. "
-                "Download from FitDays app → Export → CSV, save to %s",
-                csv_path, csv_path,
+            warnings.append(
+                f"FitDays CSV not found at {csv_path}. "
+                f"Download from FitDays app → Export → CSV, save to {csv_path}"
             )
         else:
             # Check staleness (warn if file >14 days old)
@@ -166,19 +166,18 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
             mtime = date.fromtimestamp(os.path.getmtime(csv_path))
             days_old = (date.today() - mtime).days
             if days_old > 14:
-                logger.warning(
-                    "FitDays CSV is %d days old (%s). "
-                    "Re-export from FitDays app to get latest body comp data.",
-                    days_old, csv_path,
+                warnings.append(
+                    f"FitDays CSV is {days_old} days old. "
+                    f"Re-export from FitDays app to get latest body comp data."
                 )
             try:
                 _auto_import_weight(conn, csv_path)
             except Exception as e:
                 logger.debug("Weight auto-import failed: %s", e)
     else:
-        logger.info(
-            "No weight CSV configured. To auto-import FitDays data, set "
-            "sync.weight_csv_path in config.local.yaml (e.g., ~/.fit/fitdays.csv)"
+        warnings.append(
+            "No weight CSV configured. To auto-import FitDays body comp data, "
+            "add sync.weight_csv_path to config.local.yaml (e.g., ~/.fit/fitdays.csv)"
         )
 
     # 8a. Compute sRPE (retroactively join checkin RPE to same-day activities)
@@ -243,6 +242,8 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
         except Exception as e:
             logger.debug("Splits processing skipped: %s", e)
 
+    if warnings:
+        counts["warnings"] = warnings
     logger.info("Sync complete: %s", counts)
     return counts
 
