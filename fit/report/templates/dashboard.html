@@ -296,12 +296,10 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
     <button class="tab-btn{% if r == 'all' %} active{% endif %}" style="font-size:9px;padding:2px 8px" onclick="setZoom('{{ r }}',this)">{{ r }}</button>
     {% endfor %}
   </div>
-  {% if wow %}
   <div class="wow-card">
     <div style="font-size:9px;font-weight:700;color:var(--z12);margin-bottom:4px">WEEK OVER WEEK</div>
-    {{ wow }}
+    {% if wow %}{{ wow }}{% else %}<span style="color:var(--text-dim)">Need 2+ weeks of data for comparison.</span>{% endif %}
   </div>
-  {% endif %}
 
   <div class="sec"><h2>Weekly Volume</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.volume | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-volume" height="160"></canvas></div>
@@ -313,8 +311,8 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div class="chart-box"><canvas id="chart-runtypes" height="120"></canvas></div>
 
   <!-- Plan adherence (if plan data exists) -->
-  {% if plan_adherence is defined and plan_adherence and (plan_adherence.planned or plan_adherence.actuals) %}
   <div class="sec"><h2>Plan Adherence</h2><div class="line"></div></div>
+  {% if plan_adherence is defined and plan_adherence and (plan_adherence.planned or plan_adherence.actuals) %}
   <div class="chart-box"><canvas id="chart-plan-adherence" height="140"></canvas></div>
   <!-- Compliance detail table -->
   <div style="margin:-8px 0 16px">
@@ -339,6 +337,8 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
     <div style="font-size:9px;color:var(--text-dim);margin-top:4px;padding:0 10px">Weekly compliance: {{ plan_adherence.weekly_compliance_pct }}% · <span style="color:var(--safe)">green=zone ✓</span> <span style="color:var(--caution)">yellow=zone ✗</span> <span style="color:var(--danger)">red=intensity override</span> <span style="color:var(--text-dim)">gray=upcoming</span></div>
     {% endif %}
   </div>
+  {% else %}
+  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">No training plan loaded. Import your Runna plan: <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit plan import &lt;file&gt;</code> or sync from Garmin Calendar: <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit sync</code></div>
   {% endif %}
 
   <div class="sec"><h2>Run Timeline</h2><div class="line"></div></div>
@@ -376,13 +376,15 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div class="sec"><h2>Weight</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.weight | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-weight" height="130"></canvas></div>
 
-  {% if sleep_mismatches %}
   <div class="sec"><h2>Sleep Quality Mismatches</h2><div class="line"></div></div>
+  {% if sleep_mismatches %}
   {% for m in sleep_mismatches %}
   <div style="background:rgba(234,179,8,0.06);border:1px solid rgba(234,179,8,0.12);border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:11px;color:#94a3b8">
     <span style="color:var(--caution)">{{ m.date }}:</span> {{ m.msg }}
   </div>
   {% endfor %}
+  {% else %}
+  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">No mismatches detected. Log sleep quality in <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit checkin</code> to compare Garmin sleep data with how you feel.</div>
   {% endif %}
 </div>
 
@@ -425,8 +427,8 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div class="chart-box"><canvas id="chart-cadence" height="120"></canvas></div>
 
   <!-- Split Analysis (most recent parsed run) -->
-  {% if split_data %}
   <div class="sec" style="margin-top:28px"><h2>Per-Km Split Analysis</h2><div class="line"></div></div>
+  {% if split_data %}
   <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">{{ split_data.run_name or 'Long Run' }} · {{ split_data.run_date }} · {{ split_data.distance_km }}km</div>
 
   {% if split_data.drift %}
@@ -465,6 +467,8 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
     </div>
     {% endfor %}
   </div>
+  {% else %}
+  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">No split data yet. Enable .fit file download: <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit sync --splits</code> or install fitparse: <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">pip install 'fit[analysis]'</code></div>
   {% endif %}
 
   <!-- SECTION 3: Forecast -->
@@ -474,19 +478,21 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div class="sec" style="margin-top:8px"><h2>Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">Monthly marathon time prediction from VO2max. Lower = faster. Green line = sub-4:00 (240 min).</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-marathon-pred" height="150"></canvas></div>
 
-  {% if race_prediction %}
   <div class="sec"><h2>Marathon Prediction (from Race Results)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.race_prediction | safe }}</div><div class="line"></div></div>
+  {% if race_prediction %}
   <div style="background:rgba(167,139,250,0.04);border:1px solid rgba(167,139,250,0.12);border-radius:12px;padding:15px">
     {{ race_prediction | safe }}
   </div>
+  {% else %}
+  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">No completed races with official times yet. Add via <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit races add</code> with status=completed and result time.</div>
   {% endif %}
 </div>
 
 <!-- COACH -->
 <div id="tab-coach" class="tab-content">
 
-  {% if correlation_bars %}
   <div class="sec"><h2>What Affects Your Performance?</h2><div class="line"></div></div>
+  {% if correlation_bars %}
   <div style="margin-bottom:14px">
   {% for c in correlation_bars %}
   <div style="display:flex;align-items:center;gap:10px;margin:6px 0;padding:6px 10px;background:var(--surface);border-radius:8px">
@@ -500,9 +506,12 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   {% endfor %}
   <div style="font-size:9px;color:var(--text-dim);margin-top:6px">Spearman rank correlation. Bars show effect strength. Build more data through daily <code>fit checkin</code> to unlock more correlations.</div>
   </div>
+  {% else %}
+  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">Not enough data yet for correlations. Need 20+ check-ins with alcohol, sleep quality, and water data. Run <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit checkin</code> daily to build the dataset.</div>
   {% endif %}
 
   <!-- Rolling correlation sparklines -->
+  <div class="sec"><h2>Correlation Trends (8-week rolling)</h2><div class="line"></div></div>
   {% if rolling_correlations %}
   <div class="sec"><h2>Correlation Trends (8-week rolling)</h2><div class="line"></div></div>
   <div class="sparkline-grid">
@@ -524,6 +533,8 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
     </div>
     {% endfor %}
   </div>
+  {% else %}
+  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">Rolling correlations need 8+ weeks of check-in data. Currently computing from available data — keep running <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit checkin</code> daily.</div>
   {% endif %}
 
   {% if coaching %}
