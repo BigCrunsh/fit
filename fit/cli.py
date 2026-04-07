@@ -455,60 +455,75 @@ def target_show():
             derived = derive_objectives(conn, race["id"])
             derived = compute_achievability(conn, derived, days_left)
 
-            console.print(f"\n  [bold]Fitness Profile[/bold]  {'':20s}  {'Current':>10s}  {'Required':>10s}  {'Gap':>8s}  Status")
-            console.print(f"  {'─' * 78}")
+            def _ach_icon(a):
+                return {"on_track": "[green]✓[/green]", "tight": "[yellow]⚠[/yellow]", "at_risk": "[red]✗[/red]"}.get(a, " ")
 
-            # VDOT line
-            if profile["effective_vdot"]:
-                src = f"race {profile['race_vdot']}" if profile["race_vdot"] else "Garmin"
-                vdot_obj = next((o for o in derived if "vdot" in o["name"].lower()), None)
-                if vdot_obj:
-                    required = vdot_obj.get("target_value", "—")
-                    gap = profile["effective_vdot"] - required if required and required != "—" else None
-                    status_icon = {"on_track": "[green]✓[/green]", "tight": "[yellow]⚠[/yellow]", "at_risk": "[red]✗[/red]"}.get(vdot_obj.get("achievability", ""), "?")
-                    console.print(f"  {'VDOT':12s} ({src:>12s})  {profile['effective_vdot']:>10.1f}  {required:>10}  {gap:>+8.1f}  {status_icon}" if gap is not None else f"  {'VDOT':12s} ({src:>12s})  {profile['effective_vdot']:>10.1f}")
-                else:
-                    console.print(f"  {'VDOT':12s} ({src:>12s})  {profile['effective_vdot']:>10.1f}")
+            def _find_obj(keyword):
+                return next((o for o in derived if keyword in o["name"].lower()), None)
 
-            # Each fitness dimension
-            for dim_name in ("aerobic", "threshold", "economy", "resilience"):
-                dim = profile[dim_name]
+            # ── Fitness Profile ──
+            console.print("\n  [bold]Fitness Profile[/bold]")
+
+            # VDOT (the primary fitness score)
+            vdot = profile["effective_vdot"]
+            vdot_obj = _find_obj("vdot")
+            if vdot:
+                vdot_src = f"from {profile['race_vdot_date'][:7]} race" if profile["race_vdot_date"] else "estimated"
+                vdot_required = vdot_obj["target_value"] if vdot_obj else "—"
+                vdot_gap = f"{vdot - vdot_required:+.1f}" if vdot_obj else ""
+                vdot_status = _ach_icon(vdot_obj.get("achievability")) if vdot_obj else ""
+                console.print(f"    VDOT             {vdot:>6.1f}   need ≥{vdot_required}  ({vdot_gap})  {vdot_status}  [dim]({vdot_src})[/dim]")
+                if profile["garmin_vo2max"]:
+                    console.print(f"    [dim]Garmin VO2max  {profile['garmin_vo2max']:>6.1f}   (wrist estimate — race VDOT is more reliable)[/dim]")
+
+            # 4 dimensions with context
+            dims = [
+                ("Aerobic", "aerobic", "VO2max ceiling — how much oxygen your body can use"),
+                ("Threshold", "threshold", "Z2 pace at HR 134 — your easy running speed"),
+                ("Economy", "economy", "Speed per heartbeat — how efficiently you run"),
+                ("Resilience", "resilience", "Drift onset — how far before HR decouples from pace"),
+            ]
+            for label, key, context in dims:
+                dim = profile[key]
                 if dim.get("current_value") is not None:
-                    trend_icon = {"improving": "↑", "declining": "↓", "flat": "→"}.get(dim["trend"], "?")
-                    unit = dim.get("unit", "")
-                    # Find matching objective
+                    trend = {"improving": "[green]↑[/green]", "declining": "[red]↓[/red]", "flat": "→"}.get(dim["trend"], "?")
+                    rate = f" {dim['rate_per_month']:+.2f}/mo" if dim.get("rate_per_month") else ""
+
+                    # Find matching objective for target
                     obj = None
-                    for o in derived:
-                        oname = o["name"].lower()
-                        if False and dim_name == "aerobic":  # Aerobic shown via VDOT line, not duplicated
-                            obj = o
-                        elif dim_name == "resilience" and "long run" in oname:
-                            obj = o
-                        # Economy and threshold don't have direct objective targets — they're trend metrics
+                    if key == "resilience":
+                        obj = _find_obj("long run")
 
                     if obj and obj.get("target_value") is not None:
-                        required = obj["target_value"]
-                        gap = obj.get("gap")  # positive = need more, negative = ahead
-                        status_icon = {"on_track": "[green]✓[/green]", "tight": "[yellow]⚠[/yellow]", "at_risk": "[red]✗[/red]"}.get(obj.get("achievability", ""), "?")
-                        gap_str = f"{gap:>+8.1f}" if gap is not None else ""
-                        console.print(f"  {dim_name.capitalize():12s} {trend_icon:>14s}  {dim['current_value']:>10}  {required:>10}  {gap_str}  {status_icon}")
+                        gap = obj.get("gap", 0)
+                        console.print(f"    {label:12s}  {dim['current_value']:>8} {trend}{rate:>12s}   need {obj['target_value']}  ({gap:+.1f})  {_ach_icon(obj.get('achievability'))}")
                     else:
-                        console.print(f"  {dim_name.capitalize():12s} {trend_icon:>14s}  {dim['current_value']:>10}  {unit}")
+                        console.print(f"    {label:12s}  {dim['current_value']:>8} {trend}{rate:>12s}   [dim]{context}[/dim]")
                 elif dim.get("message"):
-                    console.print(f"  {dim_name.capitalize():12s}  [dim]{dim['message']}[/dim]")
+                    console.print(f"    {label:12s}  [dim]{dim['message']}[/dim]")
 
-            # Additional objectives not in fitness dimensions
-            console.print("\n  [bold]Additional Objectives[/bold]")
+            # ── Objectives (derived from target race) ──
+            console.print(f"\n  [bold]Objectives[/bold]  [dim](auto-derived from {race['name']} {race['target_time']})[/dim]")
             for obj in derived:
-                oname = obj["name"].lower()
-                if "vo2max" in oname:
-                    continue  # already shown in profile
+                if "vdot" in obj["name"].lower():
+                    continue  # shown in profile
                 current = obj.get("current_value")
                 target = obj.get("target_value")
-                gap = obj.get("gap")
-                status_icon = {"on_track": "[green]✓[/green]", "tight": "[yellow]⚠[/yellow]", "at_risk": "[red]✗[/red]"}.get(obj.get("achievability", ""), "?")
                 current_str = f"{current}" if current is not None else "—"
-                console.print(f"  {obj['name']:30s}  {current_str:>8s} / {target}  {status_icon}")
+                src = {"auto_daniels": "Daniels", "auto_distance": "distance", "auto_timeline": "timeline"}.get(obj.get("derivation_source", ""), "")
+                console.print(f"    {_ach_icon(obj.get('achievability'))}  {obj['name']:28s}  {current_str:>6} / {target:>4}   [dim]{src}[/dim]")
+
+            # ── Checkpoint Races (milestones toward target) ──
+            from fit.fitness import derive_checkpoint_targets
+            checkpoints = derive_checkpoint_targets(conn)
+            if checkpoints:
+                console.print(f"\n  [bold]Checkpoints[/bold]  [dim](derived target times for {race['name']})[/dim]")
+                for cp in checkpoints:
+                    signal_color = "green" if cp.get("signal") and "✓" in cp["signal"] else "yellow" if cp.get("signal") and "⚠" in cp["signal"] else "dim"
+                    user_t = cp["user_target"] or "—"
+                    console.print(f"    {cp['days']:>3d}d  {cp['name']:22s}  {cp['distance']:>5s}  "
+                                  f"your: {user_t:>8s}  on-track: {cp['derived_target']:>8s}  "
+                                  f"[{signal_color}]{cp.get('signal', '')}[/]")
 
         except Exception as e:
             console.print(f"  [dim]Fitness profile unavailable: {e}[/dim]")
