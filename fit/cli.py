@@ -355,6 +355,146 @@ def races_delete(race_id):
         conn.close()
 
 
+@main.group(invoke_without_command=True)
+@click.pass_context
+def target(ctx):
+    """Manage target race."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(target_show)
+
+
+@target.command("set")
+@click.argument("race_id", type=int)
+def target_set(race_id):
+    """Set the target race. Objectives re-derive automatically."""
+    from fit.config import get_config
+    from fit.db import get_db
+    from fit.goals import set_target_race
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    try:
+        race = set_target_race(conn, race_id)
+        console.print(f"\n  [green]✓ Target set: {race['name']} ({race['distance']}) on {race['date']}[/green]")
+        if race.get("target_time"):
+            console.print(f"  Target time: {race['target_time']}")
+
+        # Show fitness profile summary
+        try:
+            from fit.fitness import get_fitness_profile, inverse_vdot
+
+            profile = get_fitness_profile(conn)
+            if profile["effective_vdot"]:
+                console.print("\n  [bold]Fitness Profile[/bold]")
+                console.print(f"  Effective VDOT: {profile['effective_vdot']}")
+
+                # Show required VDOT for target
+                if race.get("target_time") and race.get("distance_km"):
+                    def _parse_time(t):
+                        p = t.split(":")
+                        return int(p[0]) * 3600 + int(p[1]) * 60 + (int(p[2]) if len(p) > 2 else 0)
+
+                    target_secs = _parse_time(race["target_time"])
+                    required_vdot = inverse_vdot(target_secs, race["distance_km"])
+                    if required_vdot:
+                        gap = profile["effective_vdot"] - required_vdot
+                        status = "[green]✓ on track[/green]" if gap >= 0 else f"[yellow]⚠ need +{abs(gap):.1f} VDOT[/yellow]"
+                        console.print(f"  Required VDOT: {required_vdot} ({status})")
+
+            for dim_name in ("aerobic", "threshold", "economy", "resilience"):
+                dim = profile[dim_name]
+                if dim.get("current_value"):
+                    trend_icon = {"improving": "↑", "declining": "↓", "flat": "→"}.get(dim["trend"], "?")
+                    console.print(f"  {dim_name.capitalize():12s}: {dim['current_value']} {dim.get('unit', '')} {trend_icon}")
+                elif dim.get("message"):
+                    console.print(f"  {dim_name.capitalize():12s}: [dim]{dim['message']}[/dim]")
+        except Exception:
+            pass
+
+        console.print("\n  [dim]Run 'fit report' to update dashboard[/dim]")
+    except ValueError as e:
+        console.print(f"  [red]{e}[/red]")
+    finally:
+        conn.close()
+
+
+@target.command("show")
+def target_show():
+    """Show current target race, fitness profile, and objectives."""
+
+    from fit.config import get_config
+    from fit.db import get_db
+    from fit.goals import get_target_race
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    try:
+        race = get_target_race(conn)
+        if not race:
+            console.print("  No target race set. Use 'fit target set <race_id>' to set one.")
+            console.print("  [dim]Run 'fit races' to see available races.[/dim]")
+            return
+
+        from datetime import date as d
+        days_left = (d.fromisoformat(race["date"]) - d.today()).days
+
+        console.print(f"\n  [bold]{race['name']}[/bold] ({race['distance']})")
+        console.print(f"  Date: {race['date']} ({days_left} days)")
+        if race.get("target_time"):
+            console.print(f"  Target: {race['target_time']}")
+
+        # Fitness profile
+        try:
+            from fit.fitness import get_fitness_profile
+
+            profile = get_fitness_profile(conn)
+            console.print("\n  [bold]Fitness Profile[/bold]")
+            if profile["effective_vdot"]:
+                src = f"race VDOT {profile['race_vdot']}" if profile["race_vdot"] else "Garmin"
+                console.print(f"  VDOT: {profile['effective_vdot']} ({src})")
+            for dim_name in ("aerobic", "threshold", "economy", "resilience"):
+                dim = profile[dim_name]
+                if dim.get("current_value"):
+                    trend_icon = {"improving": "↑", "declining": "↓", "flat": "→"}.get(dim["trend"], "?")
+                    rate = f" ({dim['rate_per_month']:+.2f}/mo)" if dim.get("rate_per_month") else ""
+                    console.print(f"  {dim_name.capitalize():12s}: {dim['current_value']} {dim.get('unit', '')} {trend_icon}{rate}")
+                elif dim.get("message"):
+                    console.print(f"  {dim_name.capitalize():12s}: [dim]{dim['message']}[/dim]")
+        except Exception:
+            pass
+
+        # Active objectives
+        goals = conn.execute("SELECT * FROM goals WHERE active = 1 AND race_id = ? ORDER BY id", (race["id"],)).fetchall()
+        if goals:
+            console.print("\n  [bold]Objectives[/bold]")
+            for g in goals:
+                src = g["derivation_source"] or "manual"
+                auto = f" (auto: {g['auto_value']})" if g["auto_value"] else ""
+                override = " [override]" if g["is_override"] else ""
+                target_val = g["target_value"] or g["target_time"] or "—"
+                console.print(f"  {g['name']:25s} target={target_val} {g['target_unit'] or ''} [{src}]{auto}{override}")
+
+        console.print()
+    finally:
+        conn.close()
+
+
+@target.command("clear")
+def target_clear():
+    """Remove the target race."""
+    from fit.config import get_config
+    from fit.db import get_db
+    from fit.goals import clear_target_race
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    try:
+        clear_target_race(conn)
+        console.print("  [green]✓ Target race cleared[/green]")
+    finally:
+        conn.close()
+
+
 @main.group()
 def goal():
     """Manage training goals."""

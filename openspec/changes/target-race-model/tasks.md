@@ -17,12 +17,12 @@
 
 ## 3. Target Race Lifecycle
 
-- [ ] 3.1 Implement `set_target_race(conn, race_id)`: update all active goals.race_id + trigger objective re-derivation
-- [ ] 3.2 Add CLI: `fit target set <race_id>` — set target, derive objectives, show summary
-- [ ] 3.3 Add CLI: `fit target show` — current target + fitness profile + objectives + gap analysis
-- [ ] 3.4 Add CLI: `fit target clear` — unlink goals from race
-- [ ] 3.5 Update `fit status` to show target info from fitness profile
-- [ ] 3.6 Test: set/clear/switch target, objectives recalculate, overrides preserved
+- [x] 3.1 Implement `set_target_race(conn, race_id)`: update all active goals.race_id + trigger objective re-derivation
+- [x] 3.2 Add CLI: `fit target set <race_id>` — set target, derive objectives, show summary
+- [x] 3.3 Add CLI: `fit target show` — current target + fitness profile + objectives + gap analysis
+- [x] 3.4 Add CLI: `fit target clear` — unlink goals from race
+- [x] 3.5 Update `fit status` to show target info from fitness profile
+- [x] 3.6 Test: set/clear/switch target, objectives recalculate, overrides preserved
 
 ## 4. Objective Derivation
 

@@ -108,6 +108,32 @@ def log_goal_event(conn: sqlite3.Connection, goal_id: int, phase_id: int | None,
     ))
 
 
+def set_target_race(conn: sqlite3.Connection, race_id: int) -> dict:
+    """Set the target race by updating all active goals' race_id.
+
+    Triggers objective re-derivation (if derive_objectives is available).
+    Returns the target race dict.
+    """
+    # Verify race exists
+    race = conn.execute("SELECT * FROM race_calendar WHERE id = ?", (race_id,)).fetchone()
+    if not race:
+        raise ValueError(f"Race {race_id} not found in race_calendar")
+
+    # Update all active goals to point to this race
+    conn.execute("UPDATE goals SET race_id = ? WHERE active = 1", (race_id,))
+    conn.commit()
+
+    logger.info("Target race set to %s (id=%d)", race["name"], race_id)
+    return dict(race)
+
+
+def clear_target_race(conn: sqlite3.Connection) -> None:
+    """Clear the target race — unlink all active goals."""
+    conn.execute("UPDATE goals SET race_id = NULL WHERE active = 1")
+    conn.commit()
+    logger.info("Target race cleared")
+
+
 def get_target_race(conn: sqlite3.Connection) -> dict | None:
     """Get the target race — the organizing anchor for the dashboard.
 
