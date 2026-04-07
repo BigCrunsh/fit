@@ -524,6 +524,33 @@ def plan_validate(file):
             console.print(f"    {issue}")
 
 
+@main.command("import-health")
+@click.argument("file", type=click.Path(exists=True))
+def import_health(file):
+    """Import body comp from Apple Health export (Export.zip or Export.xml)."""
+    from fit.apple_health import import_apple_health
+    from fit.config import get_config
+    from fit.db import get_db
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    try:
+        result = import_apple_health(conn, file)
+        if result.get("error"):
+            console.print(f"  [red]{result['error']}[/red]")
+            return
+        console.print(f"\n  [green]✓[/green] Imported {result['imported']} body comp records")
+        if result.get("date_range"):
+            lo, hi = result["date_range"]
+            console.print(f"  Date range: {lo} → {hi}")
+        for field, count in result.get("records", {}).items():
+            if count > 0:
+                console.print(f"  {field}: {count} records")
+        console.print("\n  [dim]Run 'fit report' to see updated weight + body fat charts[/dim]")
+    finally:
+        conn.close()
+
+
 @main.command()
 def doctor():
     """Validate data pipeline health."""

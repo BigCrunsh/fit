@@ -175,10 +175,23 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
             except Exception as e:
                 logger.debug("Weight auto-import failed: %s", e)
     else:
-        warnings.append(
-            "No weight CSV configured. To auto-import FitDays body comp data, "
-            "add sync.weight_csv_path to config.local.yaml (e.g., ~/.fit/fitdays.csv)"
-        )
+        # Check for Apple Health export as alternative
+        apple_health_path = config.get("sync", {}).get("apple_health_export", "")
+        if apple_health_path:
+            try:
+                from fit.apple_health import import_apple_health
+                result = import_apple_health(conn, Path(apple_health_path).expanduser())
+                if result.get("imported"):
+                    counts["body_comp"] = result["imported"]
+            except Exception as e:
+                logger.debug("Apple Health import failed: %s", e)
+        else:
+            warnings.append(
+                "No body comp data source configured. Options: "
+                "(1) 'fit import-health ~/Downloads/Export.zip' (Apple Health export), "
+                "(2) Add sync.apple_health_export or sync.weight_csv_path to config.local.yaml, "
+                "(3) Enter weight via 'fit checkin'."
+            )
 
     # 8a. Compute sRPE (retroactively join checkin RPE to same-day activities)
     try:
