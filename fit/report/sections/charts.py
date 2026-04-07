@@ -250,6 +250,16 @@ def _all_charts(conn):
     if acwr_data:
         # Color each point based on zone
         point_colors = [SAFE if 0.8 <= (a["acwr"] or 0) <= 1.3 else CAUTION if (a["acwr"] or 0) <= 1.5 else DANGER for a in acwr_data]
+        # Merge spike annotations (top 3 only) with safe zone/danger line
+        acwr_annots = {
+            "safe_zone": {"type": "box", "yMin": 0.8, "yMax": 1.3,
+                          "backgroundColor": SAFE + "10", "borderWidth": 0,
+                          "label": {"content": "Safe zone 0.8-1.3", "display": True, "position": "end",
+                                    "font": {"size": 8}, "color": SAFE + "60"}},
+            "danger": {"type": "line", "yMin": 1.5, "yMax": 1.5, "borderColor": DANGER + "60", "borderDash": [6, 3],
+                       "label": {"content": "1.5 danger", "display": True, "position": "end", "font": {"size": 8}}},
+        }
+        acwr_annots.update(_get_acwr_annotations(conn))
         charts.append({"id": "chart-acwr", "config": json.dumps({
             "type": "line",
             "data": {"labels": [a["week"] for a in acwr_data],
@@ -258,16 +268,10 @@ def _all_charts(conn):
                                    "pointBackgroundColor": point_colors, "pointBorderColor": point_colors,
                                    "fill": False}]},
             "options": {"responsive": True, "plugins": {"legend": {"display": False},
-                        "annotation": {"annotations": {
-                            "safe_zone": {"type": "box", "yMin": 0.8, "yMax": 1.3,
-                                          "backgroundColor": SAFE + "10", "borderWidth": 0,
-                                          "label": {"content": "Safe zone 0.8-1.3", "display": True, "position": "end",
-                                                    "font": {"size": 8}, "color": SAFE + "60"}},
-                            "danger": {"type": "line", "yMin": 1.5, "yMax": 1.5, "borderColor": DANGER + "60", "borderDash": [6, 3],
-                                       "label": {"content": "1.5 danger", "display": True, "position": "end", "font": {"size": 8}}},
-                        }}},
+                        "annotation": {"annotations": acwr_annots}},
                         "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
-                                   "y": {"min": 0, "max": 2.5, "grid": {"color": "rgba(255,255,255,0.03)"}}}}
+                                   "y": {"min": 0, "max": 3.0, "grid": {"color": "rgba(255,255,255,0.03)"},
+                                         "title": {"display": True, "text": "ACWR (capped at 3.0)"}}}}
         })})
 
     # Run type breakdown stacked (Training tab)
@@ -636,32 +640,7 @@ def _get_event_annotations(conn) -> dict:
                           "font": {"size": 7}, "color": DANGER + "60"},
             }
 
-    # ACWR danger spike annotations
-    try:
-        acwr_spikes = conn.execute("""
-            SELECT week, acwr FROM weekly_agg
-            WHERE acwr IS NOT NULL AND acwr > 1.5
-            ORDER BY week
-        """).fetchall()
-        for i, spike in enumerate(acwr_spikes):
-            # Convert ISO week to approximate date (Monday of that week)
-            week_str = spike["week"]
-            year = int(week_str[:4])
-            week_num = int(week_str.split("W")[1])
-            try:
-                spike_date = date.fromisocalendar(year, week_num, 1).isoformat()
-                annotations[f"acwr_spike_{i}"] = {
-                    "type": "line", "xMin": spike_date, "xMax": spike_date,
-                    "borderColor": DANGER + "60", "borderWidth": 1.5,
-                    "label": {"content": f"ACWR {spike['acwr']:.1f}", "display": True,
-                              "position": "start", "font": {"size": 7}, "color": DANGER + "80"},
-                }
-            except ValueError:
-                pass
-    except Exception:
-        pass
-
-    # First Z2 run (milestone annotation)
+    # First Z2 run (milestone annotation — only on training charts)
     try:
         first_z2 = conn.execute("""
             SELECT date FROM activities
@@ -679,6 +658,37 @@ def _get_event_annotations(conn) -> dict:
     except Exception:
         pass
 
+    return annotations
+
+
+def _get_acwr_annotations(conn) -> dict:
+    """ACWR spike annotations — only for the ACWR chart, not all charts.
+
+    Limits to top 3 most extreme spikes to avoid clutter.
+    """
+    annotations = {}
+    try:
+        acwr_spikes = conn.execute("""
+            SELECT week, acwr FROM weekly_agg
+            WHERE acwr IS NOT NULL AND acwr > 1.5
+            ORDER BY acwr DESC LIMIT 3
+        """).fetchall()
+        for i, spike in enumerate(acwr_spikes):
+            week_str = spike["week"]
+            year = int(week_str[:4])
+            week_num = int(week_str.split("W")[1])
+            try:
+                spike_date = date.fromisocalendar(year, week_num, 1).isoformat()
+                annotations[f"acwr_spike_{i}"] = {
+                    "type": "line", "xMin": spike_date, "xMax": spike_date,
+                    "borderColor": DANGER + "60", "borderWidth": 1.5,
+                    "label": {"content": f"ACWR {spike['acwr']:.1f}", "display": True,
+                              "position": "start", "font": {"size": 7}, "color": DANGER + "80"},
+                }
+            except ValueError:
+                pass
+    except Exception:
+        pass
     return annotations
 
 
