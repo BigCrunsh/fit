@@ -465,53 +465,55 @@ def target_show():
             def _fobj(kw):
                 return next((o for o in derived if kw in o["name"].lower()), None)
 
-            # ── Fitness Profile ──
-            t = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False,
-                      padding=(0, 2), row_styles=["", "dim"])
-            t.add_column("", style="bold", min_width=16)
-            t.add_column("Value", justify="right", style="bold", min_width=8)
-            t.add_column("Trend", min_width=14, style="dim")
+            # ── VDOT (headline fitness score) ──
+            vdot = profile["effective_vdot"]
+            vdot_obj = _fobj("vdot")
+            if vdot:
+                src = profile["race_vdot_date"][:7] if profile.get("race_vdot_date") else "estimated"
+                garmin = f" · Garmin est. {profile['garmin_vo2max']:.0f}" if profile["garmin_vo2max"] else ""
+                req_str = ""
+                if vdot_obj:
+                    req = vdot_obj["target_value"]
+                    gap = vdot - req
+                    req_str = f"  need ≥{req}  ({gap:+.1f})  {_s(vdot_obj.get('achievability'))}"
+                console.print(f"\n  [bold]VDOT  {vdot:.1f}[/]{req_str}  [dim](from {src} race{garmin})[/]")
+            elif profile["garmin_vo2max"]:
+                console.print(f"\n  [bold]VO2max  {profile['garmin_vo2max']:.1f}[/]  [dim](Garmin estimate, no recent races)[/]")
+
+            # ── 4 Fitness Dimensions ──
+            t = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False, padding=(0, 2))
+            t.add_column("Dimension", style="bold", min_width=12)
+            t.add_column("Current", justify="right", min_width=9)
+            t.add_column("Trend", min_width=13)
             t.add_column("Need", justify="right", min_width=6)
             t.add_column("Gap", justify="right", min_width=7)
             t.add_column("", min_width=2)
 
-            vdot = profile["effective_vdot"]
-            vdot_obj = _fobj("vdot")
-            if vdot:
-                src = profile["race_vdot_date"][:7] if profile.get("race_vdot_date") else "est."
-                req = f"≥{vdot_obj['target_value']}" if vdot_obj else ""
-                gap = f"{vdot - vdot_obj['target_value']:+.1f}" if vdot_obj else ""
-                t.add_row(f"VDOT [dim]({src})[/]", f"{vdot:.1f}", "", req, gap,
-                          _s(vdot_obj.get("achievability")) if vdot_obj else "")
-                if profile["garmin_vo2max"]:
-                    t.add_row("Garmin VO2max", f"{profile['garmin_vo2max']:.1f}", "[dim]wrist est.[/]", "", "", "")
-
-            for label, key, obj_kw in [
-                ("Aerobic", "aerobic", None),
-                ("Threshold", "threshold", None),
-                ("Economy", "economy", None),
-                ("Resilience", "resilience", "long run"),
+            for label, key, obj_kw, desc in [
+                ("Aerobic", "aerobic", None, "O₂ ceiling"),
+                ("Threshold", "threshold", None, "Z2 pace"),
+                ("Economy", "economy", None, "spd/bpm"),
+                ("Resilience", "resilience", "long run", "drift onset"),
             ]:
                 dim = profile[key]
                 if dim.get("current_value") is not None:
                     arrow = {"improving": "[green]↑[/]", "declining": "[red]↓[/]", "flat": "→"}.get(dim["trend"], "")
-                    rate = f" {dim['rate_per_month']:+.2f}/mo" if dim.get("rate_per_month") else ""
+                    rate = f"{dim['rate_per_month']:+.2f}/mo" if dim.get("rate_per_month") else ""
+                    trend_str = f"{arrow} {rate}".strip() if arrow or rate else "—"
                     obj = _fobj(obj_kw) if obj_kw else None
                     if obj and obj.get("target_value") is not None:
-                        t.add_row(label, str(dim["current_value"]),
-                                  f"{arrow}{rate}", str(obj["target_value"]),
-                                  f"{obj.get('gap', 0):+.1f}", _s(obj.get("achievability")))
+                        t.add_row(label, str(dim["current_value"]), trend_str,
+                                  str(obj["target_value"]), f"{obj.get('gap', 0):+.1f}",
+                                  _s(obj.get("achievability")))
                     else:
-                        t.add_row(label, str(dim["current_value"]),
-                                  f"{arrow}{rate}", "", "", "")
+                        t.add_row(label, str(dim["current_value"]), trend_str, "—", "—", "")
                 else:
                     msg = dim.get("message", "no data")
-                    # Truncate to avoid wrapping
-                    if len(msg) > 25:
-                        msg = msg[:25] + "…"
-                    t.add_row(label, "—", f"[dim]{msg}[/]", "", "", "")
+                    if len(msg) > 28:
+                        msg = msg[:28] + "…"
+                    t.add_row(label, "—", f"[dim]{msg}[/]", "—", "—", "")
 
-            console.print(Panel(t, title="[bold]Fitness Profile[/]", border_style="blue", padding=(0, 1)))
+            console.print(Panel(t, title="[bold]4 Dimensions[/]", border_style="blue", padding=(0, 1)))
 
             # ── Objectives ──
             ot = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False, padding=(0, 2))
