@@ -1,6 +1,36 @@
 # fit
 
-Goal-agnostic personal fitness data platform. Ingests from Garmin, Fitdays, Apple Health, and weather APIs into a single SQLite database. Two analysis interfaces: Claude (deep, conversational) and an HTML dashboard (visual, daily).
+Personal fitness data platform for marathon training. Tracks your running fitness across four dimensions (aerobic capacity, threshold, economy, resilience), projects it onto a target race, and tells you what to do today.
+
+Two interfaces: a **self-contained HTML dashboard** (visual, daily glance) and **Claude AI** (deep coaching, weekly).
+
+## Mental Model
+
+```
+   Data Sources                    Fitness Engine                  You See
+   ────────────                    ──────────────                  ───────
+
+   Garmin watch ─┐                ┌──────────────┐
+   FitDays scale ─┤── fit sync ──▶│ FITNESS      │     ┌──────────────────┐
+   Apple Health  ─┤               │ PROFILE      │     │ DASHBOARD        │
+   fit checkin   ─┘               │              │     │                  │
+                                  │ Aerobic  ██░░│────▶│ Today: easy day  │
+                                  │ Threshold █░░│     │ VO2max: 49/50 ✓  │
+   Target Race ──────────────────▶│ Economy  ██░░│     │ S25 in 12d: 22:30│
+   Berlin Marathon sub-4:00       │ Resilience█░░│     │ Weight: 3.6kg ⚠  │
+   in 173 days                    └──────┬───────┘     └────────┬─────────┘
+                                         │                      │
+                                         ▼                      ▼
+                                  ┌──────────────┐     ┌──────────────────┐
+                                  │ OBJECTIVES   │     │ CLAUDE AI        │
+                                  │ (auto-derived│     │ (coaching layer) │
+                                  │  from Daniels│     │                  │
+                                  │  + timeline) │     │ "Focus on 3 easy │
+                                  └──────────────┘     │  runs this week" │
+                                                       └──────────────────┘
+```
+
+**The key idea**: Your fitness is always being measured. The target race is a lens that projects those measurements into "what do I need?" and "am I on track?" The dashboard shows the gap. Claude interprets it.
 
 ## How It Works
 
@@ -61,17 +91,25 @@ Then in Claude Chat: "Use get_coaching_context and give me a full coaching analy
 ### Daily workflow
 
 ```
-Morning:   fit sync                    ← 30 seconds
-           fit checkin                 ← 1 minute (after training or on waking)
-           fit report                  ← generates dashboard
-           open dashboard              ← check Today tab headline
+DAILY (30 seconds + 1 minute):
+  fit sync                ← pulls Garmin, weather, body comp, plan, recomputes everything
+  open dashboard          ← 10-second glance: headline tells you what to do
+  fit checkin             ← after training: RPE, legs, sleep quality (builds correlation data)
 
-Weekly:    Ask Claude Chat for coaching ← deep analysis + save to Coach tab
-           fit report                  ← regenerate with coaching insights
+WEEKLY:
+  Ask Claude for coaching ← reads fitness profile + plan, gives specific recommendations
+                            Saves to Coach tab automatically
 
-After races: fit calibrate lthr        ← LTHR auto-extracted, confirm or manual TT
-Monthly:   fit calibrate max_hr        ← if new max observed in race
+AFTER A RACE (automatic on next sync):
+  fit sync                ← detects race, computes VDOT, updates projections
+                            "S25 result: 22:15 → VDOT 45.5 → marathon projection: 3:55"
+
+WHEN CHANGING GOALS (rare):
+  fit target set <id>     ← switch target race, objectives recalculate
+  fit races add           ← add a new race to the calendar
 ```
+
+**Design principle**: `fit sync` should be the only command you need to remember. Everything else either happens automatically (dashboard generation, VDOT updates, projection recalculation) or is prompted when needed (stale coaching, missing checkin, upcoming race).
 
 1. **`fit sync`** — run daily (or cron it). Pulls health metrics, activities, SpO2, enriches with weather, computes zones/efficiency/run types/ACWR, updates weekly aggregations. Incremental by default (last 7 days). Use `--days 30` to catch up after a break.
 2. **`fit checkin`** — run after training (or in the morning). Captures hydration, alcohol, legs, eating, energy, sleep quality, RPE, weight. RPE auto-writes to today's activity. Includes an RPE scale guide.

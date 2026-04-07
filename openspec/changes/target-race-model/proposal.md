@@ -1,5 +1,87 @@
 # Target Race Model — Fitness-First Design
 
+## Mental Model
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        YOUR RUNNING                             │
+│                                                                 │
+│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐       │
+│  │   GARMIN     │     │  FIT DAYS   │     │  YOU (daily) │      │
+│  │  watch data  │     │   scale     │     │  fit checkin │      │
+│  └──────┬───────┘     └──────┬──────┘     └──────┬──────┘       │
+│         │                    │                    │              │
+│         └────────────┬───────┴────────────────────┘              │
+│                      ▼                                           │
+│              ┌───────────────┐                                   │
+│              │   fit sync    │  ← one command, everything updates│
+│              └───────┬───────┘                                   │
+│                      ▼                                           │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │              FITNESS PROFILE (4 dimensions)                │  │
+│  │                                                            │  │
+│  │  Aerobic ████████░░  Threshold ██████░░░░                  │  │
+│  │  Economy ███████░░░  Resilience ████░░░░░░                 │  │
+│  │                                                            │  │
+│  │  VDOT: 46 (from S25 race) · Garmin VO2max: 49             │  │
+│  └───────────────────────┬───────────────────────────────────┘  │
+│                          ▼                                       │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  TARGET RACE: Berlin Marathon sub-4:00 in 173 days       │   │
+│  │                                                           │   │
+│  │  OBJECTIVES (auto-derived, achievability projected):      │   │
+│  │  VO2max    49/50  ✓ achievable in 1 month                │   │
+│  │  Weight    78.6/75 ⚠ tight (need -0.5kg/mo for 6 months)│   │
+│  │  Consistency 0/12wk ⚠ must start now                     │   │
+│  │  Resilience 12/30km ⚠ progressive build needed           │   │
+│  │                                                           │   │
+│  │  CHECKPOINTS:                                             │   │
+│  │  S25 in 12d → your target: 22:00 · marathon pace: 22:30  │   │
+│  │  Tierparklauf in 159d → derived target: 44:00             │   │
+│  └──────────────────────────┬───────────────────────────────┘   │
+│                             ▼                                    │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  DASHBOARD: "so what?" for every metric                   │   │
+│  │                                                           │   │
+│  │  Today:    What to do today (from readiness + plan)       │   │
+│  │  Training: Are you training right? (vs phase targets)     │   │
+│  │  Body:     Is your body recovering? (trends, not numbers) │   │
+│  │  Fitness:  Is your engine improving? (4 dimensions)       │   │
+│  │  Coach:    AI coaching (judgment the rules can't provide) │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  COACHING (Claude AI — the judgment layer):                      │
+│  "Given your 0-week consistency and the S25 in 12 days,         │
+│   focus on 3 easy runs this week. Override the Runna tempo."    │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### User Flow (optimized for convenience)
+
+```
+DAILY (30 seconds):
+  fit sync              ← pulls everything, recomputes profile, generates dashboard
+  open dashboard        ← 10-second glance: what to do today
+  fit checkin           ← after training: RPE, legs, sleep quality (1 minute)
+
+WEEKLY (5 minutes):
+  Ask Claude for coaching ← AI reads fitness profile, gives judgment
+  fit report            ← regenerates with fresh coaching notes
+
+AFTER A RACE (automatic):
+  fit sync              ← detects race result, computes VDOT, updates projections
+                           "S25 result: 22:15 → VDOT 45.5 → marathon now 3:55"
+
+WHEN CHANGING GOALS (rare, intentional):
+  fit target set 35     ← switch to HM. Objectives recalculate. Dashboard adapts.
+  fit races add         ← add a new race to the calendar
+```
+
+Everything else is automatic. No `fit report` needed after sync (auto-generated).
+No manual objective updates. No manual VDOT calculation. The system computes,
+the dashboard displays, Claude interprets.
+
 ## Why
 
 The dashboard shows metrics without answering "so what?" because there's no model connecting observations to goals. Charts display VO2max, efficiency, zone distribution as independent data points, but the user has to mentally project: "Is VO2max 49 good enough for a sub-4 marathon in 173 days?"
