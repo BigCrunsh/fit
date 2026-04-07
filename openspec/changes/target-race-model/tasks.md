@@ -36,11 +36,11 @@
 
 ## 5. Checkpoint Enrichment
 
-- [ ] 5.1 Implement `derive_checkpoint_targets(conn)`: Riegel back-calculation from target race for each upcoming registered race
-- [ ] 5.2 On race completion: compute VDOT from result, update effective_vdot, recalculate target race projection
-- [ ] 5.3 Readiness signal: "Your S25 result (22:15) → VDOT 45.5 → marathon projection: 3:55"
-- [ ] 5.4 Dashboard: checkpoint card on Today tab showing user target vs derived target vs gap
-- [ ] 5.5 Test: derived times for 5K/10K/HM checkpoints, VDOT update after race, projection change
+- [x] 5.1 Implement `derive_checkpoint_targets(conn)`: Riegel back-calculation from target race for each upcoming registered race
+- [x] 5.2 On race completion: compute VDOT from result, update effective_vdot, recalculate target race projection
+- [x] 5.3 Readiness signal: "Your S25 result (22:15) → VDOT 45.5 → marathon projection: 3:55"
+- [x] 5.4 Dashboard: checkpoint card on Today tab showing user target vs derived target vs gap
+- [x] 5.5 Test: derived times for 5K/10K/HM checkpoints, VDOT update after race, projection change
 
 ## 6. Adaptive Predictions
 

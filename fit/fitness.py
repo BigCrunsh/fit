@@ -554,3 +554,140 @@ def compute_achievability(conn, objectives: list[dict], days_remaining: int) -> 
             obj["achievability"] = "unknown"
 
     return objectives
+
+
+# ── Checkpoint Enrichment ──
+
+
+def derive_checkpoint_targets(conn) -> list[dict]:
+    """Compute derived target times for upcoming checkpoint races.
+
+    For each registered race before the target, uses Riegel back-calculation:
+    "To be on track for target_time at target_distance, run this distance in X."
+    """
+    from fit.goals import get_target_race
+
+    target = get_target_race(conn)
+    if not target or not target.get("target_time") or not target.get("distance_km"):
+        return []
+
+    def _parse_time(t):
+        parts = t.split(":")
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        elif len(parts) == 2:
+            return int(parts[0]) * 60 + int(parts[1])
+        return 0
+
+    target_secs = _parse_time(target["target_time"])
+    target_km = target["distance_km"]
+    target_date = target["date"]
+
+    # Get upcoming registered races (excluding the target itself)
+    checkpoints = conn.execute("""
+        SELECT * FROM race_calendar
+        WHERE date >= date('now') AND date < ? AND status IN ('registered', 'planned')
+        AND id != ?
+        ORDER BY date
+    """, (target_date, target["id"])).fetchall()
+
+    results = []
+    for cp in checkpoints:
+        cp_km = cp["distance_km"]
+        if not cp_km or cp_km <= 0:
+            continue
+
+        # Riegel back-calculation: what time at cp_km corresponds to target_secs at target_km?
+        derived_secs = round(target_secs * (cp_km / target_km) ** 1.06)
+        derived_vdot = compute_vdot_from_race(cp_km, derived_secs)
+
+        days_to_cp = (date.fromisoformat(cp["date"]) - date.today()).days
+
+        def _fmt_time(s):
+            h = s // 3600
+            m = (s % 3600) // 60
+            sec = s % 60
+            if h > 0:
+                return f"{h}:{m:02d}:{sec:02d}"
+            return f"{m}:{sec:02d}"
+
+        user_target = cp["target_time"]
+        user_secs = _parse_time(user_target) if user_target else None
+
+        # Readiness signal
+        if user_secs and derived_secs:
+            if user_secs < derived_secs:
+                signal = "aiming faster than needed ✓"
+            elif user_secs <= derived_secs * 1.05:
+                signal = "close to on-track pace"
+            else:
+                signal = "slower than on-track pace ⚠"
+        else:
+            signal = None
+
+        results.append({
+            "race_id": cp["id"],
+            "name": cp["name"],
+            "date": cp["date"],
+            "distance": cp["distance"],
+            "distance_km": cp_km,
+            "days": days_to_cp,
+            "user_target": user_target,
+            "user_target_secs": user_secs,
+            "derived_target": _fmt_time(derived_secs),
+            "derived_target_secs": derived_secs,
+            "derived_vdot": derived_vdot,
+            "signal": signal,
+            "target_race_name": target["name"],
+        })
+
+    return results
+
+
+def update_vdot_from_race_result(conn, race_id: int) -> dict | None:
+    """After a race completion, compute VDOT and update fitness context.
+
+    Returns the readiness signal dict or None.
+    """
+    race = conn.execute("""
+        SELECT * FROM race_calendar WHERE id = ? AND status = 'completed' AND result_time IS NOT NULL
+    """, (race_id,)).fetchone()
+
+    if not race or not race["distance_km"] or not race["result_time"]:
+        return None
+
+    def _parse_time(t):
+        parts = t.split(":")
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        return 0
+
+    result_secs = _parse_time(race["result_time"])
+    race_vdot = compute_vdot_from_race(race["distance_km"], result_secs)
+
+    if not race_vdot:
+        return None
+
+    # Get target race for projection
+    from fit.goals import get_target_race
+    target = get_target_race(conn)
+    projection = None
+    if target and target.get("distance_km"):
+        proj_secs = vdot_to_race_time(race_vdot, target["distance_km"])
+        if proj_secs:
+            h = proj_secs // 3600
+            m = (proj_secs % 3600) // 60
+            projection = f"{h}:{m:02d}"
+
+    return {
+        "race_name": race["name"],
+        "distance_km": race["distance_km"],
+        "result_time": race["result_time"],
+        "race_vdot": race_vdot,
+        "projection": projection,
+        "target_race": target["name"] if target else None,
+        "message": (
+            f"{race['name']} result ({race['result_time']}) → VDOT {race_vdot}"
+            + (f" → {target['name']} projection: {projection}" if projection else "")
+        ),
+    }
