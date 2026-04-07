@@ -241,12 +241,15 @@ def races_add():
 
         status = Prompt.ask("  Status", choices=["registered", "planned", "completed"], default="registered")
         target_time = Prompt.ask("  Target time (H:MM:SS or M:SS, enter=skip)", default="").strip() or None
+        result_time = None
+        if status == "completed":
+            result_time = Prompt.ask("  Official result time (H:MM:SS, enter=skip)", default="").strip() or None
         organizer = Prompt.ask("  Organizer (enter=skip)", default="").strip() or None
 
         conn.execute("""
-            INSERT INTO race_calendar (date, name, organizer, distance, distance_km, status, target_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (race_date, name, organizer, distance_label, distance_km, status, target_time))
+            INSERT INTO race_calendar (date, name, organizer, distance, distance_km, status, target_time, result_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (race_date, name, organizer, distance_label, distance_km, status, target_time, result_time))
         race_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.commit()
 
