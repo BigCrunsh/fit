@@ -701,7 +701,13 @@ def _subtitle(conn):
     h = conn.execute("SELECT COUNT(*) FROM daily_health").fetchone()[0]
     a = conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0]
     c = conn.execute("SELECT COUNT(*) FROM checkins").fetchone()[0]
-    return f"{h}d · {a} activities · {c} check-ins"
+    # Training age: weeks since first activity
+    first = conn.execute("SELECT MIN(date) FROM activities").fetchone()[0]
+    weeks = ""
+    if first:
+        days_tracking = (date.today() - date.fromisoformat(first)).days
+        weeks = f" · week {days_tracking // 7} of tracking"
+    return f"{h}d · {a} activities · {c} check-ins{weeks}"
 
 
 

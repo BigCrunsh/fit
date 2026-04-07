@@ -223,22 +223,24 @@ td:last-child { border-radius:0 6px 6px 0; }
     </div>
     {% endif %}
 
-    <!-- Phase compliance -->
-    {% if phase_compliance and not phase_compliance.no_data %}
-    <div style="padding:12px 20px">
-      <div style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">Phase Compliance</div>
+  </div>
+
+  <!-- Phase compliance (outside the card, collapsible) -->
+  {% if phase_compliance and not phase_compliance.no_data %}
+  <details style="margin:6px 0">
+    <summary style="font-size:10px;font-weight:700;color:var(--text-dim);cursor:pointer;padding:4px 0">Phase: {{ phase_compliance.phase_name }} — {% set on_track = phase_compliance.dimensions | selectattr('on_track') | list %}{{ on_track | length }}/{{ phase_compliance.dimensions | length }} on track</summary>
+    <div style="margin-top:6px;padding:0 4px">
       {% for dim in phase_compliance.dimensions %}
-      <div style="display:flex;align-items:center;gap:10px;margin:4px 0;font-size:11px">
-        <div style="width:80px;color:var(--text-muted)">{{ dim.name }}</div>
-        <div style="flex:1;font-family:var(--mono);color:{% if dim.on_track %}var(--safe){% elif dim.actual is none %}var(--text-dim){% else %}var(--danger){% endif %}">{{ dim.actual if dim.actual is not none else '—' }}</div>
-        <div style="color:var(--text-dim);font-size:10px">target: {% if dim.target_range is defined and dim.target_range is iterable and dim.target_range is not string %}{{ dim.target_range[0] }}–{{ dim.target_range[1] }}{% elif dim.target %}{{ dim.target }}{% else %}—{% endif %}</div>
-        <div style="font-size:11px">{% if dim.on_track %}✓{% elif dim.actual is none %}—{% else %}✗{% endif %}</div>
+      <div style="display:flex;align-items:center;gap:10px;margin:3px 0;font-size:12px">
+        <div style="width:16px;color:{% if dim.on_track %}var(--safe){% elif dim.actual is none %}var(--text-dim){% else %}var(--danger){% endif %}">{% if dim.on_track %}✓{% elif dim.actual is none %}—{% else %}✗{% endif %}</div>
+        <div style="width:90px;color:var(--text-muted)">{{ dim.name }}</div>
+        <div style="font-family:var(--mono);color:{% if dim.on_track %}var(--safe){% elif dim.actual is none %}var(--text-dim){% else %}var(--danger){% endif %}">{{ dim.actual if dim.actual is not none else '—' }}</div>
+        <div style="color:var(--text-dim);font-size:11px">/ {% if dim.target_range is defined and dim.target_range is iterable and dim.target_range is not string %}{{ dim.target_range[0] }}–{{ dim.target_range[1] }}{% elif dim.target %}{{ dim.target }}{% else %}—{% endif %}</div>
       </div>
       {% endfor %}
     </div>
-    {% endif %}
-
-  </div>
+  </details>
+  {% endif %}
   {% else %}
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin:14px 0;font-size:11px;color:var(--text-muted)">
     No target race set. Add a race: <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit races add</code> — the dashboard orients around your target race with countdown, objectives, and predictions.
@@ -309,17 +311,16 @@ td:last-child { border-radius:0 6px 6px 0; }
   {% if z2_remediation %}{% set _ = narratives.append(z2_remediation) %}{% endif %}
   {% if why_connectors %}{% for wc in why_connectors %}{% set _ = narratives.append(wc) %}{% endfor %}{% endif %}
   {% if narratives | length > 0 %}
-  <div class="sec"><h2>Insights</h2><div class="line"></div></div>
-  {% for item in narratives[:2] %}
-  <div class="narrative-item">
-    {% if item.title is defined %}<span style="font-weight:700;color:var(--text)">{{ item.title }}:</span> {% endif %}
-    {% if item.message is defined %}{{ item.message }}{% elif item.pattern is defined %}{{ item.pattern }}{% elif item is string %}{{ item }}{% endif %}
+  <!-- First insight surfaced inline (no header needed) -->
+  {% set first = narratives[0] %}
+  <div class="narrative-item" style="margin-top:10px">
+    💡 {% if first.title is defined %}<span style="font-weight:700;color:var(--text)">{{ first.title }}:</span> {% endif %}
+    {% if first.message is defined %}{{ first.message }}{% elif first.pattern is defined %}{{ first.pattern }}{% elif first is string %}{{ first }}{% endif %}
   </div>
-  {% endfor %}
-  {% if narratives | length > 2 %}
+  {% if narratives | length > 1 %}
   <details style="margin:4px 0">
-    <summary style="font-size:10px;color:var(--text-dim);cursor:pointer">{{ narratives | length - 2 }} more insights</summary>
-    {% for item in narratives[2:] %}
+    <summary style="font-size:10px;color:var(--text-dim);cursor:pointer">{{ narratives | length - 1 }} more insight{{ 's' if narratives | length > 2 else '' }}</summary>
+    {% for item in narratives[1:] %}
     <div class="narrative-item">
       {% if item.title is defined %}<span style="font-weight:700;color:var(--text)">{{ item.title }}:</span> {% endif %}
       {% if item.message is defined %}{{ item.message }}{% elif item.pattern is defined %}{{ item.pattern }}{% elif item is string %}{{ item }}{% endif %}
@@ -397,7 +398,7 @@ td:last-child { border-radius:0 6px 6px 0; }
     {% endfor %}
   </div>
   <div class="wow-card">
-    <div style="font-size:9px;font-weight:700;color:var(--z12);margin-bottom:4px">WEEK OVER WEEK</div>
+    <div style="font-size:9px;font-weight:700;color:var(--z2);margin-bottom:4px">WEEK OVER WEEK</div>
     {% if wow %}{{ wow }}{% else %}<span style="color:var(--text-dim)">Need 2+ weeks of data for comparison.</span>{% endif %}
   </div>
 
@@ -593,7 +594,7 @@ td:last-child { border-radius:0 6px 6px 0; }
       <span style="color:var(--text-dim);width:30px;font-family:var(--mono)">{{ s.split_num }}</span>
       {% set pace = s.pace_sec_per_km or 0 %}
       {% set bar_width = [((600 - pace) / 3)|int, 10]|max %}
-      <div style="height:14px;width:{{ bar_width }}%;border-radius:2px;display:flex;align-items:center;padding:0 4px;font-size:8px;font-weight:600;color:rgba(255,255,255,0.9);background:{% if s.time_above_z2_ceiling_sec and s.time_above_z2_ceiling_sec > 0 %}var(--z45){% else %}var(--z12){% endif %}">{{ (pace // 60)|int }}:{{ '%02d' % (pace % 60)|int }}</div>
+      <div style="height:14px;width:{{ bar_width }}%;border-radius:2px;display:flex;align-items:center;padding:0 4px;font-size:8px;font-weight:600;color:rgba(255,255,255,0.9);background:{% if s.time_above_z2_ceiling_sec and s.time_above_z2_ceiling_sec > 0 %}var(--z4){% else %}var(--z2){% endif %}">{{ (pace // 60)|int }}:{{ '%02d' % (pace % 60)|int }}</div>
       <span style="color:var(--text-muted);font-family:var(--mono)">HR {{ s.avg_hr|int if s.avg_hr else '—' }}</span>
     </div>
     {% endfor %}

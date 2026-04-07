@@ -71,7 +71,7 @@ def _all_charts(conn):
         })})
 
     # Readiness (Body tab) — standalone bar chart, no competing lines
-    health = conn.execute("SELECT date, training_readiness, resting_heart_rate, hrv_last_night FROM daily_health WHERE date >= date('now','-21 days') ORDER BY date").fetchall()
+    health = conn.execute("SELECT date, training_readiness, resting_heart_rate, hrv_last_night FROM daily_health WHERE date >= date('now','-30 days') ORDER BY date").fetchall()
     if health:
         r_colors = [SAFE + "80" if (h["training_readiness"] or 0) >= 75 else CAUTION + "80" if (h["training_readiness"] or 0) >= 50 else DANGER + "80" for h in health]
         charts.append({"id": "chart-readiness", "config": json.dumps({
@@ -117,7 +117,7 @@ def _all_charts(conn):
         })})
 
     # Sleep (Body tab)
-    sleep = conn.execute("SELECT date, deep_sleep_hours, rem_sleep_hours, light_sleep_hours FROM daily_health WHERE date >= date('now','-21 days') ORDER BY date").fetchall()
+    sleep = conn.execute("SELECT date, deep_sleep_hours, rem_sleep_hours, light_sleep_hours FROM daily_health WHERE date >= date('now','-30 days') ORDER BY date").fetchall()
     if sleep:
         charts.append({"id": "chart-sleep", "config": json.dumps({
             "type": "bar",
@@ -146,7 +146,7 @@ def _all_charts(conn):
     # Stress vs Body Battery (Body tab — W2)
     stress = conn.execute("""
         SELECT date, avg_stress_level, body_battery_high
-        FROM daily_health WHERE date >= date('now','-21 days') AND (avg_stress_level IS NOT NULL OR body_battery_high IS NOT NULL)
+        FROM daily_health WHERE date >= date('now','-30 days') AND (avg_stress_level IS NOT NULL OR body_battery_high IS NOT NULL)
         ORDER BY date
     """).fetchall()
     if stress:
@@ -164,8 +164,13 @@ def _all_charts(conn):
                                    "x": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
-    # Weight (Body tab) with race target
-    weight = conn.execute("SELECT date, weight_kg, body_fat_pct FROM body_comp ORDER BY date").fetchall()
+    # Weight (Body tab) — start from first activity (aligned with training age)
+    first_activity = conn.execute("SELECT MIN(date) FROM activities").fetchone()[0]
+    weight_start = first_activity or "2024-01-01"
+    weight = conn.execute(
+        "SELECT date, weight_kg, body_fat_pct FROM body_comp WHERE date >= ? ORDER BY date",
+        (weight_start,),
+    ).fetchall()
     if weight:
         weight_target = conn.execute("SELECT target_value FROM goals WHERE type = 'metric' AND name LIKE '%eight%' AND active = 1 LIMIT 1").fetchone()
         weight_annots = dict(event_annots)
@@ -215,7 +220,7 @@ def _all_charts(conn):
         })})
 
     # Speed per BPM (Fitness tab — hero chart)
-    eff = conn.execute("SELECT date, speed_per_bpm, speed_per_bpm_z2 FROM activities WHERE type IN ('running', 'track_running', 'trail_running') AND speed_per_bpm IS NOT NULL AND date >= date('now','-90 days') ORDER BY date").fetchall()
+    eff = conn.execute("SELECT date, speed_per_bpm, speed_per_bpm_z2 FROM activities WHERE type IN ('running', 'track_running', 'trail_running') AND speed_per_bpm IS NOT NULL ORDER BY date").fetchall()
     if eff:
         charts.append({"id": "chart-efficiency", "config": json.dumps({
             "type": "line",
@@ -309,13 +314,14 @@ def _all_charts(conn):
         weeks_set = sorted({r["week"] for r in type_weeks})[-12:]  # last 12 weeks
         type_names = ["easy", "long", "tempo", "intervals", "recovery", "race"]
         # Distinct colors: blue family for easy, warm for hard, purple for race
+        # Long runs are aerobic base — same blue family as easy/recovery
         type_colors = {
-            "easy": "#60a5fa",         # bright blue
-            "recovery": "#93c5fd80",   # light blue (faded)
-            "long": "#34d399",         # emerald green (distinct from easy)
-            "tempo": "#fbbf24",        # amber/yellow
+            "easy": "#60a5fa",         # blue-400
+            "recovery": "#93c5fd80",   # blue-300 faded
+            "long": "#3b82f6",         # blue-500 (darker blue — distinct but same family)
+            "tempo": "#fbbf24",        # amber
             "intervals": "#f97316",    # orange
-            "race": "#c084fc",         # purple (clearly different from orange)
+            "race": "#c084fc",         # purple
         }
         datasets = []
         for t in type_names:
@@ -362,7 +368,7 @@ def _all_charts(conn):
                ROUND(a.aerobic_te * 2, 1) as garmin_rpe
         FROM activities a
         WHERE a.type IN ('running', 'track_running', 'trail_running') AND a.aerobic_te IS NOT NULL
-        AND a.date >= date('now', '-90 days')
+        
         ORDER BY a.date
     """).fetchall()
     if len(rpe_data) >= 3:
