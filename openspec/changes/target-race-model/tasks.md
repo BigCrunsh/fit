@@ -2,12 +2,12 @@
 
 ## 1. Fitness Profile Module
 
-- [ ] 1.1 Create `fit/fitness.py`: `get_fitness_profile(conn)` returning 4 dimensions (aerobic, threshold, economy, resilience) with current_value, trend, rate_per_month
-- [ ] 1.2 Implement VDOT computation from race results using Daniels tables (distance + time → VDOT score)
-- [ ] 1.3 Implement effective_vdot: blend Garmin VO2max and race VDOT (prefer race when <8 weeks old)
-- [ ] 1.4 Implement trend computation: 8-week linear regression per dimension, rate expressed per month
-- [ ] 1.5 Resilience dimension: drift onset km + long run ceiling from activity_splits (graceful degradation without .fit data)
-- [ ] 1.6 Test: profile with sufficient data, insufficient data, VDOT from multiple distances, trend directions
+- [x] 1.1 Create `fit/fitness.py`: `get_fitness_profile(conn)` returning 4 dimensions (aerobic, threshold, economy, resilience) with current_value, trend, rate_per_month
+- [x] 1.2 Implement VDOT computation from race results using Daniels tables (distance + time → VDOT score)
+- [x] 1.3 Implement effective_vdot: blend Garmin VO2max and race VDOT (prefer race when <8 weeks old)
+- [x] 1.4 Implement trend computation: 8-week linear regression per dimension, rate expressed per month
+- [x] 1.5 Resilience dimension: drift onset km + long run ceiling from activity_splits (graceful degradation without .fit data)
+- [x] 1.6 Test: profile with sufficient data, insufficient data, VDOT from multiple distances, trend directions
 
 ## 2. Schema + Migration
 
