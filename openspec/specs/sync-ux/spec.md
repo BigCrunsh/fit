@@ -51,7 +51,23 @@ The sync pipeline SHALL include an `enrich_srpe` stage that retroactively joins 
 ## Post-Phase 2 Additions
 
 ### Requirement: Doctor expects 17 tables
-`fit doctor` table check SHALL expect 17 tables: the original 14 + race_calendar + activity_splits + planned_workouts.
+`fit doctor` SHALL check for 17 tables (was 14): the original 14 plus `race_calendar`, `activity_splits`, and `planned_workouts`. Schema version check SHALL expect 9 migrations.
 
-### Requirement: Sync warnings surfaced to console
-Sync pipeline warnings (missing body comp source, stale CSV, sRPE/plan sync results) SHALL display in CLI output via the counts["warnings"] mechanism, not only in the log file.
+#### Scenario: All 17 tables present
+- **WHEN** `fit doctor` runs after all migrations applied
+- **THEN** table check passes with 17/17 tables found
+
+#### Scenario: Missing new tables
+- **WHEN** `fit doctor` runs and activity_splits table is missing
+- **THEN** output shows: "Missing tables: activity_splits. Run migrations to fix."
+
+### Requirement: Sync pipeline surfaces warnings to console
+The sync pipeline SHALL surface warnings directly to console output (stdout/stderr), not just to the log file. Users running `fit sync` interactively should see warnings about missing config, failed API calls, stale data, and body comp source availability without needing to check sync.log.
+
+#### Scenario: Weather API failure shown on console
+- **WHEN** Open-Meteo API fails during sync
+- **THEN** console shows: "Warning: Weather fetch failed (will retry next sync)" in addition to logging
+
+#### Scenario: Body comp warning on console
+- **WHEN** no body comp source is configured
+- **THEN** console shows the body comp source warning (not just logged silently)
