@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>fit — Dashboard</title>
 <style>
-/* Fonts: system fallback for offline support. Google Fonts removed for self-contained operation. */
 :root {
   --bg: #07070c; --surface: rgba(255,255,255,0.025); --border: rgba(255,255,255,0.06);
   --text: #e2e8f0; --text-muted: #64748b; --text-dim: #475569; --text-faint: #334155;
@@ -34,7 +33,6 @@ table { width:100%; border-collapse:collapse; font-size:11px; }
 th { padding:5px 4px; text-align:left; color:var(--text-dim); font-weight:700; font-size:9px; text-transform:uppercase; border-bottom:1px solid var(--border); }
 td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-family:var(--mono); font-size:10px; }
 .headline { background:rgba(129,140,248,0.06); border:1px solid rgba(129,140,248,0.15); border-radius:12px; padding:14px 18px; margin:12px 0; font-size:13px; line-height:1.6; color:#c4b5fd; }
-.checkin-bar { margin:10px 0; background:rgba(59,130,246,0.04); border:1px solid rgba(59,130,246,0.1); border-radius:10px; padding:9px 13px; }
 .journey { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 18px; margin:14px 0; }
 .journey-bar { display:flex; height:28px; border-radius:6px; overflow:hidden; margin:8px 0; }
 .journey-seg { display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:700; font-family:var(--mono); }
@@ -48,6 +46,27 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
 .stale-badge { font-size:9px; background:rgba(234,179,8,0.15); color:var(--caution); padding:2px 8px; border-radius:12px; font-weight:700; }
 .wow-card { background:rgba(56,189,248,0.04); border:1px solid rgba(56,189,248,0.1); border-radius:10px; padding:10px 14px; margin:10px 0; font-size:11px; }
 .footer { margin-top:32px; padding:10px 0; border-top:1px solid rgba(255,255,255,0.03); font-size:8px; color:var(--text-faint); }
+
+/* Trend badges */
+.badge { display:inline-block; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:600; margin:2px 4px; }
+.badge-green { background:rgba(34,197,94,0.15); color:#22c55e; }
+.badge-yellow { background:rgba(234,179,8,0.15); color:#eab308; }
+.badge-red { background:rgba(239,68,68,0.15); color:#ef4444; }
+.badge-gray { background:rgba(100,116,139,0.15); color:#94a3b8; }
+.badge-blue { background:rgba(56,189,248,0.15); color:#38bdf8; }
+
+/* Narrative items */
+.narrative-item { background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.05); border-radius:8px; padding:8px 12px; margin:4px 0; font-size:11px; color:#94a3b8; }
+
+/* Race countdown card */
+.race-countdown-card { background:rgba(129,140,248,0.08); border:1px solid rgba(129,140,248,0.2); border-radius:12px; padding:16px 20px; margin:12px 0; }
+
+/* Rolling correlation sparkline grid */
+.sparkline-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:8px; margin:10px 0; }
+.sparkline-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+.sparkline-label { font-size:9px; color:var(--text-dim); font-weight:700; text-transform:uppercase; letter-spacing:0.05em; }
+.sparkline-value { font-size:14px; font-weight:700; font-family:var(--mono); margin:4px 0; }
+.sparkline-trend { font-size:9px; color:var(--text-muted); }
 </style>
 </head>
 <body>
@@ -64,19 +83,96 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   </div>
 </div>
 
-<!-- ═══ TODAY ═══ -->
+<!-- TODAY -->
 <div id="tab-today" class="tab-content active">
-  <div class="headline">{{ headline }}</div>
 
+  <!-- 1. Headline (daily signal — race info is in the card below) -->
+  {% if headline_signal %}
+  <div class="headline">{{ headline_signal }}</div>
+  {% endif %}
+
+  <!-- 2. Alerts (safety first!) -->
   {% if recent_alerts %}
   {% for alert in recent_alerts %}
   <div style="background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.15);border-radius:8px;padding:8px 12px;margin:6px 0;font-size:11px">
-    <span style="color:var(--danger);font-weight:700">⚠ {{ alert.type | replace('_', ' ') | title }}:</span>
+    <span style="color:var(--danger);font-weight:700">{{ alert.type | replace('_', ' ') | title }}:</span>
     <span style="color:#94a3b8">{{ alert.message }}</span>
   </div>
   {% endfor %}
   {% endif %}
 
+  <!-- 3. Race Anchor Card — unified race + objectives + phase compliance -->
+  {% if race_countdown %}
+  <div style="background:rgba(129,140,248,0.04);border:1px solid rgba(129,140,248,0.12);border-radius:14px;padding:0;margin:14px 0;overflow:hidden">
+
+    <!-- Header: Race name + days + phase + prediction -->
+    <div style="padding:16px 20px 12px;border-bottom:1px solid rgba(129,140,248,0.08)">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
+        <div style="font-size:14px;font-weight:700;color:#c4b5fd;text-transform:uppercase;letter-spacing:0.06em">{{ race_countdown.race_name }}</div>
+        <div style="font-size:20px;font-weight:700;color:#c4b5fd;font-family:var(--mono)">{{ race_countdown.days_remaining }}<span style="font-size:11px;font-weight:400;color:var(--text-dim);margin-left:2px">days</span></div>
+      </div>
+      <div style="display:flex;gap:16px;margin-top:6px;font-size:11px;color:#94a3b8;flex-wrap:wrap">
+        {% if race_countdown.phase_position %}<span>{{ race_countdown.phase_position }}</span>{% endif %}
+        {% if race_countdown.phase %}<span>{{ race_countdown.phase }}</span>{% endif %}
+        {% if prediction_summary %}<span style="color:var(--accent)">{{ prediction_summary }}</span>{% endif %}
+      </div>
+    </div>
+
+    <!-- Objectives with progress bars -->
+    {% if goal_progress %}
+    <div style="padding:12px 20px;border-bottom:1px solid rgba(129,140,248,0.08)">
+      <div style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">Objectives</div>
+      {% for g in goal_progress %}
+      <div style="display:flex;align-items:center;gap:10px;margin:6px 0" {% if g.tooltip %}title="{{ g.tooltip }}"{% endif %}>
+        <div style="width:80px;font-size:10px;color:var(--text-muted)">{{ g.label }}</div>
+        {% if g.pct is not none %}
+        <div style="flex:1;height:8px;background:rgba(255,255,255,0.04);border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:{{ [g.pct, 100]|min }}%;background:{{ g.color }};border-radius:4px;transition:width 0.3s"></div>
+        </div>
+        <div style="width:80px;text-align:right;font-size:11px;font-family:var(--mono)">
+          <span style="color:{{ g.color }}">{{ g.current }}</span><span style="color:var(--text-dim)">/{{ g.target }}{{ g.unit }}</span>
+        </div>
+        <div style="width:35px;text-align:right;font-size:10px;color:var(--text-dim);font-family:var(--mono)">{{ g.pct|int }}%</div>
+        {% else %}
+        <div style="flex:1;font-size:12px;font-weight:600;color:{{ g.color }};font-family:var(--mono)">{{ g.current }}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Phase compliance -->
+    {% if phase_compliance and not phase_compliance.no_data %}
+    <div style="padding:12px 20px">
+      <div style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">Phase Compliance</div>
+      {% for dim in phase_compliance.dimensions %}
+      <div style="display:flex;align-items:center;gap:10px;margin:4px 0;font-size:11px">
+        <div style="width:80px;color:var(--text-muted)">{{ dim.name }}</div>
+        <div style="flex:1;font-family:var(--mono);color:{% if dim.on_track %}var(--safe){% elif dim.actual is none %}var(--text-dim){% else %}var(--danger){% endif %}">{{ dim.actual if dim.actual is not none else '—' }}</div>
+        <div style="color:var(--text-dim);font-size:10px">target: {% if dim.target_range is defined and dim.target_range is iterable and dim.target_range is not string %}{{ dim.target_range[0] }}–{{ dim.target_range[1] }}{% elif dim.target %}{{ dim.target }}{% else %}—{% endif %}</div>
+        <div style="font-size:11px">{% if dim.on_track %}✓{% elif dim.actual is none %}—{% else %}✗{% endif %}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+  </div>
+  {% endif %}
+
+  <!-- Upcoming races (waypoints) -->
+  {% if upcoming_races and upcoming_races|length > 1 %}
+  <div style="margin:8px 0;display:flex;gap:6px;flex-wrap:wrap">
+    {% for ur in upcoming_races %}
+    {% if not ur.is_target %}
+    <div style="font-size:10px;padding:3px 10px;border-radius:8px;background:var(--surface);border:1px solid var(--border);color:var(--text-muted)">
+      {{ ur.name }} · {{ ur.distance }} · {{ ur.days }}d
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Status cards (biometrics) -->
   <div class="cards">
   {% for card in status_cards %}
     <div class="card" {% if card.tooltip %}title="{{ card.tooltip }}"{% endif %}>
@@ -87,55 +183,82 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   {% endfor %}
   </div>
 
+  <!-- Milestone celebrations -->
+  {% if milestones %}
+  <div style="margin:10px 0">
+    {% for m in milestones %}
+    <div style="background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.15);border-radius:8px;padding:8px 12px;margin:4px 0;font-size:11px">
+      <span style="color:var(--safe);font-weight:700">{{ m.type | replace('_', ' ') | title }}:</span>
+      <span style="color:#94a3b8">{{ m.message }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- 7. "This Month" trend badges -->
+  {% if trend_badges %}
+  <div class="sec"><h2>This Month</h2><div class="line"></div></div>
+  <div style="margin:6px 0">
+    {% for badge in trend_badges %}
+    <span class="badge badge-{{ badge.color }}" title="{{ badge.detail or '' }}">{{ badge.metric }} {% if badge.direction == 'up' %}↑{% elif badge.direction == 'down' %}↓{% elif badge.direction == 'flat' %}→{% endif %} {{ badge.value }}</span>
+    {% endfor %}
+  </div>
+  {% elif trend_badges is defined and trend_badges is not none %}
+  <div class="sec"><h2>This Month</h2><div class="line"></div></div>
+  <div style="font-size:11px;color:var(--text-muted);margin:6px 0">Keep logging — more weeks until trends emerge.</div>
+  {% endif %}
+
+  <!-- 8. Narrative connectors (why-connectors, walk-break, z2 remediation) -->
+  {% set narratives = [] %}
+  {% if walk_break %}{% set _ = narratives.append(walk_break) %}{% endif %}
+  {% if z2_remediation %}{% set _ = narratives.append(z2_remediation) %}{% endif %}
+  {% if why_connectors %}{% for wc in why_connectors %}{% set _ = narratives.append(wc) %}{% endfor %}{% endif %}
+  {% if narratives | length > 0 %}
+  <div class="sec"><h2>Insights</h2><div class="line"></div></div>
+  {% for item in narratives[:2] %}
+  <div class="narrative-item">
+    {% if item.title is defined %}<span style="font-weight:700;color:var(--text)">{{ item.title }}:</span> {% endif %}
+    {% if item.message is defined %}{{ item.message }}{% elif item.pattern is defined %}{{ item.pattern }}{% elif item is string %}{{ item }}{% endif %}
+  </div>
+  {% endfor %}
+  {% if narratives | length > 2 %}
+  <details style="margin:4px 0">
+    <summary style="font-size:10px;color:var(--text-dim);cursor:pointer">{{ narratives | length - 2 }} more insights</summary>
+    {% for item in narratives[2:] %}
+    <div class="narrative-item">
+      {% if item.title is defined %}<span style="font-weight:700;color:var(--text)">{{ item.title }}:</span> {% endif %}
+      {% if item.message is defined %}{{ item.message }}{% elif item.pattern is defined %}{{ item.pattern }}{% elif item is string %}{{ item }}{% endif %}
+    </div>
+    {% endfor %}
+  </details>
+  {% endif %}
+  {% endif %}
+
+  <!-- 9. Check-in (compact) -->
   {% if checkin %}
-  <div class="checkin-bar">
-    <div style="font-size:9px;font-weight:700;color:#3b82f6;margin-bottom:3px">CHECK-IN · {{ checkin.date }}</div>
-    <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:#94a3b8">
+  <details style="margin:10px 0">
+    <summary style="font-size:10px;font-weight:700;color:var(--text-dim);cursor:pointer">Last Check-in: {{ checkin.date }}</summary>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:#94a3b8;margin-top:6px;padding:6px 0">
       {% for f in checkin.fields %}<span>{{ f }}</span>{% endfor %}
     </div>
-  </div>
+  </details>
   {% endif %}
 
-  {% if goal_progress %}
-  <div class="cards" style="margin-top:12px">
-  {% for g in goal_progress %}
-    <div class="card" style="min-width:100px;text-align:center" {% if g.tooltip %}title="{{ g.tooltip }}"{% endif %}>
-      <div style="font-size:14px">{{ g.icon }}</div>
-      <div style="font-size:18px;font-weight:700;color:{{ g.color }};font-family:var(--mono)">{{ g.current }}<span style="font-size:10px;font-weight:400;color:var(--text-dim)">{% if g.target %}/{{ g.target }}{% endif %}{{ g.unit }}</span></div>
-      <div style="font-size:9px;color:var(--text-dim);margin-top:2px">{{ g.label }}</div>
-      {% if g.pct is not none %}<div style="height:3px;background:rgba(255,255,255,0.05);border-radius:2px;margin-top:4px"><div style="height:100%;width:{{ g.pct }}%;background:{{ g.color }};border-radius:2px"></div></div>{% endif %}
-    </div>
-  {% endfor %}
-  </div>
-  {% endif %}
+  <!-- Phase compliance is now integrated into the Race Anchor Card above -->
 
+  <!-- 11. Journey timeline -->
   {% if journey %}
-  <div class="journey">
-    <div style="font-size:10px;font-weight:700;color:var(--text-muted);margin-bottom:4px">{{ journey.goal_name }}</div>
-    <div class="journey-bar">
-      {% for seg in journey.segments %}
-      <div class="journey-seg" style="flex:{{ seg.width }};background:{{ seg.color }}">{{ seg.label }}</div>
-      {% endfor %}
-    </div>
-    <div style="font-size:10px;color:var(--text-muted);margin-top:4px">{{ journey.position }}</div>
-  </div>
-  {% endif %}
-
-  {% if phase_compliance %}
-  <div class="sec"><h2>Phase Compliance: {{ phase_compliance.phase_name }}</h2><div class="line"></div></div>
-  {% if phase_compliance.no_data %}
-    <div style="font-size:11px;color:var(--text-muted)">No weekly data yet for compliance check.</div>
-  {% else %}
-    <div style="display:flex;gap:10px;flex-wrap:wrap">
-    {% for dim in phase_compliance.dimensions %}
-      <div class="card" style="min-width:140px">
-        <div class="card-label">{{ dim.name }}</div>
-        <div class="card-value" style="font-size:16px;color:{% if dim.on_track %}var(--safe){% else %}var(--danger){% endif %}">{{ dim.actual or '—' }}</div>
-        <div class="card-sub">target: {{ dim.target or dim.target_range }}</div>
+  <details style="margin:10px 0">
+    <summary style="font-size:10px;font-weight:700;color:var(--text-dim);cursor:pointer">Journey: {{ journey.goal_name }}</summary>
+    <div class="journey" style="margin-top:6px">
+      <div class="journey-bar">
+        {% for seg in journey.segments %}
+        <div class="journey-seg" style="flex:{{ seg.width }};background:{{ seg.color }}">{{ seg.label }}</div>
+        {% endfor %}
       </div>
-    {% endfor %}
+      <div style="font-size:10px;color:var(--text-muted);margin-top:4px">{{ journey.position }}</div>
     </div>
-  {% endif %}
+  </details>
   {% endif %}
 
   <details style="margin:14px 0">
@@ -143,29 +266,29 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
       Calibration & Data Health
       {% set stale_count = calibration_panel | selectattr('stale') | list | length %}
       {% set missing_count = data_health | selectattr('status', 'equalto', 'missing') | list | length %}
-      {% if stale_count + missing_count > 0 %}<span class="stale-badge">{{ stale_count + missing_count }} warnings</span>{% else %}<span style="color:var(--safe);font-size:9px"> All healthy ✓</span>{% endif %}
+      {% if stale_count + missing_count > 0 %}<span class="stale-badge">{{ stale_count + missing_count }} warnings</span>{% else %}<span style="color:var(--safe);font-size:9px"> All healthy</span>{% endif %}
     </summary>
     <div style="margin-top:8px">
       <div style="font-size:10px;font-weight:700;color:var(--text-muted);margin-bottom:4px">Calibration</div>
       {% for cal in calibration_panel %}
       <div style="font-size:10px;color:{% if cal.stale %}var(--caution){% elif cal.missing %}var(--danger){% else %}var(--safe){% endif %};margin:2px 0">
         {{ cal.metric }}: {{ cal.value or 'not set' }} {% if cal.method %}({{ cal.method }}, {{ cal.date }}){% endif %}
-        {% if cal.retest_prompt %} — {{ cal.retest_prompt }}{% endif %}
+        {% if cal.retest_prompt %} -- {{ cal.retest_prompt }}{% endif %}
       </div>
       {% endfor %}
       <div style="font-size:10px;font-weight:700;color:var(--text-muted);margin:8px 0 4px">Data Sources</div>
       {% for src in data_health %}
       <div style="font-size:10px;color:{% if src.status == 'active' %}var(--safe){% elif src.status == 'stale' %}var(--caution){% else %}var(--danger){% endif %};margin:2px 0">
-        {% if src.status == 'active' %}✓{% elif src.status == 'stale' %}⚠{% else %}✗{% endif %} {{ src.source }}
+        {% if src.status == 'active' %}OK{% elif src.status == 'stale' %}STALE{% else %}MISSING{% endif %} {{ src.source }}
         {% if src.last_date %}({{ src.last_date }}){% endif %}
-        {% if src.instruction %}<span style="color:var(--text-dim)"> — {{ src.instruction }}</span>{% endif %}
+        {% if src.instruction %}<span style="color:var(--text-dim)"> -- {{ src.instruction }}</span>{% endif %}
       </div>
       {% endfor %}
     </div>
   </details>
 </div>
 
-<!-- ═══ TRAINING ═══ -->
+<!-- TRAINING -->
 <div id="tab-training" class="tab-content">
   <div style="display:flex;gap:4px;margin-bottom:10px">
     <span style="font-size:9px;color:var(--text-dim);padding:3px 0">Range:</span>
@@ -180,14 +303,20 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   </div>
   {% endif %}
 
-  <div class="sec"><h2>Weekly Volume</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.volume | safe }}</div><div class="line"></div></div>
+  <div class="sec"><h2>Weekly Volume</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.volume | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-volume" height="160"></canvas></div>
 
-  <div class="sec"><h2>Training Load Per Run</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.training_load | safe }}</div><div class="line"></div></div>
+  <div class="sec"><h2>Training Load Per Run</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.training_load | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-load" height="150"></canvas></div>
 
-  <div class="sec"><h2>Run Type Breakdown</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Weekly run count by type. Blue=easy/recovery, amber=tempo, orange=intervals/race. A healthy base-building phase should be mostly blue.</div><div class="line"></div></div>
+  <div class="sec"><h2>Run Type Breakdown</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">Weekly run count by type. Blue=easy/recovery, amber=tempo, orange=intervals/race. A healthy base-building phase should be mostly blue.</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-runtypes" height="120"></canvas></div>
+
+  <!-- Plan adherence (if plan data exists) -->
+  {% if plan_adherence is defined and plan_adherence %}
+  <div class="sec"><h2>Plan Adherence</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-plan-adherence" height="140"></canvas></div>
+  {% endif %}
 
   <div class="sec"><h2>Run Timeline</h2><div class="line"></div></div>
   {% for run in run_timeline %}
@@ -199,34 +328,37 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   {% endfor %}
 </div>
 
-<!-- ═══ BODY ═══ -->
+<!-- BODY -->
 <div id="tab-body" class="tab-content">
-  <div class="sec"><h2>Readiness · RHR · HRV</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.readiness | safe }}</div><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-readiness" height="180"></canvas></div>
+  <div class="sec"><h2>Readiness</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.readiness | safe }}</div><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-readiness" height="160"></canvas></div>
 
-  <div class="sec"><h2>Sleep</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.sleep | safe }}</div><div class="line"></div></div>
+  <div class="sec"><h2>RHR + HRV</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-rhr-hrv" height="140"></canvas></div>
+
+  <div class="sec"><h2>Sleep</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.sleep | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-sleep" height="150"></canvas></div>
 
-  <div class="sec"><h2>Stress vs Body Battery</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.stress_battery | safe }}</div><div class="line"></div></div>
+  <div class="sec"><h2>Stress vs Body Battery</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.stress_battery | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-stress" height="130"></canvas></div>
 
-  <div class="sec"><h2>ACWR Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.acwr | safe }}</div><div class="line"></div></div>
+  <div class="sec"><h2>ACWR Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.acwr | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-acwr" height="140"></canvas></div>
 
-  <div class="sec"><h2>Weight</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.weight | safe }}</div><div class="line"></div></div>
+  <div class="sec"><h2>Weight</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.weight | safe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-weight" height="130"></canvas></div>
 
   {% if sleep_mismatches %}
   <div class="sec"><h2>Sleep Quality Mismatches</h2><div class="line"></div></div>
   {% for m in sleep_mismatches %}
   <div style="background:rgba(234,179,8,0.06);border:1px solid rgba(234,179,8,0.12);border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:11px;color:#94a3b8">
-    <span style="color:var(--caution)">⚠ {{ m.date }}:</span> {{ m.msg }}
+    <span style="color:var(--caution)">{{ m.date }}:</span> {{ m.msg }}
   </div>
   {% endfor %}
   {% endif %}
 </div>
 
-<!-- ═══ FITNESS ═══ -->
+<!-- FITNESS -->
 <div id="tab-fitness" class="tab-content">
   <div style="display:flex;gap:4px;margin-bottom:10px">
     <span style="font-size:9px;color:var(--text-dim);padding:3px 0">Range:</span>
@@ -239,47 +371,90 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   <div class="sec"><h2>Your Aerobic Engine</h2><div class="line"></div></div>
   <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">Can your body deliver enough oxygen to sustain marathon pace? VO2max is the ceiling, efficiency is how much you use, zones determine if your training builds it.</div>
 
-  <div class="sec" style="margin-top:8px"><h2>VO2max</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.vo2max }}</div><div class="line"></div></div>
+  <div class="sec" style="margin-top:8px"><h2>VO2max</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.vo2max }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-vo2" height="140"></canvas></div>
 
-  <div class="sec"><h2>Aerobic Efficiency</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.speed_per_bpm }}</div><div class="line"></div></div>
+  <div class="sec"><h2>Aerobic Efficiency</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.speed_per_bpm }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-efficiency" height="160"></canvas></div>
 
-  <div class="sec"><h2>Zone Distribution</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.zones | safe }}</div><div class="line"></div></div>
-  <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px">How you're training that engine — time in each HR zone per week</div>
+  <div class="sec"><h2>Zone Distribution</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.zones | safe }}</div><div class="line"></div></div>
+  <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px">How you're training that engine -- time in each HR zone per week</div>
   <div class="chart-box"><canvas id="chart-zones" height="130"></canvas></div>
 
   <!-- SECTION 2: Execution -->
   <div class="sec" style="margin-top:28px"><h2>Race Execution Signals</h2><div class="line"></div></div>
-  <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">Running economy and perceived effort — the gap between what the watch says and what your body feels.</div>
+  <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">Running economy and perceived effort -- the gap between what the watch says and what your body feels.</div>
 
   {% if rpe_garmin_count >= 3 or rpe_checkin_count >= 1 %}
-  <div class="sec" style="margin-top:8px"><h2>Effort</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.rpe }}</div><div class="line"></div></div>
+  <div class="sec" style="margin-top:8px"><h2>Effort</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.rpe }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-rpe" height="140"></canvas></div>
   {% else %}
-  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">Effort tracking: {{ rpe_garmin_count }} Garmin, {{ rpe_checkin_count }} check-in RPE. Need ≥3 to chart.</div>
+  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">Effort tracking: {{ rpe_garmin_count }} Garmin, {{ rpe_checkin_count }} check-in RPE. Need 3+ to chart.</div>
   {% endif %}
 
-  <div class="sec"><h2>Cadence</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.cadence }}</div><div class="line"></div></div>
+  <div class="sec"><h2>Cadence</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.cadence }}</div><div class="line"></div></div>
   <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px">Drops often signal fatigue or overstriding</div>
   <div class="chart-box"><canvas id="chart-cadence" height="120"></canvas></div>
 
-  <!-- SECTION 3: Forecast -->
-  <div class="sec" style="margin-top:28px"><h2>Marathon Forecast</h2><div class="line"></div></div>
-  <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">Given your engine, execution, and training — what can you run in Berlin?</div>
+  <!-- Split Analysis (most recent parsed run) -->
+  {% if split_data %}
+  <div class="sec" style="margin-top:28px"><h2>Per-Km Split Analysis</h2><div class="line"></div></div>
+  <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">{{ split_data.run_name or 'Long Run' }} · {{ split_data.run_date }} · {{ split_data.distance_km }}km</div>
 
-  <div class="sec" style="margin-top:8px"><h2>Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Monthly marathon time prediction from VO2max. Lower = faster. Green line = sub-4:00 (240 min).</div><div class="line"></div></div>
+  {% if split_data.drift %}
+  <div class="cards" style="margin-bottom:12px">
+    <div class="card" style="min-width:100px;text-align:center">
+      <div class="card-label">Drift</div>
+      <div class="card-value" style="font-size:16px;color:{% if split_data.drift.drift_pct and split_data.drift.drift_pct > 10 %}var(--danger){% elif split_data.drift.drift_pct and split_data.drift.drift_pct > 5 %}var(--caution){% else %}var(--safe){% endif %}">{{ split_data.drift.drift_pct or '—' }}%</div>
+      <div class="card-sub">{{ split_data.drift.status }}</div>
+    </div>
+    {% if split_data.drift.drift_onset_km %}
+    <div class="card" style="min-width:100px;text-align:center">
+      <div class="card-label">Onset</div>
+      <div class="card-value" style="font-size:16px;color:var(--text)">km {{ split_data.drift.drift_onset_km }}</div>
+      <div class="card-sub">HR decoupling start</div>
+    </div>
+    {% endif %}
+    {% if split_data.drift.pace_cv_pct %}
+    <div class="card" style="min-width:100px;text-align:center">
+      <div class="card-label">Pace CV</div>
+      <div class="card-value" style="font-size:16px;color:{% if split_data.drift.pace_cv_pct > 15 %}var(--caution){% else %}var(--safe){% endif %}">{{ split_data.drift.pace_cv_pct }}%</div>
+      <div class="card-sub">consistency</div>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <!-- Pace bars per km -->
+  <div style="margin-bottom:16px">
+    {% for s in split_data.splits %}
+    <div style="display:flex;align-items:center;gap:6px;margin:2px 0;font-size:10px">
+      <span style="color:var(--text-dim);width:30px;font-family:var(--mono)">{{ s.split_num }}</span>
+      {% set pace = s.pace_sec_per_km or 0 %}
+      {% set bar_width = [((600 - pace) / 3)|int, 10]|max %}
+      <div style="height:14px;width:{{ bar_width }}%;border-radius:2px;display:flex;align-items:center;padding:0 4px;font-size:8px;font-weight:600;color:rgba(255,255,255,0.9);background:{% if s.time_above_z2_ceiling_sec and s.time_above_z2_ceiling_sec > 0 %}var(--z45){% else %}var(--z12){% endif %}">{{ (pace // 60)|int }}:{{ '%02d' % (pace % 60)|int }}</div>
+      <span style="color:var(--text-muted);font-family:var(--mono)">HR {{ s.avg_hr|int if s.avg_hr else '—' }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- SECTION 3: Forecast -->
+  <div class="sec" style="margin-top:28px"><h2>Race Forecast</h2><div class="line"></div></div>
+  <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">Given your engine, execution, and training — what can you run?</div>
+
+  <div class="sec" style="margin-top:8px"><h2>Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">Monthly marathon time prediction from VO2max. Lower = faster. Green line = sub-4:00 (240 min).</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-marathon-pred" height="150"></canvas></div>
 
   {% if race_prediction %}
-  <div class="sec"><h2>Race Results vs Predictions</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.race_prediction | safe }}</div><div class="line"></div></div>
+  <div class="sec"><h2>Marathon Prediction (from Race Results)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.race_prediction | safe }}</div><div class="line"></div></div>
   <div style="background:rgba(167,139,250,0.04);border:1px solid rgba(167,139,250,0.12);border-radius:12px;padding:15px">
     {{ race_prediction | safe }}
   </div>
   {% endif %}
 </div>
 
-<!-- ═══ COACH ═══ -->
+<!-- COACH -->
 <div id="tab-coach" class="tab-content">
 
   {% if correlation_bars %}
@@ -290,16 +465,41 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
     <div style="width:{{ c.width + 10 }}%;min-width:20px;height:20px;background:{{ c.color }};border-radius:4px;opacity:0.5"></div>
     <div style="flex:1">
       <div style="font-size:12px;font-weight:600;color:var(--text)">{{ c.label }}</div>
-      <div style="font-size:9px;color:var(--text-dim)">{% if c.direction == 'negative' %}Negative effect{% else %}Positive effect{% endif %} · {{ c.confidence }} confidence · {{ c.n }} data points</div>
+      <div style="font-size:9px;color:var(--text-dim)">{% if c.direction == 'negative' %}Negative effect{% else %}Positive effect{% endif %} | {{ c.confidence }} confidence | {{ c.n }} data points</div>
     </div>
     <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:{{ c.color }}">{{ c.r }}</div>
   </div>
   {% endfor %}
-  <div style="font-size:9px;color:var(--text-dim);margin-top:6px">Spearman rank correlation. Bars show effect strength. Build more data through daily <code>fit checkin</code> to unlock alcohol→HRV, sleep→readiness correlations.</div>
+  <div style="font-size:9px;color:var(--text-dim);margin-top:6px">Spearman rank correlation. Bars show effect strength. Build more data through daily <code>fit checkin</code> to unlock more correlations.</div>
+  </div>
+  {% endif %}
+
+  <!-- Rolling correlation sparklines -->
+  {% if rolling_correlations %}
+  <div class="sec"><h2>Correlation Trends (8-week rolling)</h2><div class="line"></div></div>
+  <div class="sparkline-grid">
+    {% for rc in rolling_correlations %}
+    <div class="sparkline-card">
+      <div class="sparkline-label">{{ rc.metric_pair | default(rc.pair, true) | replace('_', ' ') }}</div>
+      <div class="sparkline-value" style="color:{% if rc.current_r is defined and rc.current_r > 0 %}var(--safe){% elif rc.current_r is defined and rc.current_r < 0 %}var(--danger){% else %}var(--text-muted){% endif %}">
+        {% if rc.current_r is defined %}{{ "%.2f" | format(rc.current_r) }}{% else %}--{% endif %}
+      </div>
+      {% if rc.trend is defined %}<div class="sparkline-trend">{{ rc.trend }}</div>{% endif %}
+      {% if rc.windows is defined and rc.windows | length > 0 %}
+      <div style="display:flex;align-items:end;gap:1px;height:20px;margin-top:4px">
+        {% for w in rc.windows %}
+        {% set bar_h = ((w.r | default(0) + 1) / 2 * 18) | int %}
+        <div style="flex:1;height:{{ bar_h }}px;min-height:1px;background:{% if w.r is defined and w.r > 0 %}rgba(34,197,94,0.4){% elif w.r is defined and w.r < 0 %}rgba(239,68,68,0.4){% else %}rgba(100,116,139,0.2){% endif %};border-radius:1px"></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
   </div>
   {% endif %}
 
   {% if coaching %}
+    <div class="sec"><h2>Coaching Notes</h2><div class="line"></div></div>
     <div style="font-size:10px;color:var(--text-muted);margin-bottom:12px">Generated: {{ coaching.generated_at }} {% if coaching.stale %}<span class="stale-badge">STALE</span>{% endif %}</div>
     {% for insight in coaching.insights %}
     <details class="insight-box" style="background:{{ insight.bg }};border:1px solid {{ insight.border }}" {% if loop.first %}open{% endif %}>
@@ -316,7 +516,7 @@ td { padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.025); font-fami
   {% endif %}
 </div>
 
-<div class="footer">fit v0.1.0 · Generated {{ generated_at }}</div>
+<div class="footer">fit v0.1.0 | Generated {{ generated_at }}</div>
 
 <script>{{ chartjs_code }}</script>
 <script>{{ date_adapter_code }}</script>
@@ -331,24 +531,67 @@ function showTab(id, btn) {
 Chart.defaults.color = '#475569';
 Chart.defaults.font.family = "'JetBrains Mono', monospace";
 Chart.defaults.font.size = 10;
-// Date-based charts: list of IDs that should use time scale
-const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-sleep','chart-stress','chart-weight','chart-efficiency','chart-vo2','chart-cadence','chart-rpe']);
+// Annotation collision handling: stack vertically with 2px offset, max 3 per point
+function resolveAnnotationCollisions(annotations) {
+  if (!annotations) return annotations;
+  const byX = {};
+  for (const [key, ann] of Object.entries(annotations)) {
+    const x = ann.xMin || ann.xMax || ann.xValue || key;
+    if (!byX[x]) byX[x] = [];
+    byX[x].push({key, ann});
+  }
+  for (const group of Object.values(byX)) {
+    if (group.length > 3) {
+      // Collapse beyond 3 to a summary
+      for (let i = 3; i < group.length; i++) {
+        delete annotations[group[i].key];
+      }
+      if (group[2].ann.label) {
+        group[2].ann.label.content = `+${group.length - 2} more`;
+      }
+    }
+    // Stack vertically with offset
+    group.slice(0, 3).forEach((item, i) => {
+      if (item.ann.yAdjust === undefined) item.ann.yAdjust = 0;
+      item.ann.yAdjust += i * 14;
+    });
+  }
+  return annotations;
+}
+const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-stress','chart-weight','chart-efficiency','chart-vo2','chart-cadence','chart-rpe','chart-acwr']);
 const chartInstances = {};
 {% for chart in charts %}
 {
   const cfg = {{ chart.config | safe }};
-  // Apply time scale for date-based charts
+  // Resolve annotation collisions
+  if (cfg.options && cfg.options.plugins && cfg.options.plugins.annotation && cfg.options.plugins.annotation.annotations) {
+    resolveAnnotationCollisions(cfg.options.plugins.annotation.annotations);
+  }
   if (timeScaleCharts.has('{{ chart.id }}')) {
     if (!cfg.options) cfg.options = {};
     if (!cfg.options.scales) cfg.options.scales = {};
     if (!cfg.options.scales.x) cfg.options.scales.x = {};
     cfg.options.scales.x.type = 'time';
-    // Auto-detect unit: if data spans > 180 days use 'month', else 'day'
     const labels = cfg.data.labels || [];
     const span = labels.length > 1 ? (new Date(labels[labels.length-1]) - new Date(labels[0])) / 86400000 : 0;
     const unit = span > 180 ? 'month' : 'day';
     cfg.options.scales.x.time = { unit: unit, displayFormats: { day: 'MMM d, yy', month: "MMM ''yy" }, tooltipFormat: 'yyyy-MM-dd' };
     cfg.options.scales.x.grid = { color: 'rgba(255,255,255,0.03)' };
+  }
+  // Format prediction chart y-axis as H:MM
+  if ('{{ chart.id }}' === 'chart-marathon-pred' && cfg.options && cfg.options.scales && cfg.options.scales.y) {
+    cfg.options.scales.y.ticks = cfg.options.scales.y.ticks || {};
+    cfg.options.scales.y.ticks.callback = function(v) {
+      return Math.floor(v/60) + ':' + ('0' + Math.floor(v%60)).slice(-2);
+    };
+    // Also format tooltips
+    cfg.options.plugins = cfg.options.plugins || {};
+    cfg.options.plugins.tooltip = cfg.options.plugins.tooltip || {};
+    cfg.options.plugins.tooltip.callbacks = cfg.options.plugins.tooltip.callbacks || {};
+    cfg.options.plugins.tooltip.callbacks.label = function(ctx) {
+      var v = ctx.parsed.y;
+      return ctx.dataset.label + ': ' + Math.floor(v/60) + ':' + ('0' + Math.floor(v%60)).slice(-2);
+    };
   }
   const el = document.getElementById('{{ chart.id }}');
   if (el) chartInstances['{{ chart.id }}'] = new Chart(el, cfg);
@@ -362,7 +605,6 @@ function setZoom(range, btn) {
   if (range === '3mo') minLabel = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate()).toISOString().slice(0, 10);
   else if (range === '6mo') minLabel = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate()).toISOString().slice(0, 10);
   else if (range === '1yr') minLabel = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString().slice(0, 10);
-  // Filter by hiding data points before minLabel (category axis doesn't support min/max natively)
   const tab = btn.closest('.tab-content');
   if (!tab) return;
   tab.querySelectorAll('canvas').forEach(canvas => {
@@ -372,11 +614,9 @@ function setZoom(range, btn) {
     const origDatasets = chart._origDatasets || chart.data.datasets.map(ds => ({...ds, data: [...ds.data]}));
     if (!chart._origLabels) { chart._origLabels = origLabels; chart._origDatasets = origDatasets; }
     if (!minLabel) {
-      // Reset to full data
       chart.data.labels = [...origLabels];
       chart.data.datasets.forEach((ds, i) => { ds.data = [...origDatasets[i].data]; });
     } else {
-      // Filter labels + data to those >= minLabel
       const startIdx = origLabels.findIndex(l => l >= minLabel);
       if (startIdx >= 0) {
         chart.data.labels = origLabels.slice(startIdx);

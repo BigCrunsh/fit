@@ -9,6 +9,13 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 
 from fit.report.headline import generate_headline
+from fit.narratives import (
+    generate_trend_badges,
+    generate_why_connectors,
+    generate_race_countdown,
+    detect_walk_break_need,
+    generate_z2_remediation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +56,8 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
             {"id": "coach", "label": "Coach"},
         ],
         "headline": _headline(conn),
+        "headline_signal": _headline_signal(conn),
+        "prediction_summary": _prediction_summary(conn),
         "status_cards": _status_cards(conn),
         "checkin": _checkin(conn),
         "journey": _journey(conn),
@@ -62,12 +71,22 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "rpe_checkin_count": conn.execute("SELECT COUNT(*) FROM activities WHERE type='running' AND rpe IS NOT NULL").fetchone()[0],
         "rpe_garmin_count": conn.execute("SELECT COUNT(*) FROM activities WHERE type='running' AND aerobic_te IS NOT NULL AND date >= date('now', '-90 days')").fetchone()[0],
         "run_count": conn.execute("SELECT COUNT(*) FROM activities WHERE type='running'").fetchone()[0],
+        "milestones": _milestones(conn),
         "goal_progress": _goal_progress(conn),
         "correlation_bars": _correlation_bars(conn),
         "phase_compliance": _phase_compliance(conn),
         "calibration_panel": _calibration_panel(conn),
         "data_health": _data_health_panel(conn),
         "sleep_mismatches": _sleep_mismatches(conn),
+        "trend_badges": _trend_badges(conn),
+        "why_connectors": _why_connectors(conn),
+        "race_countdown": _race_countdown(conn),
+        "walk_break": _walk_break(conn),
+        "z2_remediation": _z2_remediation(conn),
+        "rolling_correlations": _rolling_correlations(conn),
+        "split_data": _split_data(conn),
+        "plan_adherence": _plan_adherence(conn),
+        "upcoming_races": _upcoming_races(conn),
     }
 
     html = template.render(**context)
@@ -90,7 +109,78 @@ def _headline(conn):
         last_checkin_date=last_ci["date"] if last_ci else None,
         today=date.today().isoformat(),
         sleep_quality=last_ci["sleep_quality"] if last_ci else None,
+        conn=conn,
     )
+
+
+def _headline_signal(conn):
+    """Daily coaching signal — readiness-based, not race info (that's in the card)."""
+    h = conn.execute("SELECT training_readiness, sleep_duration_hours FROM daily_health ORDER BY date DESC LIMIT 1").fetchone()
+    if not h or not h["training_readiness"]:
+        return None
+    r = h["training_readiness"]
+    if r >= 75:
+        return "Ready for a quality session today."
+    elif r >= 50:
+        return "Moderate readiness — easy run or rest recommended."
+    elif r >= 25:
+        return "Low readiness — rest or very easy activity only."
+    else:
+        return "Very low readiness — full rest day recommended."
+
+
+def _prediction_summary(conn):
+    """Compact prediction with confidence for the race card header.
+
+    Shows range from multiple sources, not just VDOT point estimate.
+    """
+    try:
+        from fit.analysis import predict_marathon_time
+        races = conn.execute("""
+            SELECT distance_km, result_time FROM race_calendar
+            WHERE status = 'completed' AND result_time IS NOT NULL
+            ORDER BY date DESC LIMIT 5
+        """).fetchall()
+        vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
+
+        def _parse_time(t):
+            parts = t.split(":")
+            if len(parts) == 3:
+                return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+            elif len(parts) == 2:
+                return int(parts[0]) * 60 + int(parts[1])
+            return 0
+
+        race_data = [{"distance_km": r["distance_km"], "time_seconds": _parse_time(r["result_time"])}
+                     for r in races if r["distance_km"] and r["result_time"]]
+        preds = predict_marathon_time(races=race_data, vo2max=vo2["vo2max"] if vo2 else None)
+
+        # Collect all predictions
+        all_secs = []
+        if preds.get("riegel"):
+            all_secs.extend(p["predicted_seconds"] for p in preds["riegel"])
+        if preds.get("vdot") and preds["vdot"].get("predicted_seconds"):
+            all_secs.append(preds["vdot"]["predicted_seconds"])
+
+        if not all_secs:
+            return None
+
+        lo = min(all_secs)
+        hi = max(all_secs)
+
+        def _fmt(s):
+            return f"{s // 3600}:{(s % 3600) // 60:02d}"
+
+        confidence = preds.get("confidence", {})
+        level = confidence.get("level", "low")
+        level_label = {"high": "", "moderate": " (moderate confidence)", "low": " (low confidence)"}
+
+        if hi - lo < 300:  # within 5 min — show single value
+            return f"Prediction: {_fmt((lo + hi) // 2)}{level_label.get(level, '')}"
+        else:
+            return f"Prediction: {_fmt(lo)}–{_fmt(hi)}{level_label.get(level, '')}"
+    except Exception:
+        return None
 
 
 # ── Status Cards ──
@@ -335,7 +425,7 @@ def _all_charts(conn):
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
-    # Readiness + RHR + HRV (Body tab)
+    # Readiness (Body tab) — standalone bar chart, no competing lines
     health = conn.execute("SELECT date, training_readiness, resting_heart_rate, hrv_last_night FROM daily_health WHERE date >= date('now','-21 days') ORDER BY date").fetchall()
     if health:
         r_colors = [SAFE + "80" if (h["training_readiness"] or 0) >= 75 else CAUTION + "80" if (h["training_readiness"] or 0) >= 50 else DANGER + "80" for h in health]
@@ -343,19 +433,41 @@ def _all_charts(conn):
             "type": "bar",
             "data": {"labels": [h["date"] for h in health],
                      "datasets": [
-                         {"label": "Readiness", "data": [h["training_readiness"] for h in health], "backgroundColor": r_colors, "borderRadius": 3, "yAxisID": "y", "order": 2},
-                         {"label": "RHR", "data": [h["resting_heart_rate"] for h in health], "type": "line", "borderColor": DANGER, "borderWidth": 2, "pointRadius": 2.5, "yAxisID": "y1", "order": 1},
-                         {"label": "HRV", "data": [h["hrv_last_night"] for h in health], "type": "line", "borderColor": ACCENT, "borderWidth": 1.5, "borderDash": [4, 2], "pointRadius": 2, "yAxisID": "y", "order": 1},
+                         {"label": "Readiness", "data": [h["training_readiness"] for h in health], "backgroundColor": r_colors, "borderRadius": 3},
                      ]},
             "options": {"responsive": True,
-                        "plugins": {"annotation": {"annotations": {
-                            "good": {"type": "line", "yMin": 75, "yMax": 75, "yScaleID": "y",
-                                     "borderColor": SAFE + "30", "borderDash": [4, 4], "borderWidth": 1,
-                                     "label": {"content": "Ready ≥75", "display": True, "position": "start", "font": {"size": 7}, "color": SAFE + "60"}},
+                        "plugins": {"legend": {"display": False},
+                                    "annotation": {"annotations": {
+                            "good": {"type": "box", "yMin": 75, "yMax": 100,
+                                     "backgroundColor": SAFE + "08", "borderWidth": 0,
+                                     "label": {"content": "Ready >=75", "display": True, "position": "start", "font": {"size": 7}, "color": SAFE + "60"}},
+                            "rest": {"type": "box", "yMin": 0, "yMax": 50,
+                                     "backgroundColor": DANGER + "06", "borderWidth": 0,
+                                     "label": {"content": "Rest <50", "display": True, "position": "start", "font": {"size": 7}, "color": DANGER + "40"}},
                         }}},
                         "scales": {
-                "y": {"position": "left", "min": 0, "max": 100, "grid": {"color": "rgba(255,255,255,0.03)"}},
-                "y1": {"position": "right", "min": 45, "max": 75, "grid": {"drawOnChartArea": False}},
+                "y": {"min": 0, "max": 100, "grid": {"color": "rgba(255,255,255,0.03)"}},
+                "x": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
+        })})
+
+    # RHR + HRV (Body tab) — separate chart for two recovery signals
+    if health:
+        charts.append({"id": "chart-rhr-hrv", "config": json.dumps({
+            "type": "line",
+            "data": {"labels": [h["date"] for h in health],
+                     "datasets": [
+                         {"label": "RHR (bpm)", "data": [h["resting_heart_rate"] for h in health],
+                          "borderColor": DANGER, "borderWidth": 2, "pointRadius": 3, "fill": False, "yAxisID": "y"},
+                         {"label": "HRV (ms)", "data": [h["hrv_last_night"] for h in health],
+                          "borderColor": ACCENT, "borderWidth": 2, "pointRadius": 3, "fill": False, "yAxisID": "y1"},
+                     ]},
+            "options": {"responsive": True,
+                        "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
+                        "scales": {
+                "y": {"position": "left", "grid": {"color": "rgba(255,255,255,0.03)"},
+                       "title": {"display": True, "text": "RHR (bpm)", "color": DANGER}},
+                "y1": {"position": "right", "grid": {"drawOnChartArea": False},
+                        "title": {"display": True, "text": "HRV (ms)", "color": ACCENT}},
                 "x": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
@@ -366,9 +478,9 @@ def _all_charts(conn):
             "type": "bar",
             "data": {"labels": [s["date"] for s in sleep],
                      "datasets": [
-                         {"label": "Deep", "data": [s["deep_sleep_hours"] for s in sleep], "backgroundColor": "#1e3a5f", "stack": "s"},
-                         {"label": "REM", "data": [s["rem_sleep_hours"] for s in sleep], "backgroundColor": "#6366f1", "stack": "s"},
-                         {"label": "Light", "data": [s["light_sleep_hours"] for s in sleep], "backgroundColor": "#1e293b", "stack": "s"},
+                         {"label": "Deep", "data": [s["deep_sleep_hours"] for s in sleep], "backgroundColor": "rgba(56,189,248,0.7)", "stack": "s"},
+                         {"label": "REM", "data": [s["rem_sleep_hours"] for s in sleep], "backgroundColor": "rgba(129,140,248,0.6)", "stack": "s"},
+                         {"label": "Light", "data": [s["light_sleep_hours"] for s in sleep], "backgroundColor": "rgba(100,116,139,0.35)", "stack": "s"},
                      ]},
             "options": {"responsive": True,
                         "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}},
@@ -408,7 +520,7 @@ def _all_charts(conn):
         })})
 
     # Weight (Body tab) with race target
-    weight = conn.execute("SELECT date, weight_kg FROM body_comp ORDER BY date").fetchall()
+    weight = conn.execute("SELECT date, weight_kg, body_fat_pct FROM body_comp ORDER BY date").fetchall()
     if weight:
         weight_target = conn.execute("SELECT target_value FROM goals WHERE type = 'metric' AND name LIKE '%eight%' AND active = 1 LIMIT 1").fetchone()
         weight_annots = dict(event_annots)
@@ -418,14 +530,24 @@ def _all_charts(conn):
                 "borderColor": SAFE + "60", "borderDash": [6, 3],
                 "label": {"content": f"Target {weight_target['target_value']}kg", "display": True, "position": "end", "font": {"size": 8}},
             }
+        datasets = [{"label": "Weight", "data": [w["weight_kg"] for w in weight],
+                      "borderColor": Z3, "backgroundColor": Z3 + "15", "fill": True, "borderWidth": 2, "pointRadius": 3, "yAxisID": "y"}]
+        # Body fat second y-axis if data exists
+        bf_data = [w["body_fat_pct"] for w in weight]
+        has_bf = any(v is not None for v in bf_data)
+        scales = {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
+                  "y": {"grid": {"color": "rgba(255,255,255,0.03)"}, "position": "left", "title": {"display": True, "text": "kg"}}}
+        if has_bf:
+            datasets.append({"label": "Body Fat %", "data": bf_data, "borderColor": DANGER + "60",
+                              "borderWidth": 1.5, "pointRadius": 2, "fill": False, "yAxisID": "y1", "spanGaps": True})
+            scales["y1"] = {"grid": {"drawOnChartArea": False}, "position": "right",
+                            "title": {"display": True, "text": "%"}, "min": 5, "max": 30}
         charts.append({"id": "chart-weight", "config": json.dumps({
             "type": "line",
-            "data": {"labels": [w["date"] for w in weight],
-                     "datasets": [{"label": "Weight", "data": [w["weight_kg"] for w in weight],
-                                   "borderColor": Z3, "backgroundColor": Z3 + "15", "fill": True, "borderWidth": 2, "pointRadius": 3}]},
-            "options": {"responsive": True, "plugins": {"legend": {"display": False}, "annotation": {"annotations": weight_annots}},
-                        "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
-                                   "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
+            "data": {"labels": [w["date"] for w in weight], "datasets": datasets},
+            "options": {"responsive": True, "plugins": {"legend": {"display": has_bf, "position": "bottom", "labels": {"boxWidth": 12}},
+                                                         "annotation": {"annotations": weight_annots}},
+                        "scales": scales}
         })})
 
     # Speed per BPM (Fitness tab — hero chart)
@@ -435,7 +557,7 @@ def _all_charts(conn):
             "type": "line",
             "data": {"labels": [e["date"] for e in eff],
                      "datasets": [
-                         {"label": "All runs", "data": [e["speed_per_bpm"] for e in eff], "borderColor": Z3 + "20", "borderWidth": 1, "pointRadius": 0, "fill": False},
+                         {"label": "All runs", "data": [e["speed_per_bpm"] for e in eff], "borderColor": Z3 + "50", "borderWidth": 1.5, "pointRadius": 2, "pointBackgroundColor": Z3 + "40", "fill": False},
                          {"label": "Z2 only (key signal)", "data": [e["speed_per_bpm_z2"] for e in eff], "borderColor": ACCENT, "borderWidth": 2.5, "pointRadius": 4, "fill": False, "spanGaps": True},
                      ]},
             "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}},
@@ -478,23 +600,26 @@ def _all_charts(conn):
                                    "y": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}, "title": {"display": True, "text": "minutes"}}}}
         })})
 
-    # ACWR trend (Body tab)
+    # ACWR trend (Body tab) — line chart with safe zone band
     acwr_data = conn.execute("""
         SELECT week, acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week
     """).fetchall()
     if acwr_data:
-        acwr_colors = [SAFE if 0.8 <= (a["acwr"] or 0) <= 1.3 else CAUTION if (a["acwr"] or 0) <= 1.5 else DANGER for a in acwr_data]
+        # Color each point based on zone
+        point_colors = [SAFE if 0.8 <= (a["acwr"] or 0) <= 1.3 else CAUTION if (a["acwr"] or 0) <= 1.5 else DANGER for a in acwr_data]
         charts.append({"id": "chart-acwr", "config": json.dumps({
-            "type": "bar",
+            "type": "line",
             "data": {"labels": [a["week"] for a in acwr_data],
                      "datasets": [{"label": "ACWR", "data": [a["acwr"] for a in acwr_data],
-                                   "backgroundColor": acwr_colors, "borderRadius": 3}]},
+                                   "borderColor": ACCENT, "borderWidth": 2, "pointRadius": 4,
+                                   "pointBackgroundColor": point_colors, "pointBorderColor": point_colors,
+                                   "fill": False}]},
             "options": {"responsive": True, "plugins": {"legend": {"display": False},
                         "annotation": {"annotations": {
-                            "safe_lo": {"type": "line", "yMin": 0.8, "yMax": 0.8, "borderColor": SAFE + "40", "borderDash": [4, 3],
-                                        "label": {"content": "0.8", "display": True, "position": "start", "font": {"size": 8}}},
-                            "safe_hi": {"type": "line", "yMin": 1.3, "yMax": 1.3, "borderColor": SAFE + "40", "borderDash": [4, 3],
-                                        "label": {"content": "1.3 safe", "display": True, "position": "end", "font": {"size": 8}}},
+                            "safe_zone": {"type": "box", "yMin": 0.8, "yMax": 1.3,
+                                          "backgroundColor": SAFE + "10", "borderWidth": 0,
+                                          "label": {"content": "Safe zone 0.8-1.3", "display": True, "position": "end",
+                                                    "font": {"size": 8}, "color": SAFE + "60"}},
                             "danger": {"type": "line", "yMin": 1.5, "yMax": 1.5, "borderColor": DANGER + "60", "borderDash": [6, 3],
                                        "label": {"content": "1.5 danger", "display": True, "position": "end", "font": {"size": 8}}},
                         }}},
@@ -583,39 +708,176 @@ def _all_charts(conn):
                                    "x": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
-    # Race prediction trend (Fitness tab) — monthly VDOT prediction from VO2max
+    # Race prediction trend (Fitness tab) — VDOT line + Riegel race points
+    # Get target race distance for adaptive prediction
+    try:
+        from fit.goals import get_target_race as _gtr
+        _target = _gtr(conn)
+        target_km = _target["distance_km"] if _target and _target.get("distance_km") else 42.195
+        target_time_str = _target.get("target_time") if _target else None
+    except Exception:
+        target_km = 42.195
+        target_time_str = None
+
+    # Parse target time for annotation
+    target_min = None
+    if target_time_str:
+        _tp = target_time_str.split(":")
+        if len(_tp) == 3:
+            target_min = int(_tp[0]) * 60 + int(_tp[1]) + int(_tp[2]) / 60
+        elif len(_tp) == 2:
+            target_min = int(_tp[0]) + int(_tp[1]) / 60
+
     vo2_monthly = conn.execute("""
         SELECT substr(date, 1, 7) as month, ROUND(AVG(vo2max), 1) as avg_vo2
         FROM activities WHERE vo2max IS NOT NULL
         GROUP BY month ORDER BY month
     """).fetchall()
+
+    # Riegel predictions from actual races (scatter points)
+    race_points = conn.execute("""
+        SELECT date, name, distance_km, result_time FROM race_calendar
+        WHERE status = 'completed' AND result_time IS NOT NULL AND distance_km IS NOT NULL
+        ORDER BY date
+    """).fetchall()
+
+    def _parse_t(t):
+        p = t.split(":")
+        if len(p) == 3:
+            return int(p[0]) * 3600 + int(p[1]) * 60 + int(p[2])
+        return int(p[0]) * 60 + int(p[1]) if len(p) == 2 else 0
+
+    datasets = []
+    all_labels = set()
+
+    # Dataset 1: VDOT line (monthly VO2max → predicted time)
     if len(vo2_monthly) >= 3:
-        from fit.analysis import predict_marathon_time
-        pred_times = []
-        labels = []
+        from fit.analysis import _vdot_to_marathon_seconds
+        vdot_labels = []
+        vdot_times = []
         for v in vo2_monthly:
-            p = predict_marathon_time([], vo2max=v["avg_vo2"])
-            if p.get("vdot"):
-                pred_times.append(round(p["vdot"]["predicted_seconds"] / 60, 1))  # minutes
-                labels.append(v["month"])
-        if pred_times:
-            charts.append({"id": "chart-marathon-pred", "config": json.dumps({
-                "type": "line",
+            secs = _vdot_to_marathon_seconds(v["avg_vo2"])
+            # Scale to target distance if not marathon
+            if target_km != 42.195:
+                secs = secs * (target_km / 42.195) ** 1.06
+            vdot_times.append(round(secs / 60, 1))
+            vdot_labels.append(v["month"])
+            all_labels.add(v["month"])
+        datasets.append({
+            "label": "VDOT (from VO2max)", "data": vdot_times,
+            "borderColor": ACCENT, "backgroundColor": ACCENT + "15", "fill": True,
+            "borderWidth": 2, "pointRadius": 2,
+        })
+
+    # Dataset 2: Riegel scatter (actual race → extrapolated to target distance)
+    if race_points:
+        riegel_labels = []
+        riegel_times = []
+        for r in race_points:
+            d1 = r["distance_km"]
+            t1 = _parse_t(r["result_time"])
+            if d1 > 0 and t1 > 0 and d1 != target_km:
+                t2 = t1 * (target_km / d1) ** 1.06
+                riegel_times.append(round(t2 / 60, 1))
+                riegel_labels.append(r["date"][:7])  # month
+                all_labels.add(r["date"][:7])
+        if riegel_times:
+            datasets.append({
+                "label": "Riegel (from races)", "data": riegel_times,
+                "borderColor": Z3, "borderWidth": 0,
+                "pointRadius": 5, "pointBackgroundColor": Z3,
+                "pointBorderColor": Z3 + "80", "pointBorderWidth": 2,
+                "showLine": False, "fill": False,
+            })
+
+    if datasets:
+        sorted_labels = sorted(all_labels)
+        # Align datasets to common label axis
+        for ds in datasets:
+            old_data = ds["data"]
+            if ds.get("showLine") is False:
+                # Scatter: use sparse data (null for missing months)
+                ds_labels = [r["date"][:7] for r in race_points] if "Riegel" in ds["label"] else []
+                aligned = []
+                idx = 0
+                for lbl in sorted_labels:
+                    if idx < len(ds_labels) and ds_labels[idx] == lbl:
+                        aligned.append(old_data[idx])
+                        idx += 1
+                    else:
+                        aligned.append(None)
+                ds["data"] = aligned
+            else:
+                # Line: also align
+                ds_labels = [v["month"] for v in vo2_monthly] if "VDOT" in ds["label"] else []
+                aligned = []
+                idx = 0
+                for lbl in sorted_labels:
+                    if idx < len(ds_labels) and ds_labels[idx] == lbl:
+                        aligned.append(old_data[idx])
+                        idx += 1
+                    else:
+                        aligned.append(None)
+                ds["data"] = aligned
+                ds["spanGaps"] = True
+
+        # Target annotation
+        pred_annots = {}
+        if target_min:
+            pred_annots["target"] = {
+                "type": "line", "yMin": target_min, "yMax": target_min,
+                "borderColor": SAFE + "60", "borderDash": [6, 3],
+                "label": {"content": f"Target {target_time_str}", "display": True,
+                           "position": "end", "font": {"size": 8}},
+            }
+
+        charts.append({"id": "chart-marathon-pred", "config": json.dumps({
+            "type": "line",
+            "data": {"labels": sorted_labels, "datasets": datasets},
+            "options": {"responsive": True,
+                        "plugins": {"legend": {"display": True, "position": "bottom", "labels": {"boxWidth": 12}},
+                                    "annotation": {"annotations": pred_annots}},
+                        "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
+                                   "y": {"reverse": True, "grid": {"color": "rgba(255,255,255,0.03)"},
+                                         "title": {"display": True, "text": "time (lower = faster)"}}}}
+        })})
+
+    # Plan adherence mirrored bar chart (Training tab)
+    try:
+        from fit.plan import compute_plan_adherence
+        adherence = compute_plan_adherence(conn)
+        if adherence and adherence.get("days"):
+            days = adherence["days"]
+            labels = [d["date"] for d in days]
+            planned = [-(d.get("planned_km") or 0) for d in days]  # negative = left side
+            actual = [d.get("actual_km") or 0 for d in days]
+            colors = []
+            for d in days:
+                if d.get("status") == "matched":
+                    colors.append(SAFE + "80")
+                elif d.get("status") == "missed":
+                    colors.append("#64748b80")  # gray
+                elif d.get("status") == "unplanned":
+                    colors.append(Z12 + "80")  # blue
+                else:
+                    colors.append(Z3 + "80")
+            charts.append({"id": "chart-plan-adherence", "config": json.dumps({
+                "type": "bar",
                 "data": {"labels": labels,
-                         "datasets": [{"label": "Predicted Marathon (min)", "data": pred_times,
-                                       "borderColor": ACCENT, "backgroundColor": ACCENT + "15", "fill": True,
-                                       "borderWidth": 2, "pointRadius": 3}]},
-                "options": {"responsive": True,
-                            "plugins": {"legend": {"display": False},
-                                        "annotation": {"annotations": {
-                                            "sub4": {"type": "line", "yMin": 240, "yMax": 240,
-                                                     "borderColor": SAFE + "60", "borderDash": [6, 3],
-                                                     "label": {"content": "Sub-4:00 (240 min)", "display": True,
-                                                               "position": "end", "font": {"size": 8}}}}}},
-                            "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
-                                       "y": {"reverse": True, "grid": {"color": "rgba(255,255,255,0.03)"},
-                                             "title": {"display": True, "text": "minutes (lower = faster)"}}}}
+                         "datasets": [
+                             {"label": "Planned", "data": planned, "backgroundColor": ACCENT + "40",
+                              "borderColor": ACCENT + "60", "borderWidth": 1},
+                             {"label": "Actual", "data": actual, "backgroundColor": colors,
+                              "borderColor": [c.replace("80", "cc") for c in colors], "borderWidth": 1},
+                         ]},
+                "options": {"responsive": True, "indexAxis": "y",
+                            "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
+                            "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"},
+                                             "title": {"display": True, "text": "km (left=planned, right=actual)"}},
+                                       "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
             })})
+    except Exception:
+        pass
 
     return charts
 
@@ -659,6 +921,7 @@ def _definitions(conn):
 # ── Race Prediction ──
 
 def _race_prediction(conn):
+    """Generate race prediction table — adapts to target race distance."""
     races = conn.execute("""
         SELECT rc.date, rc.name, rc.distance, rc.distance_km, rc.result_time
         FROM race_calendar rc
@@ -669,10 +932,17 @@ def _race_prediction(conn):
     if not races and not vo2:
         return None
 
-    target = conn.execute("SELECT target_time FROM goals WHERE type = 'marathon' AND active = 1 LIMIT 1").fetchone()
-    target_str = target["target_time"] if target and target["target_time"] else "3:59:59"
+    # Get target race and its distance
+    from fit.goals import get_target_race
+    target_race = get_target_race(conn)
+    target_km = target_race["distance_km"] if target_race and target_race.get("distance_km") else 42.195
+    target_label = target_race["distance"] if target_race else "Marathon"
 
-    from fit.analysis import predict_marathon_time
+    # Get target time
+    target_str = target_race.get("target_time") if target_race else None
+    if not target_str:
+        target_goal = conn.execute("SELECT target_time FROM goals WHERE type = 'marathon' AND active = 1 LIMIT 1").fetchone()
+        target_str = target_goal["target_time"] if target_goal and target_goal["target_time"] else "4:00:00"
 
     def _parse_time_to_seconds(t):
         parts = t.split(":")
@@ -682,30 +952,51 @@ def _race_prediction(conn):
             return int(parts[0]) * 60 + int(parts[1])
         return 0
 
-    race_data = [{"distance_km": r["distance_km"], "time_seconds": _parse_time_to_seconds(r["result_time"]),
-                  "name": r["name"], "date": r["date"]}
-                 for r in races if r["distance_km"] and r["result_time"]]
-    preds = predict_marathon_time(race_data, vo2max=vo2["vo2max"] if vo2 else None)
+    target_secs = _parse_time_to_seconds(target_str)
+
+    # Riegel predictions extrapolated to TARGET distance (not always 42.195)
+    race_data = []
+    for r in races:
+        if r["distance_km"] and r["result_time"]:
+            d1 = r["distance_km"]
+            t1 = _parse_time_to_seconds(r["result_time"])
+            if d1 > 0 and t1 > 0 and d1 != target_km:
+                t2 = t1 * (target_km / d1) ** 1.06
+                race_data.append({
+                    "from_race": r["name"], "from_date": r["date"],
+                    "distance_km": d1, "predicted_seconds": round(t2),
+                })
+
+    # VDOT prediction
+    from fit.analysis import _vdot_to_marathon_seconds
+    vdot_pred = None
+    if vo2 and vo2["vo2max"] and vo2["vo2max"] > 30:
+        marathon_secs = _vdot_to_marathon_seconds(vo2["vo2max"])
+        # Scale from marathon to target distance
+        vdot_secs = round(marathon_secs * (target_km / 42.195) ** 1.06) if target_km != 42.195 else round(marathon_secs)
+        vdot_pred = {"vo2max": vo2["vo2max"], "predicted_seconds": vdot_secs}
 
     def _fmt_time(secs):
-        return f"{secs // 3600}:{(secs % 3600) // 60:02d}"
+        h = secs // 3600
+        m = (secs % 3600) // 60
+        if h > 0:
+            return f"{h}:{m:02d}"
+        return f"{m} min"
 
     def _fmt_pace(secs):
-        pace = secs / 42.195
+        pace = secs / target_km
         return f"{int(pace // 60)}:{int(pace % 60):02d}/km"
 
     parts = []
     parts.append(f"<div style='text-align:center;margin-bottom:10px'>"
-                 f"<div style='font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em'>Target</div>"
-                 f"<div style='font-size:28px;font-weight:700;color:var(--accent);font-family:var(--mono)'>sub-{target_str[:4]}</div>"
+                 f"<div style='font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em'>{target_label} Target</div>"
+                 f"<div style='font-size:28px;font-weight:700;color:var(--accent);font-family:var(--mono)'>{target_str}</div>"
                  f"</div>")
 
-    # Build prediction rows as a clean table
+    # Build prediction rows
     rows = []
-    for r in preds.get("riegel", []):
+    for r in race_data:
         t = r["predicted_seconds"]
-        # Extract short race name
-        name = r["from_race"] or ""
         dist = r.get("distance_km") or 0
         if dist > 18:
             short = "Half Marathon"
@@ -714,22 +1005,22 @@ def _race_prediction(conn):
         elif dist > 3:
             short = "5K"
         else:
-            short = name[:20]
+            short = (r.get("from_race") or "")[:20]
         race_date = (r.get("from_date") or "")[:7]
-        delta = t - 14400  # seconds vs 4:00
-        delta_str = f"{'−' if delta < 0 else '+'}{abs(delta) // 60} min" if delta != 0 else "= target"
-        color = "var(--safe)" if delta < 0 else "var(--danger)"
+        delta = t - target_secs
+        delta_str = f"{'−' if delta < 0 else '+'}{abs(delta) // 60} min" if abs(delta) > 30 else "= target"
+        color = "var(--safe)" if delta < 0 else "var(--caution)" if delta < 300 else "var(--danger)"
         rows.append(f"<tr><td style='color:var(--text-muted);font-size:10px'>{short}<br>{race_date}</td>"
                     f"<td style='font-family:var(--mono);font-size:16px;font-weight:600'>{_fmt_time(t)}</td>"
                     f"<td style='font-size:10px;color:var(--text-dim)'>{_fmt_pace(t)}</td>"
                     f"<td style='font-size:10px;color:{color};font-weight:600'>{delta_str}</td></tr>")
 
-    if preds.get("vdot"):
-        t = preds["vdot"]["predicted_seconds"]
-        delta = t - 14400
-        delta_str = f"{'−' if delta < 0 else '+'}{abs(delta) // 60} min" if delta != 0 else "= target"
-        color = "var(--safe)" if delta < 0 else "var(--danger)"
-        rows.append(f"<tr><td style='color:var(--text-muted);font-size:10px'>VO2max<br>{preds['vdot']['vo2max']}</td>"
+    if vdot_pred:
+        t = vdot_pred["predicted_seconds"]
+        delta = t - target_secs
+        delta_str = f"{'−' if delta < 0 else '+'}{abs(delta) // 60} min" if abs(delta) > 30 else "= target"
+        color = "var(--safe)" if delta < 0 else "var(--caution)" if delta < 300 else "var(--danger)"
+        rows.append(f"<tr><td style='color:var(--text-muted);font-size:10px'>VO2max<br>{vdot_pred['vo2max']}</td>"
                     f"<td style='font-family:var(--mono);font-size:16px;font-weight:600'>{_fmt_time(t)}</td>"
                     f"<td style='font-size:10px;color:var(--text-dim)'>{_fmt_pace(t)}</td>"
                     f"<td style='font-size:10px;color:{color};font-weight:600'>{delta_str}</td></tr>")
@@ -774,45 +1065,117 @@ def _coaching(conn):
     return {"generated_at": data.get("generated_at", ""), "stale": stale, "insights": insights}
 
 
+# ── Milestones ──
+
+def _milestones(conn):
+    try:
+        from fit.milestones import detect_milestones
+        return detect_milestones(conn)
+    except Exception:
+        return []
+
+
 # ── Goal Progress ──
 
 def _goal_progress(conn):
+    """Build goal progress cards from the goals table — no hardcoded targets."""
     results = []
 
-    # Metric goals with clear current/target + hover tooltips
-    vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
-    if vo2:
-        results.append({"icon": "📈", "label": "VO2max", "current": f"{vo2['vo2max']:.0f}", "target": "51", "unit": "",
-                        "pct": min(vo2["vo2max"] / 51 * 100, 100), "color": SAFE if vo2["vo2max"] >= 50 else CAUTION,
-                        "tooltip": f"Maximum oxygen uptake. Current: {vo2['vo2max']:.0f} ml/kg/min. Need ≥50 for sub-4:00 marathon. Improves ~1/month with consistent training."})
+    goals = conn.execute("SELECT * FROM goals WHERE active = 1 ORDER BY id").fetchall()
 
-    weight = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
-    if weight:
-        w = weight["weight_kg"]
-        pct = max(0, (78.3 - w) / (78.3 - 75) * 100)
-        results.append({"icon": "⚖️", "label": "Weight", "current": f"{w:.1f}", "target": "75", "unit": "kg",
-                        "pct": min(pct, 100), "color": SAFE if w <= 76 else CAUTION if w <= 78 else DANGER,
-                        "tooltip": f"Current: {w:.1f}kg. Target: 75kg through training volume. Each kg lost saves ~2-3 sec/km over 42km = 7-10 min total."})
+    for g in goals:
+        name = g["name"]
+        goal_type = g["type"]
+        target_value = g["target_value"]
+        target_unit = g["target_unit"] or ""
 
-    streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
-    if streak:
-        s = streak[0] or 0
-        results.append({"icon": "🔥", "label": "Streak", "current": str(s), "target": "8", "unit": "wk",
-                        "pct": min(s / 8 * 100, 100), "color": SAFE if s >= 6 else CAUTION if s >= 3 else DANGER,
-                        "tooltip": f"Consecutive weeks with 3+ runs. Current: {s}. Target: 8 weeks of consistency before increasing intensity. The #1 predictor of marathon readiness."})
+        current = None
+        pct = None
+        icon = "🎯"
+        color = CAUTION
+        tooltip = ""
 
-    # Next race countdown
-    next_race = conn.execute("""
-        SELECT name, date, distance, target_time FROM race_calendar
-        WHERE status = 'registered' ORDER BY date LIMIT 1
-    """).fetchone()
-    if next_race:
-        from datetime import date as d
-        days_left = (d.fromisoformat(next_race["date"]) - d.today()).days
-        target_str = f" Target: {next_race['target_time']}." if next_race["target_time"] else ""
-        results.append({"icon": "🏁", "label": next_race["name"][:15], "current": str(days_left), "target": "", "unit": "days",
-                        "pct": None, "color": ACCENT,
-                        "tooltip": f"{next_race['name']} ({next_race['distance']}) on {next_race['date']}.{target_str} {days_left} days to go."})
+        if goal_type == "metric" and target_value:
+            name_lower = name.lower()
+            if "vo2" in name_lower:
+                icon = "📈"
+                row = conn.execute(
+                    "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1"
+                ).fetchone()
+                if row:
+                    current = row["vo2max"]
+                    pct = min(current / target_value * 100, 100)
+                    color = SAFE if current >= target_value * 0.98 else CAUTION
+                    tooltip = (f"Maximum oxygen uptake. Current: {current:.0f} {target_unit}. "
+                               f"Target: {target_value:.0f}. Improves ~1/month with consistent training.")
+                    results.append({
+                        "icon": icon, "label": "VO2max",
+                        "current": f"{current:.0f}", "target": f"{target_value:.0f}",
+                        "unit": "", "pct": pct, "color": color, "tooltip": tooltip,
+                    })
+            elif "weight" in name_lower:
+                icon = "⚖️"
+                row = conn.execute(
+                    "SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1"
+                ).fetchone()
+                if row:
+                    current = row["weight_kg"]
+                    # Progress: how close to target. Simple: if at/below target = 100%,
+                    # otherwise show how far above target as a ratio (closer to target = higher %).
+                    # E.g. 78.3/75 → need to lose 3.3kg. If max reasonable excess is 10kg, pct = (10-3.3)/10 = 67%.
+                    max_excess = 10.0  # kg above target considered "start"
+                    excess = max(0, current - target_value)
+                    pct = max(0, min((max_excess - excess) / max_excess * 100, 100))
+                    color = SAFE if current <= target_value * 1.01 else CAUTION if current <= target_value * 1.04 else DANGER
+                    tooltip = (f"Current: {current:.1f}kg. Target: {target_value:.0f}kg. "
+                               f"Each kg lost saves ~2-3 sec/km over 42km.")
+                    results.append({
+                        "icon": icon, "label": "Weight",
+                        "current": f"{current:.1f}", "target": f"{target_value:.0f}",
+                        "unit": "kg", "pct": pct, "color": color, "tooltip": tooltip,
+                    })
+            else:
+                # Generic metric goal — show as-is
+                results.append({
+                    "icon": icon, "label": name[:15],
+                    "current": "—", "target": f"{target_value:.0f}",
+                    "unit": target_unit, "pct": None, "color": CAUTION,
+                    "tooltip": f"Target: {target_value} {target_unit}",
+                })
+
+        elif goal_type == "habit" and target_value:
+            icon = "🔥"
+            row = conn.execute(
+                "SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1"
+            ).fetchone()
+            s = row[0] if row and row[0] else 0
+            pct = min(s / target_value * 100, 100)
+            color = SAFE if s >= target_value * 0.75 else CAUTION if s >= target_value * 0.375 else DANGER
+            tooltip = (f"Consecutive weeks with 3+ runs. Current: {s}. "
+                       f"Target: {int(target_value)} weeks. The #1 predictor of marathon readiness.")
+            results.append({
+                "icon": icon, "label": "Streak",
+                "current": str(s), "target": str(int(target_value)),
+                "unit": "wk", "pct": pct, "color": color, "tooltip": tooltip,
+            })
+
+        elif goal_type in ("race", "marathon"):
+            # Race-type goals are waypoints in the race calendar, not objectives.
+            # They're shown in the race calendar section, not as objective cards.
+            # Exception: the main marathon goal (type='marathon') shows target time.
+            if goal_type == "marathon":
+                icon = "🏁"
+                target_time = g["target_time"] or ""
+                tooltip = f"{name}. Target: {target_time}."
+                results.append({
+                    "icon": icon, "label": name[:15],
+                    "current": target_time or "—", "target": "",
+                    "unit": "", "pct": None, "color": ACCENT, "tooltip": tooltip,
+                })
+            # type='race' goals (stepping stones) are intentionally NOT shown as objectives
+
+    # Next race countdown is shown in the upcoming races strip, not in objectives.
+    # Objectives section only contains training objectives serving the target race.
 
     return results
 
@@ -822,7 +1185,15 @@ def _goal_progress(conn):
 def _recent_alerts(conn):
     try:
         from fit.alerts import get_recent_alerts
-        return get_recent_alerts(conn, days=7)
+        alerts = get_recent_alerts(conn, days=7)
+        # Deduplicate by type — show only the most recent per alert type
+        seen = set()
+        deduped = []
+        for a in alerts:
+            if a["type"] not in seen:
+                seen.add(a["type"])
+                deduped.append(a)
+        return deduped
     except Exception:
         return []
 
@@ -970,6 +1341,129 @@ def _sleep_mismatches(conn):
             mismatches.append({"date": r["date"], "hours": f"{hours:.1f}", "quality": quality,
                                "msg": f"Only {hours:.1f}h but felt Good — monitor for cumulative deficit"})
     return mismatches
+
+
+# ── Trend Badges (3.2) ──
+
+def _trend_badges(conn):
+    try:
+        return generate_trend_badges(conn)
+    except Exception:
+        return []
+
+
+# ── Why Connectors (3.3) ──
+
+def _why_connectors(conn):
+    try:
+        return generate_why_connectors(conn)
+    except Exception:
+        return []
+
+
+# ── Race Countdown (3.6) ──
+
+def _race_countdown(conn):
+    try:
+        return generate_race_countdown(conn)
+    except Exception:
+        return None
+
+
+# ── Walk Break (3.7) ──
+
+def _walk_break(conn):
+    try:
+        return detect_walk_break_need(conn)
+    except Exception:
+        return None
+
+
+# ── Z2 Remediation (3.10) ──
+
+def _z2_remediation(conn):
+    try:
+        from fit.config import load_config
+        config = load_config()
+    except Exception:
+        config = {"profile": {"zones_max_hr": {"z2": [115, 134]}}}
+    try:
+        return generate_z2_remediation(conn, config)
+    except Exception:
+        return None
+
+
+# ── Rolling Correlations (3.5) ──
+
+def _rolling_correlations(conn):
+    try:
+        from fit.correlations import compute_rolling_correlations
+        return compute_rolling_correlations(conn)
+    except Exception:
+        return []
+
+
+def _split_data(conn):
+    """Get split data for the most recent long run with parsed splits."""
+    try:
+        run = conn.execute("""
+            SELECT a.id, a.name, a.date, a.distance_km, a.duration_min
+            FROM activities a
+            WHERE a.type = 'running' AND a.splits_status = 'parsed'
+            ORDER BY a.date DESC LIMIT 1
+        """).fetchone()
+        if not run:
+            return None
+        splits = conn.execute("""
+            SELECT split_num, pace_sec_per_km, avg_hr, avg_cadence, time_above_z2_ceiling_sec
+            FROM activity_splits WHERE activity_id = ? ORDER BY split_num
+        """, (run["id"],)).fetchall()
+        if not splits:
+            return None
+
+        from fit.fit_file import compute_cardiac_drift
+        drift = compute_cardiac_drift([dict(s) for s in splits])
+
+        return {
+            "run_name": run["name"],
+            "run_date": run["date"],
+            "distance_km": run["distance_km"],
+            "splits": [dict(s) for s in splits],
+            "drift": drift,
+        }
+    except Exception:
+        return None
+
+
+def _upcoming_races(conn):
+    """Get upcoming races as waypoint pills for the Today tab."""
+    try:
+        from fit.goals import get_target_race, get_race_calendar_upcoming
+        target = get_target_race(conn)
+        target_id = target["id"] if target else None
+        upcoming = get_race_calendar_upcoming(conn)
+        result = []
+        for r in upcoming:
+            days = (date.fromisoformat(r["date"]) - date.today()).days
+            result.append({
+                "name": r["name"],
+                "distance": r["distance"],
+                "days": days,
+                "date": r["date"],
+                "is_target": r["id"] == target_id,
+            })
+        return result
+    except Exception:
+        return []
+
+
+def _plan_adherence(conn):
+    """Get plan adherence data for the current week."""
+    try:
+        from fit.plan import compute_plan_adherence
+        return compute_plan_adherence(conn)
+    except Exception:
+        return None
 
 
 # ── Helpers ──
