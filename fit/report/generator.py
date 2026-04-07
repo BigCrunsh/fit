@@ -846,36 +846,57 @@ def _all_charts(conn):
     try:
         from fit.plan import compute_plan_adherence
         adherence = compute_plan_adherence(conn)
-        if adherence and adherence.get("days"):
-            days = adherence["days"]
-            labels = [d["date"] for d in days]
-            planned = [-(d.get("planned_km") or 0) for d in days]  # negative = left side
-            actual = [d.get("actual_km") or 0 for d in days]
-            colors = []
-            for d in days:
-                if d.get("status") == "matched":
-                    colors.append(SAFE + "80")
-                elif d.get("status") == "missed":
-                    colors.append("#64748b80")  # gray
-                elif d.get("status") == "unplanned":
-                    colors.append(Z12 + "80")  # blue
-                else:
-                    colors.append(Z3 + "80")
-            charts.append({"id": "chart-plan-adherence", "config": json.dumps({
-                "type": "bar",
-                "data": {"labels": labels,
-                         "datasets": [
-                             {"label": "Planned", "data": planned, "backgroundColor": ACCENT + "40",
-                              "borderColor": ACCENT + "60", "borderWidth": 1},
-                             {"label": "Actual", "data": actual, "backgroundColor": colors,
-                              "borderColor": [c.replace("80", "cc") for c in colors], "borderWidth": 1},
-                         ]},
-                "options": {"responsive": True, "indexAxis": "y",
-                            "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
-                            "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"},
-                                             "title": {"display": True, "text": "km (left=planned, right=actual)"}},
-                                       "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
-            })})
+        if adherence and (adherence.get("planned") or adherence.get("actuals")):
+            # Build per-day data from planned + matches + missed + unplanned
+            day_data = {}
+            for p in adherence.get("planned", []):
+                d = p.get("date", "")
+                day_data.setdefault(d, {"planned_km": 0, "actual_km": 0, "status": "missed"})
+                day_data[d]["planned_km"] = p.get("target_distance_km") or 0
+                day_data[d]["label"] = p.get("workout_type", "")
+            for m in adherence.get("matches", []):
+                d = m.get("date", m.get("planned", {}).get("date", ""))
+                if d in day_data:
+                    actual = m.get("actual", {})
+                    day_data[d]["actual_km"] = actual.get("distance_km") or 0
+                    day_data[d]["status"] = "matched"
+            for u in adherence.get("unplanned", []):
+                d = u.get("date", "")
+                day_data.setdefault(d, {"planned_km": 0, "actual_km": 0, "status": "unplanned"})
+                day_data[d]["actual_km"] = u.get("distance_km") or 0
+                day_data[d]["status"] = "unplanned"
+
+            if day_data:
+                sorted_days = sorted(day_data.items())
+                labels = [d for d, _ in sorted_days]
+                planned_vals = [-(v["planned_km"]) for _, v in sorted_days]
+                actual_vals = [v["actual_km"] for _, v in sorted_days]
+                colors = []
+                for _, v in sorted_days:
+                    if v["status"] == "matched":
+                        colors.append(SAFE + "80")
+                    elif v["status"] == "missed":
+                        colors.append("#64748b80")
+                    elif v["status"] == "unplanned":
+                        colors.append(Z12 + "80")
+                    else:
+                        colors.append(Z3 + "80")
+
+                charts.append({"id": "chart-plan-adherence", "config": json.dumps({
+                    "type": "bar",
+                    "data": {"labels": labels,
+                             "datasets": [
+                                 {"label": "Planned", "data": planned_vals, "backgroundColor": ACCENT + "40",
+                                  "borderColor": ACCENT + "60", "borderWidth": 1},
+                                 {"label": "Actual", "data": actual_vals, "backgroundColor": colors,
+                                  "borderColor": [c.replace("80", "cc") for c in colors], "borderWidth": 1},
+                             ]},
+                    "options": {"responsive": True, "indexAxis": "y",
+                                "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
+                                "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"},
+                                                 "title": {"display": True, "text": "km (left=planned, right=actual)"}},
+                                           "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
+                })})
     except Exception:
         pass
 
