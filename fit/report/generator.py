@@ -1008,9 +1008,11 @@ def _race_prediction(conn):
             t1 = _parse_time_to_seconds(r["result_time"])
             if d1 > 0 and t1 > 0 and d1 != target_km:
                 t2 = t1 * (target_km / d1) ** 1.06
+                original_pace = t1 / d1
                 race_data.append({
                     "from_race": r["name"], "from_date": r["date"],
                     "distance_km": d1, "predicted_seconds": round(t2),
+                    "original_pace": f"{int(original_pace // 60)}:{int(original_pace % 60):02d}/km",
                 })
 
     # VDOT prediction
@@ -1045,12 +1047,16 @@ def _race_prediction(conn):
         color = "var(--safe)" if delta < 0 else "var(--caution)" if delta < 300 else "var(--danger)"
         return delta_str, color
 
-    def _row_html(label, sublabel, t):
+    def _row_html(label, sublabel, t, original_pace=None):
         delta_str, color = _delta_html(t)
+        pace_cell = f"<td style='font-size:10px;color:var(--text-dim)'>{_fmt_pace(t)}"
+        if original_pace:
+            pace_cell += f"<br><span style='font-size:8px;color:var(--text-faint)'>ran {original_pace}</span>"
+        pace_cell += "</td>"
         return (f"<tr><td style='color:var(--text-muted);font-size:10px'>{label}<br>"
                 f"<span style='font-size:9px'>{sublabel}</span></td>"
                 f"<td style='font-family:var(--mono);font-size:16px;font-weight:600'>{_fmt_time(t)}</td>"
-                f"<td style='font-size:10px;color:var(--text-dim)'>{_fmt_pace(t)}</td>"
+                f"{pace_cell}"
                 f"<td style='font-size:10px;color:{color};font-weight:600'>{delta_str}</td></tr>")
 
     def _section_header(title):
@@ -1087,14 +1093,14 @@ def _race_prediction(conn):
         for r in group_races:  # already sorted by date DESC
             race_date = (r.get("from_date") or "")[:10]
             name = (r.get("from_race") or "")[:25]
-            rows.append(_row_html(name, race_date, r["predicted_seconds"]))
+            rows.append(_row_html(name, race_date, r["predicted_seconds"], r.get("original_pace")))
 
     if rows:
         parts.append("<table style='width:100%;border-collapse:collapse;margin:8px 0'>"
                      "<thead><tr style='border-bottom:1px solid rgba(255,255,255,0.06)'>"
                      "<th style='text-align:left;font-size:9px;color:var(--text-dim);padding:4px'>Source</th>"
                      "<th style='text-align:left;font-size:9px;color:var(--text-dim);padding:4px'>Time</th>"
-                     "<th style='text-align:left;font-size:9px;color:var(--text-dim);padding:4px'>Pace</th>"
+                     "<th style='text-align:left;font-size:9px;color:var(--text-dim);padding:4px'>Pace (extrap / ran)</th>"
                      "<th style='text-align:left;font-size:9px;color:var(--text-dim);padding:4px'>vs Target</th>"
                      "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
 
