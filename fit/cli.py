@@ -573,7 +573,8 @@ def doctor():
         tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()]
         expected = {"activities", "daily_health", "checkins", "body_comp", "weather", "goals",
                     "training_phases", "goal_log", "calibration", "weekly_agg", "schema_version",
-                    "correlations", "alerts", "import_log"}
+                    "correlations", "alerts", "import_log", "race_calendar",
+                    "activity_splits", "planned_workouts"}
         missing_tables = expected - set(tables)
         if missing_tables:
             console.print(f"  [red]✗[/red] Missing tables: {missing_tables}")
