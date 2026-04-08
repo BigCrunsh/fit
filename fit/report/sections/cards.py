@@ -888,10 +888,57 @@ def _status_cards_with_actions(conn):
 
 
 def _fitness_profile_data(conn):
-    """Fitness profile for dashboard rendering."""
+    """Fitness profile for dashboard rendering, enriched with weight data."""
     try:
         from fit.fitness import get_fitness_profile
-        return get_fitness_profile(conn)
+        profile = get_fitness_profile(conn)
+        if profile:
+            profile["weight"] = _weight_card_data(conn)
+        return profile
+    except Exception:
+        return None
+
+
+def _weight_card_data(conn):
+    """Weight summary for the fitness profile card."""
+    try:
+        rows = conn.execute(
+            "SELECT date, weight_kg FROM body_comp WHERE weight_kg IS NOT NULL ORDER BY date DESC LIMIT 8"
+        ).fetchall()
+        if not rows:
+            return None
+        history = list(reversed([r["weight_kg"] for r in rows]))
+        dates = list(reversed([r["date"] for r in rows]))
+        current = history[-1]
+        # Change over the history window
+        change = round(current - history[0], 1) if len(history) >= 2 else None
+        # Compute actual timespan for label
+        change_span = None
+        if len(dates) >= 2:
+            days = (date.fromisoformat(dates[-1]) - date.fromisoformat(dates[0])).days
+            if days < 60:
+                change_span = f"{days}d"
+            elif days < 365:
+                change_span = f"{days // 30}mo"
+            else:
+                change_span = f"{days // 365}yr"
+        # Try to find weight target from goals
+        target = None
+        try:
+            goal = conn.execute(
+                "SELECT target_value FROM goals WHERE metric = 'weight' AND active = 1 LIMIT 1"
+            ).fetchone()
+            if goal:
+                target = goal["target_value"]
+        except Exception:
+            pass
+        return {
+            "current": round(current, 1),
+            "target": target,
+            "change": change,
+            "change_span": change_span,
+            "history": history,
+        }
     except Exception:
         return None
 
@@ -912,9 +959,34 @@ def _derived_objectives_data(conn):
 
         # Filter out internal _dim_ objectives
         visible = [o for o in derived if not o["name"].startswith("_dim_")]
+
+        # Add sparkline history from weekly_agg
+        history = _objective_history(conn)
+        for obj in visible:
+            key = obj["name"].lower().replace(" ", "_")
+            obj["history"] = history.get(key, [])
+
         return {"objectives": visible, "race_name": target["name"], "target_time": target.get("target_time")}
     except Exception:
         return None
+
+
+def _objective_history(conn):
+    """Get last 8 weeks of objective-relevant metrics from weekly_agg."""
+    rows = conn.execute("""
+        SELECT run_km, longest_run_km, z12_pct, consecutive_weeks_3plus
+        FROM weekly_agg ORDER BY week DESC LIMIT 8
+    """).fetchall()
+    if not rows:
+        return {}
+    # Reverse so oldest first (left-to-right in sparkline)
+    rows = list(reversed(rows))
+    return {
+        "weekly_volume": [r["run_km"] or 0 for r in rows],
+        "long_run": [r["longest_run_km"] or 0 for r in rows],
+        "z2_time": [r["z12_pct"] or 0 for r in rows],
+        "consistency": [r["consecutive_weeks_3plus"] or 0 for r in rows],
+    }
 
 
 def _next_workouts(conn):
@@ -955,6 +1027,166 @@ def _next_workouts(conn):
         return result
     except Exception:
         return []
+
+
+def _overview_objectives(conn):
+    """Objectives summary for Overview tab — always from weekly_agg, not derived_objectives."""
+    try:
+        latest = conn.execute(
+            "SELECT run_km, longest_run_km, z12_pct, consecutive_weeks_3plus "
+            "FROM weekly_agg ORDER BY week DESC LIMIT 1"
+        ).fetchone()
+        if not latest:
+            return None
+
+        history = _objective_history(conn)
+
+        # Try to get targets from derived objectives
+        targets = {"weekly_volume": None, "long_run": None, "z2_time": 80, "consistency": 8}
+        try:
+            from fit.goals import get_target_race
+            from fit.fitness import derive_objectives
+            target = get_target_race(conn)
+            if target:
+                derived = derive_objectives(conn, target["id"])
+                for obj in derived:
+                    key = obj["name"].lower().replace(" ", "_")
+                    if key in targets:
+                        targets[key] = obj["target_value"]
+        except Exception:
+            pass
+
+        def _pct(cur, tgt):
+            if cur and tgt and tgt > 0:
+                return int(cur / tgt * 100)
+            return None
+
+        def _color(pct):
+            if pct is None:
+                return "var(--text-dim)"
+            if pct >= 80:
+                return "var(--safe)"
+            if pct >= 60:
+                return "var(--caution)"
+            return "var(--danger)"
+
+        vol = latest["run_km"] or 0
+        long_r = latest["longest_run_km"] or 0
+        streak = latest["consecutive_weeks_3plus"] or 0
+
+        # Z2 compliance: use rolling average over recent training weeks
+        # (single-week snapshots are misleading — 1 easy run = 100%)
+        z2_rows = conn.execute("""
+            SELECT z12_pct FROM weekly_agg
+            WHERE z12_pct IS NOT NULL AND run_km > 0
+            ORDER BY week DESC LIMIT 4
+        """).fetchall()
+        z2 = round(sum(r["z12_pct"] for r in z2_rows) / len(z2_rows)) if z2_rows else 0
+
+        vol_pct = _pct(vol, targets["weekly_volume"])
+        long_pct = _pct(long_r, targets["long_run"])
+        z2_pct = _pct(z2, targets["z2_time"])
+        streak_pct = _pct(streak, targets["consistency"])
+
+        return [
+            {"label": "Weekly Volume", "value": f"{vol:.0f}", "sub": f"of {targets['weekly_volume']:.0f} km" if targets["weekly_volume"] else "km",
+             "pct": vol_pct, "color": _color(vol_pct), "history": history.get("weekly_volume", []), "spark_id": "spark-obj-vol"},
+            {"label": "Long Run", "value": f"{long_r:.0f}", "sub": f"of {targets['long_run']:.0f} km" if targets["long_run"] else "km",
+             "pct": long_pct, "color": _color(long_pct), "history": history.get("long_run", []), "spark_id": "spark-obj-long"},
+            {"label": "Z2 Time", "value": f"{z2:.0f}%", "sub": f"target {targets['z2_time']:.0f}% · 4wk avg",
+             "pct": z2_pct, "color": _color(z2_pct), "history": history.get("z2_time", []), "spark_id": "spark-obj-z2"},
+            {"label": "Consistency", "value": f"{streak:.0f}", "sub": f"of {targets['consistency']:.0f} wks",
+             "pct": streak_pct, "color": _color(streak_pct), "history": history.get("consistency", []), "spark_id": "spark-obj-streak"},
+        ]
+    except Exception:
+        return None
+
+
+def _readiness_summary(conn):
+    """Readiness summary cards for Overview tab — HRV, ACWR, Sleep, Monotony with sparklines."""
+    try:
+        # HRV
+        hrv_rows = conn.execute(
+            "SELECT hrv_last_night FROM daily_health WHERE hrv_last_night IS NOT NULL ORDER BY date DESC LIMIT 8"
+        ).fetchall()
+        hrv_history = list(reversed([r["hrv_last_night"] for r in hrv_rows]))
+        hrv_now = hrv_history[-1] if hrv_history else None
+        hrv_avg = sum(hrv_history[-7:]) / len(hrv_history[-7:]) if len(hrv_history) >= 2 else None
+
+        # ACWR
+        acwr_rows = conn.execute(
+            "SELECT acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 8"
+        ).fetchall()
+        acwr_history = list(reversed([r["acwr"] for r in acwr_rows]))
+        acwr_now = acwr_history[-1] if acwr_history else None
+
+        # Sleep
+        sleep_rows = conn.execute(
+            "SELECT sleep_duration_hours FROM daily_health WHERE sleep_duration_hours IS NOT NULL ORDER BY date DESC LIMIT 8"
+        ).fetchall()
+        sleep_history_hrs = list(reversed([r["sleep_duration_hours"] for r in sleep_rows]))
+        sleep_now = sleep_history_hrs[-1] if sleep_history_hrs else None
+        sleep_avg = sum(sleep_history_hrs[-7:]) / len(sleep_history_hrs[-7:]) if len(sleep_history_hrs) >= 2 else None
+
+        # Monotony
+        mono_rows = conn.execute(
+            "SELECT monotony FROM weekly_agg WHERE monotony IS NOT NULL ORDER BY week DESC LIMIT 8"
+        ).fetchall()
+        mono_history = list(reversed([r["monotony"] for r in mono_rows]))
+        mono_now = mono_history[-1] if mono_history else None
+
+        def _hrv_color(val, avg):
+            if val is None:
+                return "var(--text-dim)"
+            if avg and val >= avg:
+                return "var(--safe)"
+            if avg and val >= avg * 0.85:
+                return "var(--caution)"
+            return "var(--danger)"
+
+        def _acwr_color(val):
+            if val is None:
+                return "var(--text-dim)"
+            if 0.8 <= val <= 1.3:
+                return "var(--safe)"
+            if 0.6 <= val <= 1.5:
+                return "var(--caution)"
+            return "var(--danger)"
+
+        def _sleep_fmt(hrs):
+            if hrs is None:
+                return "—"
+            h = int(hrs)
+            m = int((hrs - h) * 60)
+            return f"{h}:{m:02d}"
+
+        def _mono_color(val):
+            if val is None:
+                return "var(--text-dim)"
+            if val < 1.5:
+                return "var(--safe)"
+            if val < 2.0:
+                return "var(--caution)"
+            return "var(--danger)"
+
+        return [
+            {"label": "HRV", "value": f"{hrv_now:.0f}" if hrv_now else "—", "unit": "ms",
+             "sub": f"7d avg: {hrv_avg:.0f}" if hrv_avg else "",
+             "status": "above" if hrv_now and hrv_avg and hrv_now >= hrv_avg else "below" if hrv_now and hrv_avg else "",
+             "color": _hrv_color(hrv_now, hrv_avg), "history": hrv_history, "spark_id": "spark-rd-hrv"},
+            {"label": "ACWR", "value": f"{acwr_now:.2f}" if acwr_now else "—", "unit": "",
+             "sub": "sweet spot (0.8–1.3)" if acwr_now and 0.8 <= acwr_now <= 1.3 else "caution" if acwr_now else "",
+             "color": _acwr_color(acwr_now), "history": acwr_history, "spark_id": "spark-rd-acwr"},
+            {"label": "Sleep", "value": _sleep_fmt(sleep_now), "unit": "hrs",
+             "sub": f"avg {_sleep_fmt(sleep_avg)}" if sleep_avg else "",
+             "color": "var(--safe)" if sleep_now and sleep_now >= 7 else "var(--caution)" if sleep_now and sleep_now >= 6 else "var(--danger)" if sleep_now else "var(--text-dim)",
+             "history": [round(h, 1) for h in sleep_history_hrs], "spark_id": "spark-rd-sleep"},
+            {"label": "Monotony", "value": f"{mono_now:.1f}" if mono_now else "—", "unit": "",
+             "sub": "safe (<2.0)" if mono_now and mono_now < 2.0 else "high risk" if mono_now else "",
+             "color": _mono_color(mono_now), "history": mono_history, "spark_id": "spark-rd-mono"},
+        ]
+    except Exception:
+        return None
 
 
 def _checkpoint_data(conn):
@@ -1089,15 +1321,7 @@ def _prediction_trend_data(conn):
             ORDER BY start_date
         """).fetchall()
         phases = []
-        phase_colors = {
-            "base": {"bg": "rgba(52,211,153,0.15)", "border": "rgba(52,211,153,0.25)", "text": SAFE},
-            "build": {"bg": "rgba(129,140,248,0.2)", "border": "rgba(129,140,248,0.35)", "text": "#a5b4fc"},
-            "peak": {"bg": "rgba(255,255,255,0.05)", "border": "rgba(255,255,255,0.08)", "text": "rgba(255,255,255,0.5)"},
-            "taper": {"bg": "rgba(255,255,255,0.03)", "border": "rgba(255,255,255,0.06)", "text": "rgba(255,255,255,0.4)"},
-        }
         for p in phases_raw:
-            name_lower = (p["name"] or "").lower()
-            colors = phase_colors.get(name_lower, phase_colors.get("peak"))
             label_text = p["name"] or ""
             if p["status"] == "active":
                 label_text += " ←"
@@ -1105,10 +1329,8 @@ def _prediction_trend_data(conn):
                 "name": p["name"],
                 "start": p["start_date"],
                 "end": p["end_date"],
-                "bg": colors["bg"],
-                "border": colors["border"],
-                "text_color": colors["text"],
                 "label": label_text,
+                "status": p["status"],
                 "active": p["status"] == "active",
             })
 

@@ -72,6 +72,7 @@ def _compute_aerobic(conn: sqlite3.Connection) -> dict:
         "unit": "ml/kg/min",
         "source": "Garmin VO2max",
         "data_points": len(values),
+        "history": [v for _, v in values[-8:]],
     }
 
 
@@ -99,6 +100,7 @@ def _compute_threshold(conn: sqlite3.Connection) -> dict:
         "unit": "m/min/bpm (Z2)",
         "source": "Z2 speed per BPM",
         "data_points": len(values),
+        "history": [v for _, v in values[-8:]],
     }
 
 
@@ -126,6 +128,7 @@ def _compute_economy(conn: sqlite3.Connection) -> dict:
         "unit": "m/min/bpm",
         "source": "Speed per BPM (all runs)",
         "data_points": len(values),
+        "history": [v for _, v in values[-8:]],
     }
 
 
@@ -179,6 +182,7 @@ def _compute_resilience(conn: sqlite3.Connection) -> dict:
         "unit": "km (drift onset)",
         "source": "Cardiac drift analysis",
         "data_points": len(drift_points),
+        "history": [v for _, v in drift_points[-8:]],
     }
 
 
@@ -396,6 +400,7 @@ def _empty_dimension(message: str) -> dict:
         "source": None,
         "data_points": 0,
         "message": message,
+        "history": [],
     }
 
 

@@ -167,10 +167,109 @@ def _fire(conn: sqlite3.Connection, today: str, alert_type: str, message: str, d
 
 
 def get_recent_alerts(conn: sqlite3.Connection, days: int = 7) -> list[dict]:
-    """Get recent unacknowledged alerts."""
+    """Get recent unacknowledged alerts, auto-dismissing stale ones.
+
+    Each alert's underlying condition is re-evaluated. If the condition
+    no longer holds, the alert is marked acknowledged (auto-dismissed)
+    and excluded from the result.
+    """
     rows = conn.execute("""
-        SELECT date, type, message, data_context FROM alerts
+        SELECT rowid as id, date, type, message, data_context FROM alerts
         WHERE date >= date('now', ?) AND acknowledged = 0
         ORDER BY date DESC
     """, (f"-{days} days",)).fetchall()
-    return [{"date": r["date"], "type": r["type"], "message": r["message"]} for r in rows]
+
+    result = []
+    for r in rows:
+        if _condition_still_holds(conn, r["type"]):
+            result.append({"date": r["date"], "type": r["type"], "message": r["message"]})
+        else:
+            conn.execute("UPDATE alerts SET acknowledged = 1 WHERE rowid = ?", (r["id"],))
+    conn.commit()
+    return result
+
+
+def _condition_still_holds(conn: sqlite3.Connection, alert_type: str) -> bool:
+    """Re-evaluate whether an alert's underlying condition is still true."""
+    try:
+        if alert_type == "all_runs_too_hard":
+            row = conn.execute("""
+                SELECT AVG(z12_pct) as avg_z12 FROM (
+                    SELECT z12_pct FROM weekly_agg ORDER BY week DESC LIMIT 2
+                )
+            """).fetchone()
+            return bool(row and row["avg_z12"] is not None and row["avg_z12"] < 50)
+
+        if alert_type == "volume_ramp":
+            weeks = conn.execute(
+                "SELECT run_km, consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 2"
+            ).fetchall()
+            if len(weeks) < 2:
+                return False
+            this_km = weeks[0]["run_km"] or 0
+            last_km = weeks[1]["run_km"] or 0
+            streak = weeks[0]["consecutive_weeks_3plus"] or 0
+            return last_km > 0 and ((this_km - last_km) / last_km) > 0.1 and streak < 8
+
+        if alert_type == "readiness_gate":
+            row = conn.execute(
+                "SELECT training_readiness FROM daily_health ORDER BY date DESC LIMIT 1"
+            ).fetchone()
+            # Use base threshold of 40 (conservative — don't dismiss too eagerly)
+            return bool(row and row["training_readiness"] and row["training_readiness"] < 40)
+
+        if alert_type == "alcohol_hrv":
+            today_hrv = conn.execute(
+                "SELECT hrv_last_night FROM daily_health ORDER BY date DESC LIMIT 1"
+            ).fetchone()
+            avg_hrv = conn.execute(
+                "SELECT AVG(hrv_last_night) as avg FROM daily_health WHERE date >= date('now', '-7 days')"
+            ).fetchone()
+            if not today_hrv or not avg_hrv:
+                return False
+            hrv_now = today_hrv["hrv_last_night"] or 0
+            hrv_avg = avg_hrv["avg"] or 0
+            return hrv_avg > 0 and hrv_now < hrv_avg * 0.85
+
+        if alert_type == "spo2_low":
+            rows = conn.execute("""
+                SELECT avg_spo2 FROM daily_health
+                WHERE avg_spo2 IS NOT NULL ORDER BY date DESC LIMIT 2
+            """).fetchall()
+            if len(rows) < 2:
+                return False
+            return all(r["avg_spo2"] < 95 for r in rows)
+
+        if alert_type == "high_monotony":
+            row = conn.execute(
+                "SELECT monotony FROM weekly_agg WHERE monotony IS NOT NULL ORDER BY week DESC LIMIT 1"
+            ).fetchone()
+            return bool(row and row["monotony"] and row["monotony"] > 2.0)
+
+        if alert_type == "undertraining":
+            row = conn.execute(
+                "SELECT acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1"
+            ).fetchone()
+            return bool(row and row["acwr"] is not None and row["acwr"] < 0.6)
+
+        if alert_type == "deload_overdue":
+            weeks = conn.execute(
+                "SELECT week, run_km FROM weekly_agg ORDER BY week DESC LIMIT 6"
+            ).fetchall()
+            if len(weeks) < 3:
+                return False
+            consecutive_build = 0
+            for i in range(len(weeks) - 1):
+                current_km = weeks[i]["run_km"] or 0
+                prev_km = weeks[i + 1]["run_km"] or 0
+                if prev_km > 0 and current_km < prev_km * 0.7:
+                    break
+                consecutive_build += 1
+            return consecutive_build >= 4
+
+    except Exception:
+        # On error, keep the alert (don't auto-dismiss)
+        return True
+
+    # Unknown alert type — keep it
+    return True

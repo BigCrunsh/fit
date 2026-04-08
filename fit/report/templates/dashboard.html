@@ -119,68 +119,87 @@
 
   <!-- Row A: Fitness Profile (left) + Objectives (right) -->
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
-    <!-- Fitness Profile -->
-    <div class="status-group" style="background:rgba(129,140,248,0.03);border:1px solid rgba(129,140,248,0.08)">
+    <!-- LEFT: Fitness Profile -->
+    <div style="background:rgba(129,140,248,0.03);border:1px solid rgba(129,140,248,0.08);border-radius:14px;padding:14px 14px 16px">
       <div class="status-group-title">Fitness Profile</div>
       {% if fitness_profile and fitness_profile.effective_vdot %}
-      {% set dims = [
-        ("VDOT", fitness_profile.effective_vdot, "need " ~ (fitness_profile.target_vdot or '?'), "--accent"),
-        ("VO2max", fitness_profile.aerobic.current_value, fitness_profile.aerobic.trend or '', "--z2"),
-        ("Threshold", fitness_profile.threshold.current_value, fitness_profile.threshold.trend or '', "--z3"),
-        ("Economy", fitness_profile.economy.current_value, fitness_profile.economy.trend or '', "--accent"),
-        ("Resilience", fitness_profile.resilience.current_value, fitness_profile.resilience.trend or '', "--purple")
-      ] %}
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-        {% for label, value, sub, color in dims %}
-        <div class="card" style="padding:10px 12px;min-width:0">
-          <div class="card-label">{{ label }}</div>
-          <div style="font-size:16px;font-weight:700;font-family:var(--mono);color:var({{ color }})">{{ value if value is not none else '—' }}</div>
-          {% if sub %}<div class="card-sub" style="font-size:9px">
-            {% set arrow = '↑' if sub == 'improving' else '↓' if sub == 'declining' else '' %}
-            {% if arrow %}<span style="color:{% if sub == 'improving' %}var(--safe){% else %}var(--danger){% endif %}">{{ arrow }}</span>{% else %}{{ sub }}{% endif %}
-          </div>{% endif %}
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div style="display:flex;gap:6px">
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">VDOT</div>
+            <div class="card-value" style="font-size:18px;color:var(--accent)">{{ fitness_profile.effective_vdot }}</div>
+            <div class="card-sub">{% if fitness_profile.target_vdot %}need {{ fitness_profile.target_vdot }} · gap <span style="color:{% if fitness_profile.effective_vdot >= fitness_profile.target_vdot %}var(--safe){% else %}var(--caution){% endif %}">{{ '%.1f' % (fitness_profile.effective_vdot - fitness_profile.target_vdot) }}</span>{% else %}from race · <span style="color:var(--text-muted)">set target for gap</span>{% endif %}</div>
+            <canvas id="spark-fp-vdot"></canvas>
+          </div>
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Weight</div>
+            <div class="card-value" style="font-size:18px">{% if fitness_profile.weight %}{{ fitness_profile.weight.current }}{% else %}—{% endif %}</div>
+            <div class="card-sub">{% if fitness_profile.weight %}kg{% if fitness_profile.weight.target %} · target {{ fitness_profile.weight.target }}{% endif %}{% if fitness_profile.weight.change %} · <span style="color:{% if fitness_profile.weight.change <= 0 %}var(--safe){% else %}var(--caution){% endif %}">{{ '%+.1f' % fitness_profile.weight.change }} /{{ fitness_profile.weight.change_span or '?' }}</span>{% endif %}{% else %}no data{% endif %}</div>
+            {% if fitness_profile.weight and fitness_profile.weight.history %}<canvas id="spark-fp-weight"></canvas>{% endif %}
+          </div>
         </div>
-        {% endfor %}
+        <div style="display:flex;gap:6px">
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Aerobic</div>
+            <div class="card-value" style="font-size:18px;color:var(--z2)">{{ fitness_profile.aerobic.current_value if fitness_profile.aerobic.current_value is not none else '—' }}</div>
+            <div class="card-sub">VO2max{% if fitness_profile.aerobic.rate_per_month %} · <span style="color:{% if fitness_profile.aerobic.trend == 'improving' %}var(--safe){% elif fitness_profile.aerobic.trend == 'declining' %}var(--danger){% else %}var(--text-muted){% endif %}">{{ '%+.1f' % fitness_profile.aerobic.rate_per_month }}/mo</span>{% endif %}</div>
+            <canvas id="spark-fp-aerobic"></canvas>
+          </div>
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Threshold</div>
+            <div class="card-value" style="font-size:18px;color:var(--z3)">{{ fitness_profile.threshold.current_value if fitness_profile.threshold.current_value is not none else '—' }}</div>
+            <div class="card-sub">Z2 pace{% if fitness_profile.threshold.rate_per_month %} · <span style="color:{% if fitness_profile.threshold.trend == 'improving' %}var(--safe){% elif fitness_profile.threshold.trend == 'declining' %}var(--danger){% else %}var(--text-muted){% endif %}">{{ '%+.4f' % fitness_profile.threshold.rate_per_month }}/mo</span>{% endif %}</div>
+            <canvas id="spark-fp-threshold"></canvas>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Economy</div>
+            <div class="card-value" style="font-size:18px;color:var(--accent)">{{ fitness_profile.economy.current_value if fitness_profile.economy.current_value is not none else '—' }}</div>
+            <div class="card-sub">spd/bpm{% if fitness_profile.economy.rate_per_month %} · <span style="color:{% if fitness_profile.economy.trend == 'improving' %}var(--safe){% elif fitness_profile.economy.trend == 'declining' %}var(--danger){% else %}var(--text-muted){% endif %}">{{ '%+.3f' % fitness_profile.economy.rate_per_month }}/mo</span>{% endif %}</div>
+            <canvas id="spark-fp-economy"></canvas>
+          </div>
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Resilience</div>
+            <div class="card-value" style="font-size:18px;color:var(--purple)">{% if fitness_profile.resilience.current_value is not none %}{{ fitness_profile.resilience.current_value }} km{% else %}—{% endif %}</div>
+            <div class="card-sub">drift onset{% if fitness_profile.resilience.trend == 'improving' %} · <span style="color:var(--safe)">improving</span>{% elif fitness_profile.resilience.trend == 'declining' %} · <span style="color:var(--danger)">declining</span>{% elif fitness_profile.resilience.trend == 'flat' %} · stable{% endif %}</div>
+            <canvas id="spark-fp-resilience"></canvas>
+          </div>
+        </div>
       </div>
       {% else %}
       <div style="font-size:11px;color:var(--text-dim)">Need more data for fitness profile.</div>
       {% endif %}
     </div>
 
-    <!-- Objectives -->
-    <div class="status-group" style="background:rgba(96,165,250,0.03);border:1px solid rgba(96,165,250,0.08)">
+    <!-- RIGHT: Objectives -->
+    <div style="background:rgba(96,165,250,0.03);border:1px solid rgba(96,165,250,0.08);border-radius:14px;padding:14px 14px 16px">
       <div class="status-group-title">Objectives</div>
-      {% if derived_objectives and derived_objectives.objectives %}
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-        {% for obj in derived_objectives.objectives %}
-        {% set ach = obj.achievability or 'unknown' %}
-        {% set ach_color = 'var(--safe)' if ach == 'on_track' else 'var(--caution)' if ach == 'tight' else 'var(--danger)' if ach == 'at_risk' else 'var(--text-dim)' %}
-        <div class="card" style="padding:10px 12px;min-width:0">
-          <div class="card-label">{{ obj.name }}</div>
-          <div style="font-size:16px;font-weight:700;font-family:var(--mono);color:{{ ach_color }}">{{ obj.current_value if obj.current_value is not none else '—' }}</div>
-          <div class="card-sub" style="font-size:9px">of {{ obj.target_value }} · <span style="color:{{ ach_color }}">{{ (obj.current_value / obj.target_value * 100) | int if obj.current_value and obj.target_value else '?' }}%</span></div>
-        </div>
-        {% endfor %}
-      </div>
-      {% elif goal_progress %}
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-        {% for g in goal_progress %}
-        <div class="card" style="padding:10px 12px;min-width:0">
-          <div class="card-label">{{ g.label }}</div>
-          <div style="font-size:16px;font-weight:700;font-family:var(--mono);color:{{ g.color }}">{{ g.current }}</div>
+      {% if overview_objectives %}
+      <div style="display:flex;flex-direction:column;gap:6px">
+        {% for i in range(0, overview_objectives|length, 2) %}
+        <div style="display:flex;gap:6px">
+          {% for obj in overview_objectives[i:i+2] %}
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">{{ obj.label }}</div>
+            <div class="card-value" style="font-size:18px;color:{{ obj.color }}">{{ obj.value }}</div>
+            <div class="card-sub">{{ obj.sub }}{% if obj.pct is not none %} · <span style="color:{{ obj.color }}">{{ obj.pct }}%</span>{% endif %}</div>
+            {% if obj.history %}<canvas id="{{ obj.spark_id }}"></canvas>{% endif %}
+          </div>
+          {% endfor %}
         </div>
         {% endfor %}
       </div>
       {% else %}
-      <div style="font-size:11px;color:var(--text-dim)">Set a target race to derive objectives.</div>
+      <div style="font-size:11px;color:var(--text-dim)">Run <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit sync</code> to populate training data.</div>
       {% endif %}
     </div>
   </div>
 
   <!-- Row B: Next Workouts (left) + Readiness (right) -->
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
-    <!-- Next Workouts -->
-    <div class="status-group" style="background:rgba(52,211,153,0.03);border:1px solid rgba(52,211,153,0.08)">
+    <!-- LEFT: Next Workouts -->
+    <div style="background:rgba(52,211,153,0.03);border:1px solid rgba(52,211,153,0.08);border-radius:14px;padding:14px 14px 16px">
       <div class="status-group-title">Next Workouts</div>
       {% if next_workouts %}
       <div style="display:flex;flex-direction:column;gap:6px">
@@ -207,19 +226,27 @@
       {% endif %}
     </div>
 
-    <!-- Readiness -->
-    <div class="status-group" style="background:rgba(251,191,36,0.03);border:1px solid rgba(251,191,36,0.08)">
+    <!-- RIGHT: Readiness -->
+    <div style="background:rgba(251,191,36,0.03);border:1px solid rgba(251,191,36,0.08);border-radius:14px;padding:14px 14px 16px">
       <div class="status-group-title">Readiness</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-        {% for card in status_cards_actions[:4] %}
-        <div class="card" style="padding:10px 12px;min-width:0">
-          <div class="card-label">{{ card.label }}</div>
-          <div style="font-size:16px;font-weight:700;font-family:var(--mono);color:{{ card.color }}">{{ card.value }}<span style="font-size:10px;font-weight:400;color:var(--text-dim);margin-left:1px">{{ card.unit }}</span></div>
-          {% if card.action %}<div class="card-sub" style="font-size:9px;color:{{ card.color }}">{{ card.action }}</div>
-          {% elif card.sub %}<div class="card-sub" style="font-size:9px">{{ card.sub }}</div>{% endif %}
+      {% if readiness_summary %}
+      <div style="display:flex;flex-direction:column;gap:6px">
+        {% for i in range(0, readiness_summary|length, 2) %}
+        <div style="display:flex;gap:6px">
+          {% for rd in readiness_summary[i:i+2] %}
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">{{ rd.label }}</div>
+            <div class="card-value" style="font-size:18px;color:{{ rd.color }}">{{ rd.value }}<span style="font-size:10px;font-weight:400;color:var(--text-dim)">{{ ' ' ~ rd.unit if rd.unit else '' }}</span></div>
+            <div class="card-sub">{{ rd.sub }}{% if rd.status %} · <span style="color:{{ rd.color }}">{{ rd.status }}</span>{% endif %}</div>
+            {% if rd.history %}<canvas id="{{ rd.spark_id }}"></canvas>{% endif %}
+          </div>
+          {% endfor %}
         </div>
         {% endfor %}
       </div>
+      {% else %}
+      <div style="font-size:11px;color:var(--text-dim)">Need health data for readiness summary.</div>
+      {% endif %}
     </div>
   </div>
 
@@ -585,6 +612,18 @@ function showTab(id, btn) {
 Chart.defaults.color = '#475569';
 Chart.defaults.font.family = "'JetBrains Mono', monospace";
 Chart.defaults.font.size = 12;
+
+// Sparkline helper for summary cards
+function sparkline(canvasId, data, color, fillColor) {
+  const el = document.getElementById(canvasId);
+  if (!el || !data || data.length < 2) return;
+  new Chart(el, {
+    type: 'line',
+    data: { labels: data.map((_, i) => i), datasets: [{ data, borderColor: color, borderWidth: 1.5, pointRadius: 0, tension: 0.4, fill: fillColor ? { target: 'origin', above: fillColor } : false }] },
+    options: { scales: { x: { display: false }, y: { display: false } }, plugins: { legend: { display: false }, tooltip: { enabled: false } }, responsive: true, maintainAspectRatio: false }
+  });
+}
+
 // Annotation collision handling: stack vertically with 2px offset, max 3 per point
 function resolveAnnotationCollisions(annotations) {
   if (!annotations) return annotations;
@@ -653,6 +692,32 @@ const chartInstances = {};
 }
 {% endfor %}
 
+// ─── OVERVIEW SPARKLINES ───
+{% if fitness_profile and fitness_profile.effective_vdot %}
+sparkline('spark-fp-vdot', {{ (fitness_profile.aerobic.history or []) | tojson }}, '#818cf8', 'rgba(129,140,248,0.08)');
+sparkline('spark-fp-aerobic', {{ (fitness_profile.aerobic.history or []) | tojson }}, '#60a5fa', 'rgba(96,165,250,0.08)');
+sparkline('spark-fp-threshold', {{ (fitness_profile.threshold.history or []) | tojson }}, '#e9b308', 'rgba(233,179,8,0.08)');
+sparkline('spark-fp-economy', {{ (fitness_profile.economy.history or []) | tojson }}, '#818cf8', 'rgba(129,140,248,0.08)');
+sparkline('spark-fp-resilience', {{ (fitness_profile.resilience.history or []) | tojson }}, '#c084fc', 'rgba(192,132,252,0.08)');
+{% if fitness_profile.weight and fitness_profile.weight.history %}
+sparkline('spark-fp-weight', {{ fitness_profile.weight.history | tojson }}, '#94a3b8', 'rgba(148,163,184,0.06)');
+{% endif %}
+{% endif %}
+{% if overview_objectives %}
+{% for obj in overview_objectives %}
+{% if obj.history %}
+sparkline('{{ obj.spark_id }}', {{ obj.history | tojson }}, '{{ obj.color | replace("var(--safe)", "#34d399") | replace("var(--caution)", "#fbbf24") | replace("var(--danger)", "#f87171") | replace("var(--text-dim)", "#94a3b8") }}', 'rgba(148,163,184,0.06)');
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if readiness_summary %}
+{% for rd in readiness_summary %}
+{% if rd.history %}
+sparkline('{{ rd.spark_id }}', {{ rd.history | tojson }}, '{{ rd.color | replace("var(--safe)", "#34d399") | replace("var(--caution)", "#fbbf24") | replace("var(--danger)", "#f87171") | replace("var(--text-dim)", "#94a3b8") }}', 'rgba(148,163,184,0.06)');
+{% endif %}
+{% endfor %}
+{% endif %}
+
 // ─── PREDICTION TREND CHART (Overview tab) ───
 {% if prediction_trend %}
 (function() {
@@ -661,19 +726,8 @@ const chartInstances = {};
   const el = document.getElementById('chart-pred-trend');
   if (!el) return;
 
-  // Build phase box annotations in the reserved y-axis strip
+  // Build annotations (phases drawn by custom plugin below x-axis)
   const annots = {};
-  // Separator between data area and phase band
-  annots.phaseSep = { type: 'line', yMin: 208, yMax: 208, borderColor: 'rgba(255,255,255,0.08)', borderWidth: 1 };
-
-  (d.phases || []).forEach((p, i) => {
-    if (!p.start || !p.end) return;
-    annots['phase' + i] = {
-      type: 'box', xMin: p.start, xMax: p.end, yMin: 198, yMax: 208,
-      backgroundColor: p.bg, borderColor: p.border, borderWidth: p.active ? 1.5 : 1, borderRadius: 3,
-      label: { display: true, content: p.label, color: p.text_color, font: { size: 9, weight: 700 } }
-    };
-  });
 
   // Target line
   if (d.target_min) {
@@ -685,25 +739,27 @@ const chartInstances = {};
     };
   }
 
-  // Today marker
+  // Today marker — label at top of line
   if (d.today) {
     annots.today = {
-      type: 'line', xMin: d.today, xMax: d.today, yMin: 208,
+      type: 'line', xMin: d.today, xMax: d.today,
       borderColor: 'rgba(251,191,36,0.5)', borderWidth: 1.5,
       label: { display: true, content: 'today', position: 'end',
                color: '#fbbf24', font: { size: 9, weight: 600 },
-               backgroundColor: 'rgba(10,10,18,0.85)', padding: 3 }
+               backgroundColor: 'rgba(10,10,18,0.85)', padding: { top: 2, bottom: 2, left: 5, right: 5 },
+               rotation: 0, yAdjust: -4, textAlign: 'center' }
     };
   }
 
-  // Race day marker
+  // Race day marker — label centered on line
   if (d.race_date) {
     annots.raceDay = {
-      type: 'line', xMin: d.race_date, xMax: d.race_date, yMin: 208,
+      type: 'line', xMin: d.race_date, xMax: d.race_date,
       borderColor: 'rgba(248,113,113,0.6)', borderWidth: 1.5,
       label: { display: true, content: 'race', position: 'end',
                color: '#f87171', font: { size: 9, weight: 600 },
-               backgroundColor: 'rgba(10,10,18,0.85)', padding: 3 }
+               backgroundColor: 'rgba(10,10,18,0.85)', padding: { top: 2, bottom: 2, left: 5, right: 5 },
+               rotation: 0, yAdjust: -4 }
     };
   }
 
@@ -729,18 +785,70 @@ const chartInstances = {};
     }
   };
 
+  // Phase bar plugin — draws colored phase segments below the x-axis labels
+  const statusColors = {
+    completed: { bg: 'rgba(52,211,153,0.18)', border: 'rgba(52,211,153,0.35)', text: '#34d399' },
+    active:    { bg: 'rgba(129,140,248,0.22)', border: 'rgba(129,140,248,0.45)', text: '#a5b4fc' },
+    upcoming:  { bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.08)', text: 'rgba(255,255,255,0.4)' }
+  };
+  const phaseBandPlugin = {
+    id: 'phaseBand',
+    afterDraw(chart) {
+      const phases = d.phases || [];
+      if (!phases.length) return;
+      const xScale = chart.scales.x;
+      const ctx = chart.ctx;
+      const bandH = 22;
+      const bandY = chart.height - chart.options.layout.padding.bottom + 4;
+
+      phases.forEach(p => {
+        if (!p.start || !p.end) return;
+        const x1 = xScale.getPixelForValue(new Date(p.start).getTime());
+        const x2 = xScale.getPixelForValue(new Date(p.end).getTime());
+        if (x2 < xScale.left || x1 > xScale.right) return;
+        const left = Math.max(x1, xScale.left);
+        const right = Math.min(x2, xScale.right);
+        const w = right - left;
+        if (w < 2) return;
+
+        const s = p.status === 'completed' ? 'completed' : p.active ? 'active' : 'upcoming';
+        const c = statusColors[s];
+
+        ctx.save();
+        ctx.fillStyle = c.bg;
+        ctx.strokeStyle = c.border;
+        ctx.lineWidth = p.active ? 2 : 1;
+        ctx.beginPath();
+        ctx.roundRect(left, bandY, w, bandH, 4);
+        ctx.fill();
+        ctx.stroke();
+
+        // Label
+        ctx.fillStyle = c.text;
+        ctx.font = (p.active ? 'bold 10px ' : '600 10px ') + getComputedStyle(document.body).getPropertyValue('--sans');
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const label = p.label || '';
+        if (ctx.measureText(label).width < w - 8) {
+          ctx.fillText(label, left + w / 2, bandY + bandH / 2);
+        }
+        ctx.restore();
+      });
+    }
+  };
+
   // Compute y-axis range
   // Include checkpoints + target in y-axis range calculation
   const allVals = d.upper.concat(d.lower).concat(d.pred).filter(v => v !== null);
   var cpVals = (d.checkpoints || []).map(function(cp) { return cp.y; });
   var allWithCp = allVals.concat(cpVals);
   if (d.target_min) allWithCp.push(d.target_min);
-  let yMax = Math.max(...allWithCp) + 10;
-  let yMin = 198; // reserve space for phase band
+  let yMax = Math.max(...allWithCp) + 20;
+  let yMin = Math.min(...allWithCp) - 10;
 
   new Chart(el, {
     type: 'line',
-    plugins: [checkpointNumberPlugin],
+    plugins: [checkpointNumberPlugin, phaseBandPlugin],
     data: {
       labels: d.labels,
       datasets: [
@@ -763,21 +871,22 @@ const chartInstances = {};
     },
     options: {
       responsive: true, maintainAspectRatio: false,
+      layout: { padding: { bottom: 30, right: 20 } },
       scales: {
         y: {
           min: yMin, max: yMax,
-          grid: { color: function(ctx) { return ctx.tick.value < 210 ? 'transparent' : 'rgba(255,255,255,0.03)'; } },
+          grid: { color: 'rgba(255,255,255,0.03)' },
           ticks: {
-            callback: function(v) { return v < 210 ? '' : Math.floor(v/60) + ':' + ('0'+Math.floor(v%60)).slice(-2); },
+            callback: function(v) { return Math.floor(v/60) + ':' + ('0'+Math.floor(v%60)).slice(-2); },
             stepSize: 10
-          },
-          afterBuildTicks: function(axis) { axis.ticks = axis.ticks.filter(function(t) { return t.value >= 210 || t.value === 200; }); }
+          }
         },
         x: {
           type: 'time',
           time: { unit: 'month', displayFormats: { month: "MMM ''yy" }, tooltipFormat: 'yyyy-MM-dd' },
           grid: { display: false },
-          min: d.labels[0], max: d.labels[d.labels.length - 1]
+          min: d.labels[0],
+            max: (function() { var last = new Date(d.labels[d.labels.length - 1]); last.setDate(last.getDate() + 10); return last.toISOString().slice(0,10); })()
         }
       },
       plugins: {

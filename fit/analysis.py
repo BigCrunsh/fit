@@ -603,7 +603,14 @@ def _compute_acwr(conn: sqlite3.Connection, week_str: str, current_load: float) 
     if chronic <= 0:
         return None
 
-    return round(current_load / chronic, 2)
+    acwr = round(current_load / chronic, 2)
+
+    # Cap at 3.0 — values above this are physiologically meaningless
+    # (caused by near-zero chronic load after extended inactivity).
+    if acwr > 3.0:
+        return None
+
+    return acwr
 
 
 def _compute_streak(conn: sqlite3.Connection, week_str: str, current_run_count: int) -> int:

@@ -54,6 +54,8 @@ from fit.report.sections.cards import (  # noqa: E402
     _checkpoint_data,
     _prediction_trend_data,
     _next_workouts,
+    _overview_objectives,
+    _readiness_summary,
 )
 from fit.report.sections.charts import _all_charts  # noqa: E402
 from fit.report.sections.predictions import _prediction_summary, _race_prediction  # noqa: E402
@@ -129,6 +131,8 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "status_cards_actions": _status_cards_with_actions(conn),
         "prediction_trend": _prediction_trend_data(conn),
         "next_workouts": _next_workouts(conn),
+        "overview_objectives": _overview_objectives(conn),
+        "readiness_summary": _readiness_summary(conn),
     }
 
     html = template.render(**context)

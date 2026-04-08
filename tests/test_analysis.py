@@ -697,12 +697,12 @@ class TestACWR:
         result = _compute_acwr(db, "2026-W14", 200)
         assert result is None
 
-    def test_acwr_very_high_spike(self, db):
-        """Very high spike should produce high ACWR."""
+    def test_acwr_very_high_spike_returns_none(self, db):
+        """Very high spike (>3.0) returns None — physiologically meaningless."""
         for wk in ["2026-W10", "2026-W11", "2026-W12", "2026-W13"]:
             self._insert_weekly_agg(db, wk, 100)
         result = _compute_acwr(db, "2026-W14", 500)
-        assert result == pytest.approx(5.0, abs=0.01)
+        assert result is None
 
     def test_acwr_cross_year_boundary(self, db):
         """Week 1 should look back into previous year."""

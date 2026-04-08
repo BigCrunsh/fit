@@ -68,3 +68,52 @@ class TestGetRecentAlerts:
         db.commit()
         alerts = get_recent_alerts(db, days=7)
         assert len(alerts) == 0
+
+    def test_auto_dismiss_readiness_recovered(self, db):
+        """Readiness alert auto-dismissed when readiness improves above threshold."""
+        db.execute("INSERT INTO alerts (date, type, message) VALUES (date('now'), 'readiness_gate', 'Readiness is 6')")
+        # Current readiness is good now
+        db.execute("INSERT INTO daily_health (date, training_readiness) VALUES (date('now'), 80)")
+        db.commit()
+        alerts = get_recent_alerts(db)
+        assert len(alerts) == 0
+        # Alert should be marked acknowledged
+        ack = db.execute("SELECT acknowledged FROM alerts WHERE type = 'readiness_gate'").fetchone()
+        assert ack["acknowledged"] == 1
+
+    def test_auto_dismiss_zone_compliance_improved(self, db):
+        """Z2 alert auto-dismissed when zone compliance improves."""
+        db.execute("INSERT INTO alerts (date, type, message) VALUES (date('now'), 'all_runs_too_hard', 'Only 0%')")
+        # Z12 is now healthy
+        db.execute("INSERT INTO weekly_agg (week, z12_pct, run_km, run_count) VALUES ('2026-W14', 85, 30, 4)")
+        db.commit()
+        alerts = get_recent_alerts(db)
+        assert len(alerts) == 0
+        ack = db.execute("SELECT acknowledged FROM alerts WHERE type = 'all_runs_too_hard'").fetchone()
+        assert ack["acknowledged"] == 1
+
+    def test_keeps_alert_when_condition_holds(self, db):
+        """Alert stays when underlying condition is still true."""
+        db.execute("INSERT INTO alerts (date, type, message) VALUES (date('now'), 'readiness_gate', 'Readiness is 6')")
+        db.execute("INSERT INTO daily_health (date, training_readiness) VALUES (date('now'), 6)")
+        db.commit()
+        alerts = get_recent_alerts(db)
+        assert len(alerts) == 1
+        assert alerts[0]["type"] == "readiness_gate"
+
+    def test_auto_dismiss_volume_ramp_resolved(self, db):
+        """Volume ramp alert dismissed when streak grows or ramp flattens."""
+        db.execute("INSERT INTO alerts (date, type, message) VALUES (date('now'), 'volume_ramp', 'Volume increased 37%')")
+        # Now volume is stable with good consistency
+        db.execute("INSERT INTO weekly_agg (week, z12_pct, run_km, run_count, consecutive_weeks_3plus) VALUES ('2026-W14', 80, 30, 4, 10)")
+        db.execute("INSERT INTO weekly_agg (week, z12_pct, run_km, run_count, consecutive_weeks_3plus) VALUES ('2026-W13', 80, 29, 4, 9)")
+        db.commit()
+        alerts = get_recent_alerts(db)
+        assert len(alerts) == 0
+
+    def test_unknown_alert_type_kept(self, db):
+        """Unknown alert types are never auto-dismissed."""
+        db.execute("INSERT INTO alerts (date, type, message) VALUES (date('now'), 'custom_alert', 'Something')")
+        db.commit()
+        alerts = get_recent_alerts(db)
+        assert len(alerts) == 1
