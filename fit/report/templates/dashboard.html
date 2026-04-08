@@ -5,141 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>fit — Dashboard</title>
 <style>
-:root {
-  /* Background & surfaces */
-  --bg: #0a0a12;
-  --surface: rgba(255,255,255,0.03);
-  --surface-hover: rgba(255,255,255,0.05);
-  --border: rgba(255,255,255,0.07);
-
-  /* Typography — WCAG AA compliant on --bg */
-  --text: #e2e8f0;           /* primary: 13.5:1 */
-  --text-muted: #94a3b8;     /* secondary: 7.5:1 */
-  --text-dim: #64748b;       /* tertiary: 4.6:1 (AA pass) */
-  --text-faint: #4b5563;     /* quaternary: 3.4:1 (decorative only) */
-
-  /* Fonts */
-  --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-  --sans: 'Inter', 'DM Sans', -apple-system, sans-serif;
-
-  /* Safety palette (is this good?) */
-  --safe: #34d399;
-  --caution: #fbbf24;
-  --danger: #f87171;
-
-  /* 5-zone palette (how hard?) — Z3 distinct from caution */
-  --z1: #93c5fd;    /* Recovery — light blue */
-  --z2: #60a5fa;    /* Easy — blue */
-  --z3: #e9b308;    /* Moderate — warm yellow (NOT same as caution) */
-  --z4: #f97316;    /* Hard — orange */
-  --z5: #ef4444;    /* Very Hard — red */
-
-  /* Semantic */
-  --accent: #818cf8;
-  --emerald: #34d399;
-  --purple: #c084fc;
-}
-
-/* Reset & base */
-* { margin:0; padding:0; box-sizing:border-box; }
-body {
-  font-family: var(--sans);
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
-  padding: 24px 20px;
-  max-width: 920px;
-  margin: 0 auto;
-  font-size: 13px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-}
-
-/* Typography hierarchy — 4 levels only */
-h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
-.sec { display:flex; align-items:center; gap:8px; margin:28px 0 12px; }
-.sec h2 { font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.12em; white-space: nowrap; }
-.sec .line { flex:1; height:1px; background: rgba(255,255,255,0.06); }
-
-/* Navigation */
-.tabs { display:flex; gap:2px; background:var(--surface); border-radius:10px; padding:3px; margin:16px 0; }
-.tab-btn { padding:7px 16px; border-radius:8px; font-size:12px; font-weight:600; border:none; cursor:pointer; background:transparent; color:var(--text-dim); font-family:var(--sans); transition:all .15s; }
-.tab-btn:hover { color:var(--text-muted); }
-.tab-btn.active { background:rgba(255,255,255,0.1); color:var(--text); }
-.tab-content { display:none; } .tab-content.active { display:block; }
-
-/* Cards */
-.card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 18px; flex:1; min-width:110px; }
-.cards { display:flex; gap:10px; flex-wrap:wrap; margin:12px 0; }
-.card-label { font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.1em; font-weight:700; margin-bottom:6px; }
-.card-value { font-size:24px; font-weight:700; font-variant-numeric:tabular-nums; font-family:var(--mono); line-height:1; }
-.card-sub { font-size:11px; color:var(--text-muted); margin-top:5px; }
-
-/* Tables — clean, no visible borders */
-table { width:100%; border-collapse:collapse; font-size:12px; }
-th { padding:8px 10px; text-align:left; color:var(--text-dim); font-weight:600; font-size:10px; text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid rgba(255,255,255,0.08); }
-td { padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.03); font-family:var(--mono); font-size:12px; }
-tr:hover td { background:rgba(255,255,255,0.015); }
-td:first-child { border-radius:6px 0 0 6px; }
-td:last-child { border-radius:0 6px 6px 0; }
-
-/* Charts */
-.chart-box { background:rgba(255,255,255,0.018); border:1px solid rgba(255,255,255,0.05); border-radius:14px; padding:16px 14px 8px; margin-bottom:18px; }
-.chart-box canvas { width:100% !important; }
-
-/* Headline */
-.headline { background:rgba(129,140,248,0.05); border:1px solid rgba(129,140,248,0.12); border-radius:12px; padding:16px 20px; margin:14px 0; font-size:14px; line-height:1.6; color:#c4b5fd; }
-
-/* Journey */
-.journey { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 20px; margin:16px 0; }
-.journey-bar { display:flex; height:32px; border-radius:8px; overflow:hidden; margin:10px 0; }
-.journey-seg { display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; font-family:var(--mono); }
-
-/* Coaching insights */
-.insight-box { border-radius:12px; padding:14px 18px; margin-bottom:10px; }
-.insight-title { font-size:12px; font-weight:700; margin-bottom:4px; }
-.insight-body { font-size:13px; color:var(--text-muted); line-height:1.7; }
-
-/* Run timeline bars */
-.run-bar { display:flex; align-items:center; gap:10px; margin:4px 0; font-size:11px; }
-.run-bar-fill { height:22px; border-radius:4px; display:flex; align-items:center; padding:0 8px; font-size:10px; font-weight:600; color:rgba(255,255,255,0.9); white-space:nowrap; }
-
-/* Info toggles */
-.def-toggle { cursor:pointer; font-size:14px; color:var(--accent); opacity:0.7; margin-left:6px; }
-.def-toggle:hover { opacity:1; }
-.def-box { display:none; background:rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:12px 16px; margin:8px 0 14px; font-size:12px; color:var(--text-muted); line-height:1.65; }
-
-/* Badges */
-.stale-badge { font-size:10px; background:rgba(251,191,36,0.15); color:var(--caution); padding:3px 10px; border-radius:12px; font-weight:700; }
-.wow-card { background:rgba(96,165,250,0.04); border:1px solid rgba(96,165,250,0.1); border-radius:12px; padding:12px 16px; margin:12px 0; font-size:12px; line-height:1.5; }
-.footer { margin-top:40px; padding:12px 0; border-top:1px solid rgba(255,255,255,0.04); font-size:10px; color:var(--text-faint); }
-
-/* Trend badges */
-.badge { display:inline-flex; align-items:center; gap:4px; padding:4px 12px; border-radius:14px; font-size:11px; font-weight:600; margin:3px 4px; }
-.badge-green { background:rgba(52,211,153,0.12); color:var(--safe); }
-.badge-yellow { background:rgba(251,191,36,0.12); color:var(--caution); }
-.badge-red { background:rgba(248,113,113,0.12); color:var(--danger); }
-.badge-gray { background:rgba(148,163,184,0.1); color:var(--text-muted); }
-.badge-blue { background:rgba(96,165,250,0.12); color:var(--z2); }
-
-/* Narrative items */
-.narrative-item { background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:10px 14px; margin:5px 0; font-size:12px; color:var(--text-muted); line-height:1.5; }
-
-/* Race anchor card */
-.race-countdown-card { background:rgba(129,140,248,0.05); border:1px solid rgba(129,140,248,0.15); border-radius:14px; padding:18px 22px; margin:14px 0; }
-
-/* Sparkline grid */
-.sparkline-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:10px; margin:12px 0; }
-.sparkline-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
-.sparkline-label { font-size:10px; color:var(--text-dim); font-weight:700; text-transform:uppercase; letter-spacing:0.05em; }
-.sparkline-value { font-size:16px; font-weight:700; font-family:var(--mono); margin:5px 0; }
-.sparkline-trend { font-size:10px; color:var(--text-muted); }
-
-/* Alert items */
-.alert-item { background:rgba(248,113,113,0.05); border:1px solid rgba(248,113,113,0.12); border-radius:10px; padding:10px 14px; margin:6px 0; font-size:12px; }
-
-/* Checkpoint items */
-.checkpoint-item { display:flex; align-items:center; gap:12px; padding:8px 14px; margin:4px 0; font-size:12px; background:var(--surface); border:1px solid var(--border); border-radius:10px; }
+{% include 'design_system.css' %}
 </style>
 </head>
 <body>
@@ -156,212 +22,208 @@ td:last-child { border-radius:0 6px 6px 0; }
   </div>
 </div>
 
-<!-- TODAY -->
-<div id="tab-today" class="tab-content active">
+<!-- OVERVIEW -->
+<div id="tab-overview" class="tab-content active">
 
-  <!-- 1. Headline (daily signal — race info is in the card below) -->
-  {% if headline_signal %}
-  <div class="headline">{{ headline_signal }}</div>
-  {% endif %}
-
-  <!-- 2. Alerts (safety first!) -->
+  <!-- 1. ALERTS (safety first — only when present) -->
   {% if recent_alerts %}
   {% for alert in recent_alerts %}
-  <div style="background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.15);border-radius:8px;padding:8px 12px;margin:6px 0;font-size:11px">
-    <span style="color:var(--danger);font-weight:700">{{ alert.type | replace('_', ' ') | title }}:</span>
-    <span style="color:#94a3b8">{{ alert.message }}</span>
+  <div class="alert-item{% if 'zone' in alert.type or 'compliance' in alert.type %} alert-item-caution{% endif %}" style="margin-top:12px">
+    <div style="font-weight:700;color:{% if 'zone' in alert.type or 'compliance' in alert.type %}var(--caution){% else %}var(--danger){% endif %}">{{ alert.type | replace('_', ' ') | title }}</div>
+    <div style="color:var(--text-muted);margin-top:2px">{{ alert.message }}</div>
   </div>
   {% endfor %}
   {% endif %}
 
-  <!-- 3. Race Anchor Card — unified race + objectives + phase compliance -->
+  <!-- 2. RACE CARD -->
   {% if race_countdown %}
-  <div style="background:rgba(129,140,248,0.04);border:1px solid rgba(129,140,248,0.12);border-radius:14px;padding:0;margin:14px 0;overflow:hidden">
-
-    <!-- Header: Race name + days + phase + prediction -->
-    <div style="padding:16px 20px 12px;border-bottom:1px solid rgba(129,140,248,0.08)">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
-        <div style="font-size:14px;font-weight:700;color:#c4b5fd;text-transform:uppercase;letter-spacing:0.06em">{{ race_countdown.race_name }}</div>
-        <div style="font-size:20px;font-weight:700;color:#c4b5fd;font-family:var(--mono)">{{ race_countdown.days_remaining }}<span style="font-size:11px;font-weight:400;color:var(--text-dim);margin-left:2px">days</span></div>
+  <div class="race-countdown-card">
+    <!-- Header: Race name + 4 metric columns -->
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:#c4b5fd;text-transform:uppercase;letter-spacing:0.06em">{{ race_countdown.race_name }}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">{{ race_countdown.distance_km or '' }} km · {{ race_countdown.race_date or '' }}</div>
       </div>
-      <div style="display:flex;gap:16px;margin-top:6px;font-size:11px;color:#94a3b8;flex-wrap:wrap">
-        {% if race_countdown.phase_position %}<span>{{ race_countdown.phase_position }}</span>{% endif %}
-        {% if race_countdown.phase %}<span>{{ race_countdown.phase }}</span>{% endif %}
-        {% if prediction_summary %}<span style="color:var(--accent)">{{ prediction_summary }}</span>{% endif %}
-      </div>
-    </div>
-
-    <!-- Objectives with progress bars -->
-    {% if goal_progress %}
-    <div style="padding:12px 20px;border-bottom:1px solid rgba(129,140,248,0.08)">
-      <div style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">Objectives</div>
-      {% for g in goal_progress %}
-      <div style="display:flex;align-items:center;gap:10px;margin:6px 0" {% if g.tooltip %}title="{{ g.tooltip }}"{% endif %}>
-        <div style="width:80px;font-size:10px;color:var(--text-muted)">{{ g.label }}</div>
-        {% if g.pct is not none %}
-        <div style="flex:1;height:8px;background:rgba(255,255,255,0.04);border-radius:4px;overflow:hidden">
-          <div style="height:100%;width:{{ [g.pct, 100]|min }}%;background:{{ g.color }};border-radius:4px;transition:width 0.3s"></div>
+      <div style="display:flex;align-items:flex-end;gap:20px">
+        <div style="text-align:center">
+          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:700">Days Left</div>
+          <div style="font-size:22px;font-weight:700;font-family:var(--mono);color:#c4b5fd;line-height:1.1">{{ race_countdown.days_remaining }}</div>
         </div>
-        <div style="width:80px;text-align:right;font-size:11px;font-family:var(--mono)">
-          <span style="color:{{ g.color }}">{{ g.current }}</span><span style="color:var(--text-dim)">/{{ g.target }}{{ g.unit }}</span>
+        {% if race_countdown.target_time %}
+        <div style="text-align:center">
+          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:700">Target</div>
+          <div style="font-size:22px;font-weight:700;font-family:var(--mono);color:var(--safe);line-height:1.1">{{ race_countdown.target_time }}</div>
         </div>
-        <div style="width:35px;text-align:right;font-size:10px;color:var(--text-dim);font-family:var(--mono)">{{ g.pct|int }}%</div>
-        {% else %}
-        <div style="flex:1;font-size:12px;font-weight:600;color:{{ g.color }};font-family:var(--mono)">{{ g.current }}</div>
+        {% endif %}
+        {% if race_countdown.prediction_mid %}
+        <div style="text-align:center">
+          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:700">Prediction</div>
+          <div style="font-size:22px;font-weight:700;font-family:var(--mono);color:var(--accent);line-height:1.1">{{ race_countdown.prediction_mid }}</div>
+        </div>
+        {% endif %}
+        {% if race_countdown.gap_minutes is defined and race_countdown.gap_minutes is not none %}
+        <div style="text-align:center">
+          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:700">Gap</div>
+          <div style="font-size:22px;font-weight:700;font-family:var(--mono);line-height:1.1;color:{% if race_countdown.gap_minutes <= 0 %}var(--safe){% elif race_countdown.gap_minutes <= 5 %}var(--caution){% else %}var(--danger){% endif %}">{{ '%+d' | format(race_countdown.gap_minutes) }}<span style="font-size:11px;font-weight:400;margin-left:1px">min</span></div>
+        </div>
         {% endif %}
       </div>
-      {% endfor %}
     </div>
-    {% endif %}
 
-    <!-- Trend badges (inside race card) -->
-    {% if trend_badges %}
-    <div style="padding:8px 20px;border-bottom:1px solid rgba(129,140,248,0.08);display:flex;flex-wrap:wrap;gap:4px">
-      {% for badge in trend_badges %}
-      <span class="badge badge-{{ badge.color }}" title="{{ badge.detail or '' }}">{{ badge.metric }} {% if badge.direction == 'up' %}↑{% elif badge.direction == 'down' %}↓{% elif badge.direction == 'flat' %}→{% endif %} {{ badge.value }}</span>
-      {% endfor %}
-    </div>
-    {% endif %}
-
-  </div>
-
-  <!-- Phase compliance (outside the card, collapsible) -->
-  {% if phase_compliance and not phase_compliance.no_data %}
-  <details style="margin:6px 0">
-    <summary style="font-size:10px;font-weight:700;color:var(--text-dim);cursor:pointer;padding:4px 0">Phase: {{ phase_compliance.phase_name }} — {% set on_track = phase_compliance.dimensions | selectattr('on_track') | list %}{{ on_track | length }}/{{ phase_compliance.dimensions | length }} on track</summary>
-    <div style="margin-top:6px;padding:0 4px">
-      {% for dim in phase_compliance.dimensions %}
-      <div style="display:flex;align-items:center;gap:10px;margin:3px 0;font-size:12px">
-        <div style="width:16px;color:{% if dim.on_track %}var(--safe){% elif dim.actual is none %}var(--text-dim){% else %}var(--danger){% endif %}">{% if dim.on_track %}✓{% elif dim.actual is none %}—{% else %}✗{% endif %}</div>
-        <div style="width:90px;color:var(--text-muted)">{{ dim.name }}</div>
-        <div style="font-family:var(--mono);color:{% if dim.on_track %}var(--safe){% elif dim.actual is none %}var(--text-dim){% else %}var(--danger){% endif %}">{{ dim.actual if dim.actual is not none else '—' }}</div>
-        <div style="color:var(--text-dim);font-size:11px">/ {% if dim.target_range is defined and dim.target_range is iterable and dim.target_range is not string %}{{ dim.target_range[0] }}–{{ dim.target_range[1] }}{% elif dim.target %}{{ dim.target }}{% else %}—{% endif %}</div>
+    <!-- Prediction trend chart (full width) -->
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid rgba(129,140,248,0.08)">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+        <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">Prediction Trend</span>
+        {% if race_countdown.trend_badge %}<span class="badge badge-green" style="font-size:10px">{{ race_countdown.trend_badge }}</span>{% endif %}
       </div>
-      {% endfor %}
+      <div style="height:200px"><canvas id="chart-pred-trend"></canvas></div>
     </div>
-  </details>
-  {% endif %}
+  </div>
   {% else %}
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin:14px 0;font-size:11px;color:var(--text-muted)">
-    No target race set. Add a race: <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit races add</code> — the dashboard orients around your target race with countdown, objectives, and predictions.
+    No target race set. Run <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit races add</code> then <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit target set &lt;id&gt;</code> to anchor the dashboard around your target.
   </div>
   {% endif %}
 
-  <!-- Checkpoints (races before target with derived targets) -->
-  {% if checkpoints %}
-  <div style="margin:10px 0">
-    {% for cp in checkpoints %}
-    <div style="display:flex;align-items:center;gap:10px;padding:6px 12px;margin:3px 0;font-size:11px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
-      <span style="font-weight:700;color:var(--accent);font-family:var(--mono)">{{ cp.days }}d</span>
-      <span style="color:var(--text)">{{ cp.name }}</span>
-      <span style="color:var(--text-dim)">{{ cp.distance }}</span>
-      {% if cp.user_target %}<span style="font-family:var(--mono)">target: {{ cp.user_target }}</span>{% endif %}
-      {% if cp.derived_target %}<span style="color:var(--text-dim)">· on-track: {{ cp.derived_target }}</span>{% endif %}
-      {% if cp.signal %}<span style="font-size:10px;color:{% if '✓' in cp.signal %}var(--safe){% elif '⚠' in cp.signal %}var(--caution){% else %}var(--text-muted){% endif %}">{{ cp.signal }}</span>{% endif %}
+  <!-- 3+4. CHECKPOINTS (left) + COACH'S TAKE (right) — side by side -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:4px">
+    <div>
+      <div class="sec" style="margin-top:12px"><h2>Checkpoints</h2><div class="line"></div></div>
+      {% if prediction_trend %}
+      {% set pt = prediction_trend | safe %}
+      <!-- Checkpoints rendered from prediction_trend data via JS below -->
+      <div id="checkpoints-table"></div>
+      {% else %}
+      <div style="font-size:11px;color:var(--text-dim);padding:8px 0">No checkpoint races registered.</div>
+      {% endif %}
     </div>
-    {% endfor %}
-  </div>
-  {% endif %}
-
-  <!-- Upcoming races (waypoints) -->
-  {% if upcoming_races and upcoming_races|length > 1 %}
-  <div style="margin:8px 0;display:flex;gap:6px;flex-wrap:wrap">
-    {% for ur in upcoming_races %}
-    {% if not ur.is_target %}
-    <div style="font-size:10px;padding:3px 10px;border-radius:8px;background:var(--surface);border:1px solid var(--border);color:var(--text-muted)">
-      {{ ur.name }} · {{ ur.distance }} · {{ ur.days }}d
+    <div>
+      <div class="sec" style="margin-top:12px"><h2>Coach's Take</h2><div class="line"></div></div>
+      {% if coaching and coaching.insights %}
+      {% set top = coaching.insights[0] %}
+      <div class="insight-box" style="background:rgba({% if top.type == 'critical' %}248,113,113{% elif top.type == 'warning' %}251,191,36{% elif top.type == 'positive' %}52,211,153{% else %}129,140,248{% endif %},0.04);border:1px solid rgba({% if top.type == 'critical' %}248,113,113{% elif top.type == 'warning' %}251,191,36{% elif top.type == 'positive' %}52,211,153{% else %}129,140,248{% endif %},0.1);margin:0">
+        <div class="insight-title" style="color:{% if top.type == 'critical' %}var(--danger){% elif top.type == 'warning' %}var(--caution){% elif top.type == 'positive' %}var(--safe){% else %}var(--accent){% endif %}">{{ top.title }}</div>
+        <div class="insight-body" style="font-size:11px">{{ top.body[:300] }}</div>
+      </div>
+      {% elif headline_signal %}
+      <div class="insight-box" style="background:rgba(129,140,248,0.04);border:1px solid rgba(129,140,248,0.1);margin:0">
+        <div class="insight-body" style="font-size:11px">{{ headline_signal }}</div>
+      </div>
+      {% else %}
+      <div style="font-size:11px;color:var(--text-dim);padding:8px 0">Run <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">/fit-coach</code> for coaching insights.</div>
+      {% endif %}
     </div>
-    {% endif %}
-    {% endfor %}
-  </div>
-  {% endif %}
-
-  <!-- Key biometrics (compact, with action) -->
-  <div class="cards">
-  {% for card in status_cards_actions %}
-    <div class="card" {% if card.tooltip %}title="{{ card.tooltip }}"{% endif %}>
-      <div class="card-label">{{ card.label }}</div>
-      <div class="card-value" style="color:{{ card.color }}">{{ card.value }}<span style="font-size:11px;font-weight:400;color:var(--text-dim);margin-left:2px">{{ card.unit }}</span></div>
-      {% if card.action %}<div class="card-sub" style="color:{{ card.color }}">{{ card.action }}</div>
-      {% elif card.sub %}<div class="card-sub">{{ card.sub }}</div>{% endif %}
-    </div>
-  {% endfor %}
   </div>
 
-  <!-- Milestone celebrations -->
-  <!-- Milestones: PBs detected in last 14 days (longest run, best efficiency, streak, VO2max peak) -->
-  {% if milestones %}
-  <div style="margin:10px 0">
-    {% for m in milestones %}
-    <div style="background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.15);border-radius:8px;padding:8px 12px;margin:4px 0;font-size:11px">
-      <span style="color:var(--safe);font-weight:700">{{ m.type | replace('_', ' ') | title }}:</span>
-      <span style="color:#94a3b8">{{ m.message }}</span>
-    </div>
-    {% endfor %}
-  </div>
-  {% else %}
-  <div style="font-size:10px;color:var(--text-faint);margin:6px 0">No recent PBs. Milestones appear here when you set a new longest run, best efficiency, consistency streak (4/8/12 weeks), or VO2max peak.</div>
-  {% endif %}
+  <!-- 5. STRUCTURED STATUS — 2-column grid -->
 
-  <!-- Trend badges moved into Race Anchor Card -->
-
-  <!-- 8. Narrative connectors (why-connectors, walk-break, z2 remediation) -->
-  {% set narratives = [] %}
-  {% if walk_break %}{% set _ = narratives.append(walk_break) %}{% endif %}
-  {% if z2_remediation %}{% set _ = narratives.append(z2_remediation) %}{% endif %}
-  {% if why_connectors %}{% for wc in why_connectors %}{% set _ = narratives.append(wc) %}{% endfor %}{% endif %}
-  {% if narratives | length > 0 %}
-  <!-- First insight surfaced inline (no header needed) -->
-  {% set first = narratives[0] %}
-  <div class="narrative-item" style="margin-top:10px">
-    💡 {% if first.title is defined %}<span style="font-weight:700;color:var(--text)">{{ first.title }}:</span> {% endif %}
-    {% if first.message is defined %}{{ first.message }}{% elif first.pattern is defined %}{{ first.pattern }}{% elif first is string %}{{ first }}{% endif %}
-  </div>
-  {% if narratives | length > 1 %}
-  <details style="margin:4px 0">
-    <summary style="font-size:10px;color:var(--text-dim);cursor:pointer">{{ narratives | length - 1 }} more insight{{ 's' if narratives | length > 2 else '' }}</summary>
-    {% for item in narratives[1:] %}
-    <div class="narrative-item">
-      {% if item.title is defined %}<span style="font-weight:700;color:var(--text)">{{ item.title }}:</span> {% endif %}
-      {% if item.message is defined %}{{ item.message }}{% elif item.pattern is defined %}{{ item.pattern }}{% elif item is string %}{{ item }}{% endif %}
-    </div>
-    {% endfor %}
-  </details>
-  {% endif %}
-  {% endif %}
-
-  <!-- 9. Check-in (compact) -->
-  {% if checkin %}
-  <details style="margin:10px 0">
-    <summary style="font-size:10px;font-weight:700;color:var(--text-dim);cursor:pointer">Last Check-in: {{ checkin.date }}</summary>
-    <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:#94a3b8;margin-top:6px;padding:6px 0">
-      {% for f in checkin.fields %}<span>{{ f }}</span>{% endfor %}
-    </div>
-  </details>
-  {% else %}
-  <div style="font-size:10px;color:var(--text-faint);margin:6px 0">No check-ins yet. Run <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit checkin</code> after training to log RPE, sleep quality, hydration, and legs. Builds correlation data for coaching.</div>
-  {% endif %}
-
-  <!-- Phase compliance is now integrated into the Race Anchor Card above -->
-
-  <!-- 11. Journey timeline -->
-  <details style="margin:10px 0">
-  {% if journey %}
-    <summary style="font-size:10px;font-weight:700;color:var(--text-dim);cursor:pointer">Journey: {{ journey.goal_name }}</summary>
-    <div class="journey" style="margin-top:6px">
-      <div class="journey-bar">
-        {% for seg in journey.segments %}
-        <div class="journey-seg" style="flex:{{ seg.width }};background:{{ seg.color }}">{{ seg.label }}</div>
+  <!-- Row A: Fitness Profile (left) + Objectives (right) -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
+    <!-- Fitness Profile -->
+    <div class="status-group" style="background:rgba(129,140,248,0.03);border:1px solid rgba(129,140,248,0.08)">
+      <div class="status-group-title">Fitness Profile</div>
+      {% if fitness_profile and fitness_profile.effective_vdot %}
+      {% set dims = [
+        ("VDOT", fitness_profile.effective_vdot, "need " ~ (fitness_profile.target_vdot or '?'), "--accent"),
+        ("VO2max", fitness_profile.aerobic.current_value, fitness_profile.aerobic.trend or '', "--z2"),
+        ("Threshold", fitness_profile.threshold.current_value, fitness_profile.threshold.trend or '', "--z3"),
+        ("Economy", fitness_profile.economy.current_value, fitness_profile.economy.trend or '', "--accent"),
+        ("Resilience", fitness_profile.resilience.current_value, fitness_profile.resilience.trend or '', "--purple")
+      ] %}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        {% for label, value, sub, color in dims %}
+        <div class="card" style="padding:10px 12px;min-width:0">
+          <div class="card-label">{{ label }}</div>
+          <div style="font-size:16px;font-weight:700;font-family:var(--mono);color:var({{ color }})">{{ value if value is not none else '—' }}</div>
+          {% if sub %}<div class="card-sub" style="font-size:9px">
+            {% set arrow = '↑' if sub == 'improving' else '↓' if sub == 'declining' else '' %}
+            {% if arrow %}<span style="color:{% if sub == 'improving' %}var(--safe){% else %}var(--danger){% endif %}">{{ arrow }}</span>{% else %}{{ sub }}{% endif %}
+          </div>{% endif %}
+        </div>
         {% endfor %}
       </div>
-      <div style="font-size:10px;color:var(--text-muted);margin-top:4px">{{ journey.position }}</div>
+      {% else %}
+      <div style="font-size:11px;color:var(--text-dim)">Need more data for fitness profile.</div>
+      {% endif %}
     </div>
-  {% else %}
-    <summary style="font-size:10px;font-weight:700;color:var(--text-dim);cursor:pointer">Journey</summary>
-    <div style="font-size:10px;color:var(--text-faint);margin-top:6px">No training phases defined. Create goals with <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit goal add</code> and set up training phases for a journey timeline.</div>
-  {% endif %}
-  </details>
 
+    <!-- Objectives -->
+    <div class="status-group" style="background:rgba(96,165,250,0.03);border:1px solid rgba(96,165,250,0.08)">
+      <div class="status-group-title">Objectives</div>
+      {% if derived_objectives and derived_objectives.objectives %}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        {% for obj in derived_objectives.objectives %}
+        {% set ach = obj.achievability or 'unknown' %}
+        {% set ach_color = 'var(--safe)' if ach == 'on_track' else 'var(--caution)' if ach == 'tight' else 'var(--danger)' if ach == 'at_risk' else 'var(--text-dim)' %}
+        <div class="card" style="padding:10px 12px;min-width:0">
+          <div class="card-label">{{ obj.name }}</div>
+          <div style="font-size:16px;font-weight:700;font-family:var(--mono);color:{{ ach_color }}">{{ obj.current_value if obj.current_value is not none else '—' }}</div>
+          <div class="card-sub" style="font-size:9px">of {{ obj.target_value }} · <span style="color:{{ ach_color }}">{{ (obj.current_value / obj.target_value * 100) | int if obj.current_value and obj.target_value else '?' }}%</span></div>
+        </div>
+        {% endfor %}
+      </div>
+      {% elif goal_progress %}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        {% for g in goal_progress %}
+        <div class="card" style="padding:10px 12px;min-width:0">
+          <div class="card-label">{{ g.label }}</div>
+          <div style="font-size:16px;font-weight:700;font-family:var(--mono);color:{{ g.color }}">{{ g.current }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div style="font-size:11px;color:var(--text-dim)">Set a target race to derive objectives.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Row B: Next Workouts (left) + Readiness (right) -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
+    <!-- Next Workouts -->
+    <div class="status-group" style="background:rgba(52,211,153,0.03);border:1px solid rgba(52,211,153,0.08)">
+      <div class="status-group-title">Next Workouts</div>
+      {% if next_workouts %}
+      <div style="display:flex;flex-direction:column;gap:6px">
+        {% for w in next_workouts %}
+        {% set zone_color = 'var(--z4)' if w.type == 'intervals' else 'var(--z3)' if w.type == 'tempo' else 'var(--z2)' %}
+        {% set zone_bg = 'rgba(249,115,22,0.1)' if w.type == 'intervals' else 'rgba(233,179,8,0.1)' if w.type == 'tempo' else 'rgba(96,165,250,0.1)' %}
+        {% set zone_label = 'Z4' if w.type == 'intervals' else 'Z3' if w.type == 'tempo' else 'Z2' %}
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:10px">
+          <div style="width:34px;height:34px;border-radius:8px;background:{{ zone_bg }};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="font-size:12px;font-family:var(--mono);font-weight:700;color:{{ zone_color }}">{{ zone_label }}</span>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;font-weight:700">{{ w.name }}</div>
+            <div style="font-size:9px;color:var(--text-muted)">{{ w.date_label }} · {{ w.distance_km }} km</div>
+          </div>
+          <div style="font-size:9px;font-weight:700;color:{% if w.days == 0 %}var(--safe){% else %}var(--text-dim){% endif %};flex-shrink:0">
+            {% if w.days == 0 %}TODAY{% elif w.days == 1 %}tomorrow{% else %}{{ w.days }}d{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div style="font-size:11px;color:var(--text-dim);padding:8px 0">No planned workouts. Import a plan with <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit plan import</code>.</div>
+      {% endif %}
+    </div>
+
+    <!-- Readiness -->
+    <div class="status-group" style="background:rgba(251,191,36,0.03);border:1px solid rgba(251,191,36,0.08)">
+      <div class="status-group-title">Readiness</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        {% for card in status_cards_actions[:4] %}
+        <div class="card" style="padding:10px 12px;min-width:0">
+          <div class="card-label">{{ card.label }}</div>
+          <div style="font-size:16px;font-weight:700;font-family:var(--mono);color:{{ card.color }}">{{ card.value }}<span style="font-size:10px;font-weight:400;color:var(--text-dim);margin-left:1px">{{ card.unit }}</span></div>
+          {% if card.action %}<div class="card-sub" style="font-size:9px;color:{{ card.color }}">{{ card.action }}</div>
+          {% elif card.sub %}<div class="card-sub" style="font-size:9px">{{ card.sub }}</div>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Collapsed secondary info -->
   <details style="margin:14px 0">
     <summary style="font-size:10px;font-weight:700;color:var(--text-dim);cursor:pointer">
       Calibration & Data Health
@@ -461,7 +323,7 @@ td:last-child { border-radius:0 6px 6px 0; }
 </div>
 
 <!-- BODY -->
-<div id="tab-body" class="tab-content">
+<div id="tab-readiness" class="tab-content">
   {% if body_summary %}
   <div style="font-size:12px;color:#94a3b8;line-height:1.6;padding:8px 0;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.04)">{{ body_summary }}</div>
   {% endif %}
@@ -496,7 +358,7 @@ td:last-child { border-radius:0 6px 6px 0; }
 </div>
 
 <!-- FITNESS -->
-<div id="tab-fitness" class="tab-content">
+<div id="tab-profile" class="tab-content">
   <div style="display:flex;gap:4px;margin-bottom:10px">
     <span style="font-size:9px;color:var(--text-dim);padding:3px 0">Range:</span>
     {% for r in ["3mo","6mo","1yr","all"] %}
@@ -790,6 +652,197 @@ const chartInstances = {};
   if (el) chartInstances['{{ chart.id }}'] = new Chart(el, cfg);
 }
 {% endfor %}
+
+// ─── PREDICTION TREND CHART (Overview tab) ───
+{% if prediction_trend %}
+(function() {
+  const d = {{ prediction_trend | safe }};
+  if (!d || !d.labels || !d.pred) return;
+  const el = document.getElementById('chart-pred-trend');
+  if (!el) return;
+
+  // Build phase box annotations in the reserved y-axis strip
+  const annots = {};
+  // Separator between data area and phase band
+  annots.phaseSep = { type: 'line', yMin: 208, yMax: 208, borderColor: 'rgba(255,255,255,0.08)', borderWidth: 1 };
+
+  (d.phases || []).forEach((p, i) => {
+    if (!p.start || !p.end) return;
+    annots['phase' + i] = {
+      type: 'box', xMin: p.start, xMax: p.end, yMin: 198, yMax: 208,
+      backgroundColor: p.bg, borderColor: p.border, borderWidth: p.active ? 1.5 : 1, borderRadius: 3,
+      label: { display: true, content: p.label, color: p.text_color, font: { size: 9, weight: 700 } }
+    };
+  });
+
+  // Target line
+  if (d.target_min) {
+    annots.target = {
+      type: 'line', yMin: d.target_min, yMax: d.target_min,
+      borderColor: 'rgba(52,211,153,0.5)', borderDash: [6, 3], borderWidth: 1.5,
+      label: { display: true, content: d.target_label || 'Target', position: 'start',
+               color: '#34d399', font: { size: 9, weight: 700 }, backgroundColor: 'transparent' }
+    };
+  }
+
+  // Today marker
+  if (d.today) {
+    annots.today = {
+      type: 'line', xMin: d.today, xMax: d.today, yMin: 208,
+      borderColor: 'rgba(251,191,36,0.5)', borderWidth: 1.5,
+      label: { display: true, content: 'today', position: 'end',
+               color: '#fbbf24', font: { size: 9, weight: 600 },
+               backgroundColor: 'rgba(10,10,18,0.85)', padding: 3 }
+    };
+  }
+
+  // Race day marker
+  if (d.race_date) {
+    annots.raceDay = {
+      type: 'line', xMin: d.race_date, xMax: d.race_date, yMin: 208,
+      borderColor: 'rgba(248,113,113,0.6)', borderWidth: 1.5,
+      label: { display: true, content: 'race', position: 'end',
+               color: '#f87171', font: { size: 9, weight: 600 },
+               backgroundColor: 'rgba(10,10,18,0.85)', padding: 3 }
+    };
+  }
+
+  // Checkpoint number plugin
+  const checkpointNumberPlugin = {
+    id: 'checkpointNumbers',
+    afterDatasetsDraw(chart) {
+      const meta = chart.getDatasetMeta(3);
+      if (!meta || !meta.data) return;
+      const ctx = chart.ctx;
+      const cps = d.checkpoints || [];
+      meta.data.forEach((pt, i) => {
+        if (cps[i]) {
+          ctx.save();
+          ctx.fillStyle = '#fff';
+          ctx.font = 'bold 8px ' + getComputedStyle(document.body).getPropertyValue('--mono');
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(cps[i].num, pt.x, pt.y);
+          ctx.restore();
+        }
+      });
+    }
+  };
+
+  // Compute y-axis range
+  // Include checkpoints + target in y-axis range calculation
+  const allVals = d.upper.concat(d.lower).concat(d.pred).filter(v => v !== null);
+  var cpVals = (d.checkpoints || []).map(function(cp) { return cp.y; });
+  var allWithCp = allVals.concat(cpVals);
+  if (d.target_min) allWithCp.push(d.target_min);
+  let yMax = Math.max(...allWithCp) + 10;
+  let yMin = 198; // reserve space for phase band
+
+  new Chart(el, {
+    type: 'line',
+    plugins: [checkpointNumberPlugin],
+    data: {
+      labels: d.labels,
+      datasets: [
+        // Upper confidence bound
+        { label: '_upper', data: d.upper, borderColor: 'rgba(129,140,248,0.2)', borderWidth: 1, borderDash: [2,2],
+          pointRadius: 0, tension: 0.3, fill: false },
+        // Lower confidence bound — fills UP to upper
+        { label: '_lower', data: d.lower, borderColor: 'rgba(129,140,248,0.2)', borderWidth: 1, borderDash: [2,2],
+          pointRadius: 0, tension: 0.3,
+          fill: { target: 0, above: 'rgba(129,140,248,0.18)', below: 'rgba(129,140,248,0.18)' } },
+        // Main prediction line
+        { label: 'Prediction', data: d.pred, borderColor: '#818cf8', borderWidth: 2.5,
+          pointRadius: 2, pointBackgroundColor: '#818cf8', tension: 0.3, fill: false },
+        // Checkpoints — filled accent for upcoming, safe green for completed
+        { label: 'Checkpoint', data: d.checkpoints || [], borderColor: '#c4b5fd', borderWidth: 2,
+          pointRadius: 9,
+          pointBackgroundColor: (d.checkpoints || []).map(function(cp) { return cp.done ? '#34d399' : '#818cf8'; }),
+          pointStyle: 'circle', showLine: false, fill: false }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        y: {
+          min: yMin, max: yMax,
+          grid: { color: function(ctx) { return ctx.tick.value < 210 ? 'transparent' : 'rgba(255,255,255,0.03)'; } },
+          ticks: {
+            callback: function(v) { return v < 210 ? '' : Math.floor(v/60) + ':' + ('0'+Math.floor(v%60)).slice(-2); },
+            stepSize: 10
+          },
+          afterBuildTicks: function(axis) { axis.ticks = axis.ticks.filter(function(t) { return t.value >= 210 || t.value === 200; }); }
+        },
+        x: {
+          type: 'time',
+          time: { unit: 'month', displayFormats: { month: "MMM ''yy" }, tooltipFormat: 'yyyy-MM-dd' },
+          grid: { display: false },
+          min: d.labels[0], max: d.labels[d.labels.length - 1]
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        annotation: { annotations: annots },
+        tooltip: {
+          filter: function(ctx) { return ctx.datasetIndex >= 2; },
+          callbacks: {
+            label: function(ctx) {
+              var v = ctx.parsed.y;
+              var t = Math.floor(v/60) + ':' + ('0'+Math.floor(v%60)).slice(-2);
+              if (ctx.datasetIndex === 3) {
+                var cp = (d.checkpoints || [])[ctx.dataIndex];
+                if (cp) return cp.num + ' ' + (cp.name || '') + ' → ' + t + (cp.done ? ' ✓' : '');
+                return t;
+              }
+              return 'Prediction: ' + t;
+            }
+          }
+        }
+      }
+    }
+  });
+  // Render checkpoints table from same data
+  // Completed: "ran X:XX → marathon Y:YY"  (what you ran → what it means)
+  // Upcoming:  "need X:XX → target Y:YY"   (what you need to run → target marathon time)
+  var tbl = document.getElementById('checkpoints-table');
+  if (tbl && d.checkpoints && d.checkpoints.length) {
+    var html = '';
+    d.checkpoints.forEach(function(cp) {
+      var color = cp.done ? 'var(--safe)' : 'var(--accent)';
+      var bg = cp.done ? '#34d399' : '#818cf8';
+      var badge = cp.done
+        ? '<span class="badge badge-green" style="font-size:9px;padding:2px 8px">\u2713</span>'
+        : '<span class="badge badge-blue" style="font-size:9px;padding:2px 8px">' + cp.days + 'd</span>';
+
+      // Two lanes: checkpoint time | marathon equivalent
+      var timeLine, equivLine;
+      if (cp.done) {
+        timeLine = '<span style="color:var(--text-muted)">ran</span> <span style="font-weight:700">' + cp.result + '</span>';
+        equivLine = '<span style="color:var(--text-dim)">\u2192</span> <span style="color:' + color + ';font-weight:700">' + cp.marathon_equiv + '</span>';
+      } else {
+        timeLine = '<span style="color:var(--text-muted)">need</span> <span style="font-weight:700">' + (cp.needed || '?') + '</span>';
+        equivLine = '<span style="color:var(--text-dim)">\u2192</span> <span style="color:' + color + ';font-weight:700">' + (d.target_label || '').replace('Target ', '') + '</span>';
+      }
+
+      html += '<div class="checkpoint-item" style="border-left:3px solid ' + color + '">'
+        + '<div style="width:22px;height:22px;border-radius:50%;background:' + bg + ';display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+        + '<span style="font-size:11px;font-weight:700;color:#fff;font-family:var(--mono)">' + cp.num + '</span></div>'
+        + '<div style="flex:1">'
+        + '<div style="font-weight:600;font-size:12px">' + cp.name + ' ' + badge + '</div>'
+        + '<div style="font-size:10px;color:var(--text-dim)">' + (cp.distance || '') + '</div>'
+        + '</div>'
+        + '<div style="text-align:right;font-family:var(--mono);font-size:12px;line-height:1.6">'
+        + '<div>' + timeLine + '</div>'
+        + '<div>' + equivLine + '</div>'
+        + '</div></div>';
+    });
+    tbl.innerHTML = html;
+  } else if (tbl) {
+    tbl.innerHTML = '<div style="font-size:11px;color:var(--text-dim);padding:8px 0">No checkpoint races in training period.</div>';
+  }
+})();
+{% endif %}
+
 function setZoom(range, btn) {
   btn.parentElement.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');

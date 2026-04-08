@@ -5,6 +5,7 @@ import logging
 from datetime import date
 from pathlib import Path
 
+from fit.analysis import RUNNING_TYPES_SQL
 from fit.report.headline import generate_headline
 from fit.narratives import (
     generate_trend_badges,
@@ -271,9 +272,9 @@ def _week_over_week(conn):
 # ── Run Timeline ──
 
 def _run_timeline(conn):
-    runs = conn.execute("""
+    runs = conn.execute(f"""
         SELECT date, distance_km, hr_zone, run_type, rpe FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') ORDER BY date DESC LIMIT 12
+        WHERE type IN {RUNNING_TYPES_SQL} ORDER BY date DESC LIMIT 12
     """).fetchall()
     max_km = max((r["distance_km"] or 0 for r in runs), default=1) or 1
     result = []
@@ -317,7 +318,7 @@ def _definitions(conn):
     avg_sleep_val = avg_sleep["v"] if avg_sleep and avg_sleep["v"] else "?"
     avg_deep = conn.execute("SELECT ROUND(AVG(deep_sleep_hours), 2) as v FROM daily_health WHERE date >= date('now', '-14 days')").fetchone()
     avg_deep_val = avg_deep["v"] if avg_deep and avg_deep["v"] else "?"
-    avg_cadence = conn.execute("SELECT ROUND(AVG(avg_cadence), 0) as v FROM activities WHERE type IN ('running', 'track_running', 'trail_running') AND avg_cadence IS NOT NULL AND date >= date('now', '-30 days')").fetchone()
+    avg_cadence = conn.execute(f"SELECT ROUND(AVG(avg_cadence), 0) as v FROM activities WHERE type IN {RUNNING_TYPES_SQL} AND avg_cadence IS NOT NULL AND date >= date('now', '-30 days')").fetchone()
     avg_cadence_val = avg_cadence["v"] if avg_cadence and avg_cadence["v"] else "?"
     avg_stress = conn.execute("SELECT ROUND(AVG(avg_stress_level), 0) as v FROM daily_health WHERE date >= date('now', '-7 days')").fetchone()
     avg_stress_val = avg_stress["v"] if avg_stress and avg_stress["v"] else "?"
@@ -594,7 +595,125 @@ def _why_connectors(conn):
 
 def _race_countdown(conn):
     try:
-        return generate_race_countdown(conn)
+        result = generate_race_countdown(conn)
+        if not result:
+            return None
+
+        # Enrich with fields needed by the Overview tab template
+        from fit.goals import get_target_race
+        race = get_target_race(conn)
+        if race:
+            result["distance_km"] = race.get("distance_km", "")
+            result["race_date"] = race.get("date", "")
+
+            # Target time (formatted)
+            target_str = race.get("target_time")
+            if target_str:
+                result["target_time"] = target_str
+            else:
+                # Fall back to goal-based target
+                goal = conn.execute(
+                    "SELECT target_time FROM goals WHERE type = 'marathon' AND active = 1 LIMIT 1"
+                ).fetchone()
+                result["target_time"] = goal["target_time"] if goal else None
+
+            # Prediction: conservative = upper bound of chart's confidence band
+            # at today. Uses VO2max-derived prediction + method spread margin,
+            # exactly matching what the prediction trend chart shows.
+            try:
+                from fit.analysis import predict_race_time, _vdot_to_marathon_seconds
+
+                def _parse_time(t):
+                    parts = t.split(":")
+                    if len(parts) == 3:
+                        return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+                    elif len(parts) == 2:
+                        return int(parts[0]) * 60 + int(parts[1])
+                    return 0
+
+                def _fmt_time(s):
+                    return f"{s // 3600}:{(s % 3600) // 60:02d}"
+
+                # Current VO2max → predicted race time (center line of chart)
+                vo2 = conn.execute(
+                    "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1"
+                ).fetchone()
+                center_secs = None
+                if vo2 and vo2["vo2max"] and vo2["vo2max"] > 30:
+                    marathon_secs = _vdot_to_marathon_seconds(vo2["vo2max"])
+                    target_km = race.get("distance_km") or 42.195
+                    if target_km != 42.195:
+                        center_secs = marathon_secs * (target_km / 42.195) ** 1.06
+                    else:
+                        center_secs = marathon_secs
+
+                # Method spread margin (half-width of all prediction sources)
+                races_db = conn.execute("""
+                    SELECT distance_km, result_time FROM race_calendar
+                    WHERE status = 'completed' AND result_time IS NOT NULL
+                    ORDER BY date DESC LIMIT 5
+                """).fetchall()
+                race_data = [
+                    {"distance_km": r["distance_km"], "time_seconds": _parse_time(r["result_time"])}
+                    for r in races_db if r["distance_km"] and r["result_time"]
+                ]
+                preds = predict_race_time(
+                    conn=conn, races=race_data,
+                    vo2max=vo2["vo2max"] if vo2 else None,
+                )
+                all_secs = []
+                if preds.get("riegel"):
+                    all_secs.extend(p["predicted_seconds"] for p in preds["riegel"])
+                if preds.get("vdot") and preds["vdot"].get("predicted_seconds"):
+                    all_secs.append(preds["vdot"]["predicted_seconds"])
+
+                margin_secs = 0
+                if len(all_secs) >= 2:
+                    margin_secs = (max(all_secs) - min(all_secs)) / 2
+                else:
+                    margin_secs = preds.get("confidence", {}).get("margin_seconds", 480)
+
+                if center_secs:
+                    # Conservative = center + margin (upper bound of chart band)
+                    conservative_secs = center_secs + margin_secs
+                    result["prediction_mid"] = _fmt_time(round(conservative_secs))
+                    result["confidence_level"] = preds.get("confidence", {}).get("level", "low")
+
+                    # Gap based on conservative prediction vs target
+                    if result.get("target_time"):
+                        target_secs = _parse_time(result["target_time"])
+                        if target_secs > 0:
+                            gap = round((conservative_secs - target_secs) / 60)
+                            result["gap_minutes"] = gap
+
+                # Trend badge: compare oldest vs newest weekly VO2max (proxy for prediction trend)
+                trend_rows = conn.execute("""
+                    SELECT week, vo2max_avg FROM (
+                        SELECT strftime('%Y-W%W', date) as week,
+                               AVG(vo2max) as vo2max_avg
+                        FROM activities
+                        WHERE vo2max IS NOT NULL
+                          AND date >= date('now', '-56 days')
+                        GROUP BY week
+                        ORDER BY week
+                    ) WHERE vo2max_avg IS NOT NULL
+                """).fetchall()
+                if len(trend_rows) >= 2:
+                    old_v = trend_rows[0]["vo2max_avg"]
+                    new_v = trend_rows[-1]["vo2max_avg"]
+                    if old_v and new_v and old_v > 30:
+                        # Convert VO2max change to approximate time change
+                        old_secs = _vdot_to_marathon_seconds(old_v)
+                        new_secs = _vdot_to_marathon_seconds(new_v)
+                        delta_min = round((new_secs - old_secs) / 60)
+                        weeks = len(trend_rows)
+                        if delta_min != 0:
+                            sign = "+" if delta_min > 0 else ""
+                            result["trend_badge"] = f"{sign}{delta_min} min / {weeks} wk"
+            except Exception:
+                pass  # prediction enrichment is best-effort
+
+        return result
     except Exception:
         return None
 
@@ -612,8 +731,8 @@ def _walk_break(conn):
 
 def _z2_remediation(conn):
     try:
-        from fit.config import load_config
-        config = load_config()
+        from fit.config import get_config
+        config = get_config()
     except Exception:
         config = {"profile": {"zones_max_hr": {"z2": [115, 134]}}}
     try:
@@ -635,10 +754,10 @@ def _rolling_correlations(conn):
 def _split_data(conn):
     """Get split data for the most recent long run with parsed splits."""
     try:
-        run = conn.execute("""
+        run = conn.execute(f"""
             SELECT a.id, a.name, a.date, a.distance_km, a.duration_min
             FROM activities a
-            WHERE a.type IN ('running', 'track_running', 'trail_running') AND a.splits_status = 'done'
+            WHERE a.type IN {RUNNING_TYPES_SQL} AND a.splits_status = 'done'
             ORDER BY a.date DESC LIMIT 1
         """).fetchone()
         if not run:
@@ -777,6 +896,67 @@ def _fitness_profile_data(conn):
         return None
 
 
+def _derived_objectives_data(conn):
+    """Derived objectives with achievability — same computation as CLI."""
+    try:
+        from fit.goals import get_target_race
+        from fit.fitness import derive_objectives, compute_achievability
+
+        target = get_target_race(conn)
+        if not target:
+            return None
+
+        days_left = (date.fromisoformat(target["date"]) - date.today()).days
+        derived = derive_objectives(conn, target["id"])
+        derived = compute_achievability(conn, derived, days_left)
+
+        # Filter out internal _dim_ objectives
+        visible = [o for o in derived if not o["name"].startswith("_dim_")]
+        return {"objectives": visible, "race_name": target["name"], "target_time": target.get("target_time")}
+    except Exception:
+        return None
+
+
+def _next_workouts(conn):
+    """Next 3 planned workouts for the Overview tab."""
+    try:
+        rows = conn.execute("""
+            SELECT date, workout_name, workout_type, target_distance_km
+            FROM planned_workouts
+            WHERE date >= date('now') AND status = 'active'
+            ORDER BY date LIMIT 3
+        """).fetchall()
+        result = []
+        today = date.today()
+        for r in rows:
+            d = date.fromisoformat(r["date"])
+            days = (d - today).days
+            # Format date as "Wed Apr 9"
+            date_label = d.strftime("%a %b %-d")
+            # Clean up workout name (strip "W N Day. " prefix)
+            name = r["workout_name"] or r["workout_type"] or "Run"
+            for prefix in ["W ", "Wo "]:
+                if name.startswith(prefix):
+                    # Strip "W 1 Fr. " style prefix
+                    parts = name.split(". ", 1)
+                    if len(parts) > 1:
+                        name = parts[1]
+                    break
+            # Truncate long names
+            if len(name) > 40:
+                name = name[:37] + "..."
+            result.append({
+                "name": name,
+                "type": r["workout_type"] or "easy",
+                "distance_km": r["target_distance_km"] or "?",
+                "date_label": date_label,
+                "days": max(0, days),
+            })
+        return result
+    except Exception:
+        return []
+
+
 def _checkpoint_data(conn):
     """Checkpoint races with derived targets."""
     try:
@@ -784,3 +964,249 @@ def _checkpoint_data(conn):
         return derive_checkpoint_targets(conn)
     except Exception:
         return []
+
+
+def _prediction_trend_data(conn):
+    """Generate prediction trend chart data for the Overview race card.
+
+    Returns JSON-serializable dict with: labels, pred, upper, lower,
+    checkpoints, phases, target_min, today.
+    """
+    try:
+        from fit.analysis import _vdot_to_marathon_seconds
+        from fit.goals import get_target_race
+
+        target = get_target_race(conn)
+        if not target:
+            return None
+
+        target_km = target.get("distance_km") or 42.195
+
+        def _parse_time(t):
+            parts = t.split(":")
+            if len(parts) == 3:
+                return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+            elif len(parts) == 2:
+                return int(parts[0]) * 60 + int(parts[1])
+            return 0
+
+        # Target time in minutes
+        target_str = target.get("target_time")
+        target_min = None
+        if target_str:
+            target_min = _parse_time(target_str) / 60
+
+        # Chart start: 1 month before first training phase (baseline context)
+        from datetime import datetime, timedelta
+        phase_start = conn.execute("""
+            SELECT MIN(start_date) as s FROM training_phases WHERE status != 'revised'
+        """).fetchone()
+        if phase_start and phase_start["s"]:
+            ps = datetime.fromisoformat(phase_start["s"])
+            training_start = (ps - timedelta(days=30)).strftime("%Y-%m-%d")
+        else:
+            training_start = (datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d")
+
+        # Weekly VO2max → predicted race time (in minutes), from training start
+        start_clause = f"AND date >= '{training_start}'" if training_start else ""
+        weeks = conn.execute(f"""
+            SELECT strftime('%Y-%m-%d', date, 'weekday 0', '-6 days') as week_start,
+                   AVG(vo2max) as vo2max_avg
+            FROM activities
+            WHERE vo2max IS NOT NULL {start_clause}
+            GROUP BY strftime('%Y-W%W', date)
+            ORDER BY week_start
+        """).fetchall()
+
+        if len(weeks) < 3:
+            return None
+
+        labels = []
+        pred = []
+        for w in weeks:
+            labels.append(w["week_start"])
+            if w["vo2max_avg"] and w["vo2max_avg"] > 30:
+                marathon_secs = _vdot_to_marathon_seconds(w["vo2max_avg"])
+                if target_km != 42.195:
+                    race_secs = marathon_secs * (target_km / 42.195) ** 1.06
+                else:
+                    race_secs = marathon_secs
+                pred.append(round(race_secs / 60, 1))
+            else:
+                pred.append(None)
+
+        # Extend labels to race date
+        race_date = target.get("date", "")
+        if race_date and (not labels or labels[-1] < race_date):
+            from datetime import datetime, timedelta
+            last = datetime.fromisoformat(labels[-1]) if labels else datetime.now()
+            race_dt = datetime.fromisoformat(race_date)
+            while last < race_dt:
+                last += timedelta(days=7)
+                if last.strftime("%Y-%m-%d") not in labels:
+                    labels.append(last.strftime("%Y-%m-%d"))
+                    pred.append(None)
+
+        # Confidence band: method spread (same as header range).
+        # Collect all prediction sources, compute half-spread as margin.
+        from fit.analysis import predict_race_time
+        races = conn.execute("""
+            SELECT distance_km, result_time FROM race_calendar
+            WHERE status = 'completed' AND result_time IS NOT NULL
+            ORDER BY date DESC LIMIT 5
+        """).fetchall()
+        race_data = [
+            {"distance_km": r["distance_km"],
+             "time_seconds": _parse_time(r["result_time"])}
+            for r in races if r["distance_km"] and r["result_time"]
+        ]
+        vo2_row = conn.execute(
+            "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        preds = predict_race_time(
+            conn=conn, races=race_data,
+            vo2max=vo2_row["vo2max"] if vo2_row else None,
+        )
+        all_pred_secs = []
+        if preds.get("riegel"):
+            all_pred_secs.extend(p["predicted_seconds"] for p in preds["riegel"])
+        if preds.get("vdot") and preds["vdot"].get("predicted_seconds"):
+            all_pred_secs.append(preds["vdot"]["predicted_seconds"])
+
+        if len(all_pred_secs) >= 2:
+            margin_min = (max(all_pred_secs) - min(all_pred_secs)) / 2 / 60
+        else:
+            # Fallback: use confidence-based margin if only one source
+            margin_min = preds.get("confidence", {}).get("margin_seconds", 480) / 60
+
+        upper = [round(p + margin_min, 1) if p is not None else None for p in pred]
+        lower = [round(p - margin_min, 1) if p is not None else None for p in pred]
+
+        # Training phases for the band
+        phases_raw = conn.execute("""
+            SELECT name, start_date, end_date, status FROM training_phases
+            WHERE status != 'revised'
+            ORDER BY start_date
+        """).fetchall()
+        phases = []
+        phase_colors = {
+            "base": {"bg": "rgba(52,211,153,0.15)", "border": "rgba(52,211,153,0.25)", "text": SAFE},
+            "build": {"bg": "rgba(129,140,248,0.2)", "border": "rgba(129,140,248,0.35)", "text": "#a5b4fc"},
+            "peak": {"bg": "rgba(255,255,255,0.05)", "border": "rgba(255,255,255,0.08)", "text": "rgba(255,255,255,0.5)"},
+            "taper": {"bg": "rgba(255,255,255,0.03)", "border": "rgba(255,255,255,0.06)", "text": "rgba(255,255,255,0.4)"},
+        }
+        for p in phases_raw:
+            name_lower = (p["name"] or "").lower()
+            colors = phase_colors.get(name_lower, phase_colors.get("peak"))
+            label_text = p["name"] or ""
+            if p["status"] == "active":
+                label_text += " ←"
+            phases.append({
+                "name": p["name"],
+                "start": p["start_date"],
+                "end": p["end_date"],
+                "bg": colors["bg"],
+                "border": colors["border"],
+                "text_color": colors["text"],
+                "label": label_text,
+                "active": p["status"] == "active",
+            })
+
+        # All races in chart range, Riegel-extrapolated to target distance.
+        # Completed races use actual result; upcoming use derived target.
+        checkpoints = []
+        try:
+            from fit.goals import get_target_race
+            target_race = get_target_race(conn)
+            target_id = target_race["id"] if target_race else None
+
+            # All non-target races in the chart time range
+            chart_races = conn.execute("""
+                SELECT id, name, date, distance, distance_km, status, result_time
+                FROM race_calendar
+                WHERE date >= ? AND date <= ?
+                ORDER BY date
+            """, (training_start, race_date)).fetchall()
+
+            # Also get derived targets for upcoming checkpoints
+            derived_map = {}
+            try:
+                from fit.fitness import derive_checkpoint_targets
+                for cp in derive_checkpoint_targets(conn):
+                    derived_map[cp.get("race_id")] = cp.get("derived_target", "")
+            except Exception:
+                pass
+
+            # Target race time for back-calculation
+            target_str = target.get("target_time")
+            target_secs = _parse_time(target_str) if target_str else 0
+
+            def _fmt_hm(s):
+                h, rem = divmod(int(s), 3600)
+                m, sec = divmod(rem, 60)
+                if h > 0:
+                    return f"{h}:{m:02d}:{sec:02d}"
+                return f"{m}:{sec:02d}"
+
+            idx = 1
+            for r in chart_races:
+                if r["id"] == target_id:
+                    continue  # skip the target race itself
+                r_km = r["distance_km"] or 0
+                if r_km <= 0 or r_km == target_km:
+                    continue
+
+                # "Needed" time: Riegel back-calc from target race to this distance
+                needed_secs = 0
+                if target_secs > 0:
+                    needed_secs = target_secs * (r_km / target_km) ** 1.06
+
+                # Actual time (completed) or derived target (upcoming)
+                time_secs = 0
+                if r["status"] == "completed" and r["result_time"]:
+                    time_secs = _parse_time(r["result_time"])
+                elif derived_map.get(r["id"]):
+                    time_secs = _parse_time(derived_map[r["id"]])
+                elif needed_secs > 0:
+                    time_secs = round(needed_secs)
+
+                if time_secs > 0:
+                    # Riegel forward: checkpoint time → target race equivalent
+                    marathon_equiv = time_secs * (target_km / r_km) ** 1.06
+                    me_min = marathon_equiv / 60
+
+                    cp_data = {
+                        "x": r["date"],
+                        "y": round(me_min, 1),
+                        "num": str(idx),
+                        "name": r["name"],
+                        "distance": r["distance"],
+                        "done": r["status"] == "completed",
+                        "marathon_equiv": f"{int(me_min) // 60}:{int(me_min) % 60:02d}",
+                        "days": (datetime.fromisoformat(r["date"]) - datetime.now()).days,
+                        "needed": _fmt_hm(round(needed_secs)) if needed_secs > 0 else None,
+                    }
+                    if r["status"] == "completed":
+                        cp_data["result"] = _fmt_hm(time_secs)
+                    checkpoints.append(cp_data)
+                    idx += 1
+        except Exception:
+            pass
+
+        today_str = date.today().isoformat()
+
+        return json.dumps({
+            "labels": labels,
+            "pred": pred,
+            "upper": upper,
+            "lower": lower,
+            "target_min": target_min,
+            "target_label": f"Target {target_str}" if target_str else "Target",
+            "checkpoints": checkpoints,
+            "phases": phases,
+            "today": today_str,
+            "race_date": race_date,
+        })
+    except Exception as e:
+        logger.debug("prediction_trend_data failed: %s", e)
+        return None

@@ -7,6 +7,8 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
+from fit.analysis import RUNNING_TYPES_SQL
+
 logger = logging.getLogger(__name__)
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -48,7 +50,10 @@ from fit.report.sections.cards import (  # noqa: E402
     _checkin_progress,
     _status_cards_with_actions,
     _fitness_profile_data,
+    _derived_objectives_data,
     _checkpoint_data,
+    _prediction_trend_data,
+    _next_workouts,
 )
 from fit.report.sections.charts import _all_charts  # noqa: E402
 from fit.report.sections.predictions import _prediction_summary, _race_prediction  # noqa: E402
@@ -71,10 +76,10 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "annotation_code": annotation_code,
         "date_adapter_code": date_adapter_code,
         "tabs": [
-            {"id": "today", "label": "Today"},
+            {"id": "overview", "label": "Overview"},
             {"id": "training", "label": "Training"},
-            {"id": "body", "label": "Body"},
-            {"id": "fitness", "label": "Fitness"},
+            {"id": "profile", "label": "Profile"},
+            {"id": "readiness", "label": "Readiness"},
             {"id": "coach", "label": "Coach"},
         ],
         "headline": _headline(conn),
@@ -91,13 +96,13 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "coaching": _coaching(conn),
         "recent_alerts": _recent_alerts(conn),
         "rpe_checkin_count": conn.execute(
-            "SELECT COUNT(*) FROM activities WHERE type IN ('running','track_running','trail_running') AND rpe IS NOT NULL"
+            f"SELECT COUNT(*) FROM activities WHERE type IN {RUNNING_TYPES_SQL} AND rpe IS NOT NULL"
         ).fetchone()[0],
         "rpe_garmin_count": conn.execute(
-            "SELECT COUNT(*) FROM activities WHERE type IN ('running','track_running','trail_running') AND aerobic_te IS NOT NULL AND date >= date('now', '-90 days')"
+            f"SELECT COUNT(*) FROM activities WHERE type IN {RUNNING_TYPES_SQL} AND aerobic_te IS NOT NULL AND date >= date('now', '-90 days')"
         ).fetchone()[0],
         "run_count": conn.execute(
-            "SELECT COUNT(*) FROM activities WHERE type IN ('running','track_running','trail_running')"
+            f"SELECT COUNT(*) FROM activities WHERE type IN {RUNNING_TYPES_SQL}"
         ).fetchone()[0],
         "milestones": _milestones(conn),
         "goal_progress": _goal_progress(conn),
@@ -116,11 +121,14 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "plan_adherence": _plan_adherence(conn),
         "upcoming_races": _upcoming_races(conn),
         "fitness_profile": _fitness_profile_data(conn),
+        "derived_objectives": _derived_objectives_data(conn),
         "checkpoints": _checkpoint_data(conn),
         "body_summary": _body_summary(conn),
         "volume_story": _volume_story(conn),
         "checkin_progress": _checkin_progress(conn),
         "status_cards_actions": _status_cards_with_actions(conn),
+        "prediction_trend": _prediction_trend_data(conn),
+        "next_workouts": _next_workouts(conn),
     }
 
     html = template.render(**context)

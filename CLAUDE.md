@@ -103,7 +103,7 @@ tests/               # pytest suite (500+ tests)
 - **Adaptive readiness gate** — default <40, raised to <50 during return-to-run
 - **Daniels VDOT lookup table** — interpolated, not linear approximation. Accurate across VO2max 35-60
 - **Long run dual condition** — (>30% weekly AND ≥8km) OR ≥12km absolute override
-- **Prediction confidence band** — range not point estimate, width based on data quantity + training phase
+- **Prediction = conservative (upper bound)** — the dashboard shows the *slowest* prediction across all sources (Riegel from each past race + VDOT from VO2max) as THE prediction. Gap is computed against this upper bound. The chart's confidence band shows the full method spread (half-width = (max-min)/2). This is deliberately pessimistic — better to be pleasantly surprised than to blow up on race day.
 - **Correlation effect size filter** — n≥15 AND |r|≥0.2 before surfacing in coaching/narratives
 - **Rolling correlations** — 8-week windows with data_hash invalidation, sparkline grid (not spaghetti)
 - **Trend narratives as pill badges** — compact "Efficiency +8%" not paragraph text. Progressive disclosure
