@@ -1,0 +1,1343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fit — Dashboard Mockup (5-Tab Concept)</title>
+<style>
+:root {
+  --bg: #0a0a12;
+  --surface: rgba(255,255,255,0.03);
+  --surface-hover: rgba(255,255,255,0.05);
+  --border: rgba(255,255,255,0.07);
+  --text: #e2e8f0;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+  --text-faint: #4b5563;
+  --mono: 'JetBrains Mono', 'SF Mono', monospace;
+  --sans: 'Inter', 'DM Sans', -apple-system, sans-serif;
+  --safe: #34d399;
+  --caution: #fbbf24;
+  --danger: #f87171;
+  --z1: #93c5fd;
+  --z2: #60a5fa;
+  --z3: #e9b308;
+  --z4: #f97316;
+  --z5: #ef4444;
+  --accent: #818cf8;
+  --emerald: #34d399;
+  --purple: #c084fc;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:var(--sans); background:var(--bg); color:var(--text); min-height:100vh; padding:24px 20px; max-width:920px; margin:0 auto; font-size:13px; line-height:1.5; -webkit-font-smoothing:antialiased; }
+h1 { font-size:20px; font-weight:700; letter-spacing:-0.02em; }
+.sec { display:flex; align-items:center; gap:8px; margin:28px 0 12px; }
+.sec h2 { font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.12em; white-space:nowrap; }
+.sec .line { flex:1; height:1px; background:rgba(255,255,255,0.06); }
+.tabs { display:flex; gap:2px; background:var(--surface); border-radius:10px; padding:3px; margin:16px 0; }
+.tab-btn { padding:7px 16px; border-radius:8px; font-size:12px; font-weight:600; border:none; cursor:pointer; background:transparent; color:var(--text-dim); font-family:var(--sans); transition:all .15s; }
+.tab-btn:hover { color:var(--text-muted); }
+.tab-btn.active { background:rgba(255,255,255,0.1); color:var(--text); }
+.tab-content { display:none; } .tab-content.active { display:block; }
+.card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 18px; flex:1; min-width:110px; }
+.cards { display:flex; gap:10px; flex-wrap:wrap; margin:12px 0; }
+.card-label { font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.1em; font-weight:700; margin-bottom:6px; }
+.card-value { font-size:24px; font-weight:700; font-variant-numeric:tabular-nums; font-family:var(--mono); line-height:1; }
+.card-sub { font-size:11px; color:var(--text-muted); margin-top:5px; }
+table { width:100%; border-collapse:collapse; font-size:12px; }
+th { padding:8px 10px; text-align:left; color:var(--text-dim); font-weight:600; font-size:10px; text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid rgba(255,255,255,0.08); }
+td { padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.03); font-family:var(--mono); font-size:12px; }
+.chart-box { background:rgba(255,255,255,0.018); border:1px solid rgba(255,255,255,0.05); border-radius:14px; padding:16px 14px 8px; margin-bottom:18px; }
+.chart-box canvas { width:100% !important; }
+.headline { background:rgba(129,140,248,0.05); border:1px solid rgba(129,140,248,0.12); border-radius:12px; padding:16px 20px; margin:14px 0; font-size:14px; line-height:1.6; color:#c4b5fd; }
+.journey { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 20px; margin:16px 0; }
+.journey-bar { display:flex; height:32px; border-radius:8px; overflow:hidden; margin:10px 0; }
+.journey-seg { display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; font-family:var(--mono); }
+.insight-box { border-radius:12px; padding:14px 18px; margin-bottom:10px; }
+.insight-title { font-size:12px; font-weight:700; margin-bottom:4px; }
+.insight-body { font-size:13px; color:var(--text-muted); line-height:1.7; }
+.run-bar { display:flex; align-items:center; gap:10px; margin:4px 0; font-size:11px; }
+.run-bar-fill { height:22px; border-radius:4px; display:flex; align-items:center; padding:0 8px; font-size:10px; font-weight:600; color:rgba(255,255,255,0.9); white-space:nowrap; }
+.badge { display:inline-flex; align-items:center; gap:4px; padding:4px 12px; border-radius:14px; font-size:11px; font-weight:600; margin:3px 4px; }
+.badge-green { background:rgba(52,211,153,0.12); color:var(--safe); }
+.badge-yellow { background:rgba(251,191,36,0.12); color:var(--caution); }
+.badge-red { background:rgba(248,113,113,0.12); color:var(--danger); }
+.badge-gray { background:rgba(148,163,184,0.1); color:var(--text-muted); }
+.badge-blue { background:rgba(96,165,250,0.12); color:var(--z2); }
+.narrative-item { background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:10px 14px; margin:5px 0; font-size:12px; color:var(--text-muted); line-height:1.5; }
+.race-countdown-card { background:rgba(129,140,248,0.05); border:1px solid rgba(129,140,248,0.15); border-radius:14px; padding:18px 22px; margin:14px 0; }
+.sparkline-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:10px; margin:12px 0; }
+.sparkline-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+.sparkline-label { font-size:10px; color:var(--text-dim); font-weight:700; text-transform:uppercase; letter-spacing:0.05em; }
+.sparkline-value { font-size:16px; font-weight:700; font-family:var(--mono); margin:5px 0; }
+.sparkline-trend { font-size:10px; color:var(--text-muted); }
+.alert-item { background:rgba(248,113,113,0.05); border:1px solid rgba(248,113,113,0.12); border-radius:10px; padding:10px 14px; margin:6px 0; font-size:12px; }
+.alert-item-caution { background:rgba(251,191,36,0.05); border-color:rgba(251,191,36,0.12); }
+.checkpoint-item { display:flex; align-items:center; gap:12px; padding:8px 14px; margin:4px 0; font-size:12px; background:var(--surface); border:1px solid var(--border); border-radius:10px; }
+.wow-card { background:rgba(96,165,250,0.04); border:1px solid rgba(96,165,250,0.1); border-radius:12px; padding:12px 16px; margin:12px 0; font-size:12px; line-height:1.5; }
+.footer { margin-top:40px; padding:12px 0; border-top:1px solid rgba(255,255,255,0.04); font-size:10px; color:var(--text-faint); }
+.progress-bar-bg { height:8px; background:rgba(255,255,255,0.04); border-radius:4px; overflow:hidden; flex:1; }
+.progress-bar-fill { height:100%; border-radius:4px; }
+.obj-row { display:flex; align-items:center; gap:10px; padding:5px 0; font-size:11px; }
+.obj-label { width:90px; color:var(--text-muted); font-weight:600; }
+.obj-values { width:90px; text-align:right; font-family:var(--mono); font-size:11px; }
+.obj-pct { width:40px; text-align:right; color:var(--text-dim); font-family:var(--mono); font-size:11px; }
+.dim-row { display:flex; align-items:center; gap:8px; padding:3px 0; }
+.dim-label { width:80px; font-size:10px; color:var(--text-dim); font-weight:700; text-transform:uppercase; letter-spacing:0.05em; }
+.dim-bar { flex:1; height:6px; background:rgba(255,255,255,0.04); border-radius:3px; overflow:hidden; }
+.dim-fill { height:100%; border-radius:3px; }
+.dim-value { width:50px; text-align:right; font-family:var(--mono); font-size:11px; }
+.dim-trend { width:60px; text-align:right; font-size:10px; color:var(--text-muted); }
+/* Summary card with sparkline canvas */
+.summary-card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; flex:1; min-width:140px; display:flex; flex-direction:column; gap:4px; }
+.summary-card .card-label { margin-bottom:2px; }
+.summary-card canvas { height:28px !important; width:100% !important; margin-top:4px; }
+/* Gap meter */
+.gap-meter { display:flex; align-items:center; gap:6px; margin:4px 0; }
+.gap-track { flex:1; height:10px; background:rgba(255,255,255,0.04); border-radius:5px; position:relative; overflow:visible; }
+.gap-fill { height:100%; border-radius:5px; position:relative; }
+.gap-marker { position:absolute; top:-3px; width:3px; height:16px; border-radius:2px; background:var(--text); }
+</style>
+</head>
+<body>
+
+<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+  <div>
+    <h1>fit</h1>
+    <div style="font-size:10px;color:var(--text-faint);font-family:var(--mono);margin-top:3px">MOCKUP — 2026-04-08 — concept validation</div>
+  </div>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="showTab('overview',this)">Overview</button>
+    <button class="tab-btn" onclick="showTab('training',this)">Training</button>
+    <button class="tab-btn" onclick="showTab('profile',this)">Profile</button>
+    <button class="tab-btn" onclick="showTab('readiness',this)">Readiness</button>
+    <button class="tab-btn" onclick="showTab('coach',this)">Coach</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- TAB: OVERVIEW — "Am I going to hit my target?"                -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div id="tab-overview" class="tab-content active">
+
+  <!-- 1. ALERTS (conditional — only when present) -->
+  <div class="alert-item alert-item-caution" style="margin-top:12px">
+    <div style="font-weight:700;color:var(--caution)">Z2 Compliance Below Target</div>
+    <div style="color:var(--text-muted);margin-top:2px">Zone 2 time at 62% this week (target: 80%). Slow down on easy days — your aerobic base drives marathon performance.</div>
+  </div>
+
+  <!-- 2. RACE CARD — everything about the target in one unit -->
+  <div class="race-countdown-card">
+    <!-- Header: Race name + days + Target vs Prediction -->
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:#c4b5fd;text-transform:uppercase;letter-spacing:0.06em">Berlin Marathon</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">42.195 km · May 20, 2026</div>
+      </div>
+      <!-- Days Left / Target / Prediction / Gap -->
+      <div style="display:flex;align-items:flex-start;gap:16px">
+        <div style="text-align:center">
+          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:700">Days Left</div>
+          <div style="font-size:24px;font-weight:700;font-family:var(--mono);color:#c4b5fd">42</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:700">Target</div>
+          <div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--safe)">3:45</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:700">Prediction</div>
+          <div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--accent)">3:52</div>
+          <div style="font-size:9px;color:var(--text-dim);margin-top:2px;font-family:var(--mono)">3:48 – 3:56</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:700">Gap</div>
+          <div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--caution)">+7<span style="font-size:12px;font-weight:400;margin-left:1px">min</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Prediction trend (full width) with confidence band + aligned timeline -->
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid rgba(129,140,248,0.08)">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+        <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">Prediction Trend</span>
+        <span class="badge badge-green" style="font-size:10px">-3 min / 8 wk</span>
+      </div>
+      <div style="height:200px"><canvas id="chart-pred-trend"></canvas></div>
+    </div>
+
+  </div>
+
+  <!-- 3+4. CHECKPOINTS (left) + COACH'S TAKE (right) — side by side -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:4px">
+    <div>
+      <div class="sec" style="margin-top:12px"><h2>Checkpoints</h2><div class="line"></div></div>
+      <div class="checkpoint-item" style="border-left:3px solid var(--accent)">
+        <div style="width:22px;height:22px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <span style="font-size:11px;font-weight:700;color:#fff;font-family:var(--mono)">1</span>
+        </div>
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:12px">S25 Berliner HM <span class="badge badge-green" style="font-size:9px;padding:2px 8px">completed</span></div>
+          <div style="font-size:10px;color:var(--text-dim)">21.1 km · Apr 6 · 1:42:15</div>
+        </div>
+        <div style="text-align:right;font-family:var(--mono)">
+          <div style="color:var(--accent);font-size:13px;font-weight:700">→ 3:54</div>
+        </div>
+      </div>
+      <div class="checkpoint-item" style="border-left:3px solid var(--accent)">
+        <div style="width:22px;height:22px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <span style="font-size:11px;font-weight:700;color:#fff;font-family:var(--mono)">2</span>
+        </div>
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:12px">10K Tempelhof <span class="badge badge-blue" style="font-size:9px;padding:2px 8px">registered</span></div>
+          <div style="font-size:10px;color:var(--text-dim)">10 km · May 11 · 33 days</div>
+        </div>
+        <div style="text-align:right;font-family:var(--mono)">
+          <div style="color:var(--accent);font-size:13px;font-weight:700">→ 3:45</div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="sec" style="margin-top:12px"><h2>Coach's Take</h2><div class="line"></div></div>
+      <div class="insight-box" style="background:rgba(251,191,36,0.04);border:1px solid rgba(251,191,36,0.1);margin:0">
+        <div class="insight-title" style="color:var(--caution)">Priority: Fix Z2 Compliance</div>
+        <div class="insight-body" style="font-size:11px">Z2 time at 62% (target 80%) — your biggest lever. Make 3 of 4 easy runs truly easy (HR &lt; 134). HM result validates trajectory at -3 min/8wk. Need VDOT 49.0 for 3:45 — requires consistent Z2 volume for 6 weeks.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. STRUCTURED STATUS — 2-column grid -->
+
+  <!-- Row A: Fitness Profile (left) + Objectives (right) -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
+    <!-- LEFT: Fitness Profile -->
+    <div style="background:rgba(129,140,248,0.03);border:1px solid rgba(129,140,248,0.08);border-radius:14px;padding:14px 14px 16px">
+      <div style="font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px">Fitness Profile</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div style="display:flex;gap:6px">
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">VDOT</div>
+            <div class="card-value" style="font-size:18px;color:var(--accent)">47.2</div>
+            <div class="card-sub">need 49.0 · gap <span style="color:var(--caution)">-1.8</span></div>
+            <canvas id="spark-vdot"></canvas>
+          </div>
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Weight</div>
+            <div class="card-value" style="font-size:18px">76.2</div>
+            <div class="card-sub">kg · target 74 · <span style="color:var(--safe)">-1.3 /8wk</span></div>
+            <canvas id="spark-weight"></canvas>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Aerobic</div>
+            <div class="card-value" style="font-size:18px;color:var(--z2)">49.0</div>
+            <div class="card-sub">VO2max · <span style="color:var(--safe)">+0.5/mo</span></div>
+            <canvas id="spark-aerobic"></canvas>
+          </div>
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Threshold</div>
+            <div class="card-value" style="font-size:18px;color:var(--z3)">5:58</div>
+            <div class="card-sub">Z2 pace · <span style="color:var(--safe)">-3s/mo</span></div>
+            <canvas id="spark-threshold"></canvas>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Economy</div>
+            <div class="card-value" style="font-size:18px;color:var(--accent)">0.078</div>
+            <div class="card-sub">spd/bpm · <span style="color:var(--safe)">+.002/mo</span></div>
+            <canvas id="spark-economy"></canvas>
+          </div>
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Resilience</div>
+            <div class="card-value" style="font-size:18px;color:var(--purple)">18 km</div>
+            <div class="card-sub">drift onset · stable</div>
+            <canvas id="spark-resilience"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Objectives -->
+    <div style="background:rgba(96,165,250,0.03);border:1px solid rgba(96,165,250,0.08);border-radius:14px;padding:14px 14px 16px">
+      <div style="font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px">Objectives</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div style="display:flex;gap:6px">
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Weekly Volume</div>
+            <div class="card-value" style="font-size:18px;color:var(--z2)">39</div>
+            <div class="card-sub">of 50 km · <span style="color:var(--z2)">78%</span></div>
+            <canvas id="spark-vol"></canvas>
+          </div>
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Long Run</div>
+            <div class="card-value" style="font-size:18px;color:var(--safe)">28</div>
+            <div class="card-sub">of 32 km · <span style="color:var(--safe)">87%</span></div>
+            <canvas id="spark-long"></canvas>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Z2 Time</div>
+            <div class="card-value" style="font-size:18px;color:var(--caution)">62%</div>
+            <div class="card-sub">target 80% · <span style="color:var(--caution)">low</span></div>
+            <canvas id="spark-z2"></canvas>
+          </div>
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Consistency</div>
+            <div class="card-value" style="font-size:18px;color:var(--safe)">8</div>
+            <div class="card-sub">of 8 wks · <span style="color:var(--safe)">100%</span></div>
+            <canvas id="spark-streak"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row B: Next Workouts (left) + Readiness (right) -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
+    <!-- LEFT: Next Workouts -->
+    <div style="background:rgba(52,211,153,0.03);border:1px solid rgba(52,211,153,0.08);border-radius:14px;padding:14px 14px 16px">
+      <div style="font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px">Next Workouts</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:10px">
+          <div style="width:34px;height:34px;border-radius:8px;background:rgba(96,165,250,0.1);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="font-size:12px;font-family:var(--mono);font-weight:700;color:var(--z2)">Z2</span>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;font-weight:700">Easy Run</div>
+            <div style="font-size:9px;color:var(--text-muted)">Wed Apr 9 · 10 km · ~65 min · HR 115–134</div>
+          </div>
+          <div style="font-size:9px;color:var(--safe);font-weight:700;flex-shrink:0">READY</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:10px">
+          <div style="width:34px;height:34px;border-radius:8px;background:rgba(233,179,8,0.1);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="font-size:12px;font-family:var(--mono);font-weight:700;color:var(--z3)">Z3</span>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;font-weight:700">Tempo Run</div>
+            <div style="font-size:9px;color:var(--text-muted)">Fri Apr 11 · 8 km · ~40 min · HR 134–154</div>
+          </div>
+          <div style="font-size:9px;color:var(--text-dim);flex-shrink:0">2 days</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:10px">
+          <div style="width:34px;height:34px;border-radius:8px;background:rgba(96,165,250,0.1);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="font-size:12px;font-family:var(--mono);font-weight:700;color:var(--z2)">Z2</span>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;font-weight:700">Long Run</div>
+            <div style="font-size:9px;color:var(--text-muted)">Sun Apr 13 · 30 km · ~3:00 · HR 115–134</div>
+          </div>
+          <div style="font-size:9px;color:var(--text-dim);flex-shrink:0">5 days</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Readiness -->
+    <div style="background:rgba(251,191,36,0.03);border:1px solid rgba(251,191,36,0.08);border-radius:14px;padding:14px 14px 16px">
+      <div style="font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px">Readiness</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div style="display:flex;gap:6px">
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">HRV</div>
+            <div class="card-value" style="font-size:18px;color:var(--safe)">62</div>
+            <div class="card-sub">ms · 7d avg: 58 · <span style="color:var(--safe)">above</span></div>
+            <canvas id="spark-hrv"></canvas>
+          </div>
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">ACWR</div>
+            <div class="card-value" style="font-size:18px;color:var(--safe)">1.12</div>
+            <div class="card-sub">sweet spot (0.8–1.3)</div>
+            <canvas id="spark-acwr"></canvas>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Sleep</div>
+            <div class="card-value" style="font-size:18px;color:var(--safe)">7:25</div>
+            <div class="card-sub">hrs · avg 6:52</div>
+            <canvas id="spark-sleep"></canvas>
+          </div>
+          <div class="summary-card" style="min-width:0">
+            <div class="card-label">Monotony</div>
+            <div class="card-value" style="font-size:18px;color:var(--safe)">1.4</div>
+            <div class="card-sub">safe (&lt;2.0)</div>
+            <canvas id="spark-monotony"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- TAB: TRAINING — Plan + Execution, "Am I on track?"            -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div id="tab-training" class="tab-content">
+
+  <!-- Objectives -->
+  <div class="sec"><h2>Objectives</h2><div class="line"></div></div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin:10px 0">
+    <div class="obj-row">
+      <div class="obj-label">Weekly Vol</div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:78%;background:var(--z2)"></div></div>
+      <div class="obj-values"><span style="color:var(--z2)">39</span><span style="color:var(--text-dim)"> / 50 km</span></div>
+      <div class="obj-pct">78%</div>
+    </div>
+    <div class="obj-row">
+      <div class="obj-label">Long Run</div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:87%;background:var(--safe)"></div></div>
+      <div class="obj-values"><span style="color:var(--safe)">28</span><span style="color:var(--text-dim)"> / 32 km</span></div>
+      <div class="obj-pct">87%</div>
+    </div>
+    <div class="obj-row">
+      <div class="obj-label">Z2 Time</div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:62%;background:var(--caution)"></div></div>
+      <div class="obj-values"><span style="color:var(--caution)">62</span><span style="color:var(--text-dim)"> / 80 %</span></div>
+      <div class="obj-pct" style="color:var(--caution)">77%</div>
+    </div>
+    <div class="obj-row">
+      <div class="obj-label">Consistency</div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:100%;background:var(--safe)"></div></div>
+      <div class="obj-values"><span style="color:var(--safe)">8</span><span style="color:var(--text-dim)"> / 8 wks</span></div>
+      <div class="obj-pct">100%</div>
+    </div>
+  </div>
+
+  <!-- Zone Compliance vs Phase Target -->
+  <div class="sec"><h2>Zone Compliance — Build Phase</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-zone-compliance" height="180"></canvas></div>
+
+  <!-- Plan Adherence Chart -->
+  <div class="sec"><h2>Plan Adherence</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-adherence" height="200"></canvas></div>
+
+  <!-- Weekly Volume Chart -->
+  <div class="sec"><h2>Weekly Volume</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-volume" height="180"></canvas></div>
+
+  <!-- Training Load Per Run -->
+  <div class="sec"><h2>Training Load Per Run</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-load" height="160"></canvas></div>
+
+  <!-- WoW Narrative -->
+  <div class="wow-card">
+    <strong style="color:var(--z2)">Week over Week:</strong> Volume <span class="badge badge-green">+12%</span> (39 vs 35 km). Long run 28 km — your longest this cycle. Z2 compliance dropped due to Wednesday tempo. Consider an extra easy run to balance.
+  </div>
+
+  <!-- Run Timeline -->
+  <div class="sec"><h2>Recent Runs</h2><div class="line"></div></div>
+  <div style="margin:8px 0">
+    <div class="run-bar">
+      <div style="width:60px;color:var(--text-dim);font-size:10px;font-family:var(--mono)">Apr 8</div>
+      <div class="run-bar-fill" style="width:35%;background:var(--z2)">8.2 km · Easy</div>
+      <div style="color:var(--text-dim);font-size:10px">52 min · sRPE 180</div>
+    </div>
+    <div class="run-bar">
+      <div style="width:60px;color:var(--text-dim);font-size:10px;font-family:var(--mono)">Apr 7</div>
+      <div class="run-bar-fill" style="width:20%;background:var(--z1)">5.0 km · Recovery</div>
+      <div style="color:var(--text-dim);font-size:10px">35 min · sRPE 100</div>
+    </div>
+    <div class="run-bar">
+      <div style="width:60px;color:var(--text-dim);font-size:10px;font-family:var(--mono)">Apr 6</div>
+      <div class="run-bar-fill" style="width:85%;background:var(--z2)">28.0 km · Long</div>
+      <div style="color:var(--text-dim);font-size:10px">2:48 · sRPE 520</div>
+    </div>
+    <div class="run-bar">
+      <div style="width:60px;color:var(--text-dim);font-size:10px;font-family:var(--mono)">Apr 4</div>
+      <div class="run-bar-fill" style="width:30%;background:var(--z4)">7.5 km · Tempo</div>
+      <div style="color:var(--text-dim);font-size:10px">38 min · sRPE 280</div>
+    </div>
+    <div class="run-bar">
+      <div style="width:60px;color:var(--text-dim);font-size:10px;font-family:var(--mono)">Apr 2</div>
+      <div class="run-bar-fill" style="width:38%;background:var(--z2)">10.0 km · Easy</div>
+      <div style="color:var(--text-dim);font-size:10px">65 min · sRPE 200</div>
+    </div>
+    <div class="run-bar">
+      <div style="width:60px;color:var(--text-dim);font-size:10px;font-family:var(--mono)">Apr 1</div>
+      <div class="run-bar-fill" style="width:22%;background:var(--z1)">5.5 km · Recovery</div>
+      <div style="color:var(--text-dim);font-size:10px">38 min</div>
+    </div>
+    <div class="run-bar">
+      <div style="width:60px;color:var(--text-dim);font-size:10px;font-family:var(--mono)">Mar 30</div>
+      <div class="run-bar-fill" style="width:70%;background:var(--z2)">25.0 km · Long</div>
+      <div style="color:var(--text-dim);font-size:10px">2:30 · sRPE 450</div>
+    </div>
+    <div class="run-bar">
+      <div style="width:60px;color:var(--text-dim);font-size:10px;font-family:var(--mono)">Mar 28</div>
+      <div class="run-bar-fill" style="width:25%;background:var(--z5)">6.0 km · Interval</div>
+      <div style="color:var(--text-dim);font-size:10px">32 min · sRPE 300</div>
+    </div>
+  </div>
+
+  <!-- Run Types -->
+  <div class="sec"><h2>Run Types — Last 4 Weeks</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-runtypes" height="160"></canvas></div>
+
+  <!-- sRPE Trend -->
+  <div class="sec"><h2>Session RPE (sRPE) Trend</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-srpe" height="160"></canvas></div>
+
+  <!-- Milestones -->
+  <div class="sec"><h2>Milestones</h2><div class="line"></div></div>
+  <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.15);border-radius:10px;padding:10px 14px;margin:5px 0;font-size:12px">
+    <div style="font-weight:700;color:var(--safe)">Longest Run: 28.0 km</div>
+    <div style="color:var(--text-muted);margin-top:2px">New distance PB this training cycle — Apr 6. Previous: 25.2 km.</div>
+  </div>
+  <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.15);border-radius:10px;padding:10px 14px;margin:5px 0;font-size:12px">
+    <div style="font-weight:700;color:var(--safe)">8-Week Streak</div>
+    <div style="color:var(--text-muted);margin-top:2px">8 consecutive weeks with 3+ runs. Consistency is the strongest predictor of race performance.</div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- TAB: PROFILE — Fitness + Body, "Am I fit enough?"             -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div id="tab-profile" class="tab-content">
+
+  <!-- VDOT Headline -->
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 22px;margin:14px 0">
+    <div style="display:flex;align-items:baseline;gap:12px">
+      <span style="font-size:32px;font-weight:700;font-family:var(--mono);color:var(--accent)">47.2</span>
+      <span style="font-size:12px;color:var(--text-dim)">effective VDOT</span>
+      <span class="badge badge-green">+1.4 /3mo</span>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
+      Race VDOT: 46.8 (HM Apr 6) · Garmin VO2max: 49 · Target VDOT: 49.0 (for 3:45 marathon)
+    </div>
+  </div>
+
+  <!-- 4 Fitness Dimensions -->
+  <div class="sec"><h2>Fitness Dimensions</h2><div class="line"></div></div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin:10px 0">
+    <div class="dim-row">
+      <div class="dim-label">Aerobic</div>
+      <div class="dim-bar"><div class="dim-fill" style="width:82%;background:var(--z2)"></div></div>
+      <div class="dim-value" style="color:var(--z2)">49.0</div>
+      <div class="dim-trend" style="color:var(--safe)">+0.5/mo</div>
+    </div>
+    <div class="dim-row">
+      <div class="dim-label">Threshold</div>
+      <div class="dim-bar"><div class="dim-fill" style="width:74%;background:var(--z3)"></div></div>
+      <div class="dim-value" style="color:var(--z3)">5:58</div>
+      <div class="dim-trend" style="color:var(--safe)">-3s/mo</div>
+    </div>
+    <div class="dim-row">
+      <div class="dim-label">Economy</div>
+      <div class="dim-bar"><div class="dim-fill" style="width:68%;background:var(--accent)"></div></div>
+      <div class="dim-value" style="color:var(--accent)">0.078</div>
+      <div class="dim-trend" style="color:var(--safe)">+0.002/mo</div>
+    </div>
+    <div class="dim-row">
+      <div class="dim-label">Resilience</div>
+      <div class="dim-bar"><div class="dim-fill" style="width:60%;background:var(--purple)"></div></div>
+      <div class="dim-value" style="color:var(--purple)">18 km</div>
+      <div class="dim-trend" style="color:var(--text-muted)">stable</div>
+    </div>
+    <div style="font-size:10px;color:var(--text-dim);margin-top:8px">
+      Aerobic = VO2max/VDOT · Threshold = Z2 pace · Economy = speed per bpm (Z2) · Resilience = cardiac drift onset km
+    </div>
+  </div>
+
+  <!-- VO2max + VDOT Trend -->
+  <div class="sec"><h2>VO2max + VDOT Trend</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-vo2" height="200"></canvas></div>
+
+  <!-- Efficiency Trend -->
+  <div class="sec"><h2>Aerobic Efficiency (Z2 speed/bpm)</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-efficiency" height="180"></canvas></div>
+
+  <!-- Split Analysis: Cardiac Drift -->
+  <div class="sec"><h2>Split Analysis — Cardiac Drift</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-drift" height="200"></canvas></div>
+  <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">Last long run (28 km). Drift onset at km 18 — HR rises while pace holds. Improving this extends your marathon wall.</div>
+
+  <!-- Pace Variability (CV) -->
+  <div class="sec"><h2>Pace Consistency (CV%)</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-pacecv" height="160"></canvas></div>
+
+  <!-- Zone Distribution Over Time -->
+  <div class="sec"><h2>Zone Distribution</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-zones" height="180"></canvas></div>
+
+  <!-- Weight + Body Comp -->
+  <div class="sec"><h2>Weight + Body Composition</h2><div class="line"></div></div>
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">Weight</div>
+      <div class="card-value">76.2</div>
+      <div class="card-sub">kg · target: 74 · <span style="color:var(--safe)">-1.3 /8wk</span></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Body Fat</div>
+      <div class="card-value">16.8%</div>
+      <div class="card-sub"><span style="color:var(--safe)">-0.6% /8wk</span></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Muscle Mass</div>
+      <div class="card-value">35.1</div>
+      <div class="card-sub">kg · stable</div>
+    </div>
+  </div>
+  <div class="chart-box"><canvas id="chart-weight" height="180"></canvas></div>
+
+  <!-- Cadence Trend -->
+  <div class="sec"><h2>Cadence Trend</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-cadence" height="160"></canvas></div>
+
+  <!-- Effort Gap: Garmin TE vs Check-in RPE -->
+  <div class="sec"><h2>Effort Gap — Garmin TE vs RPE</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-effort-gap" height="160"></canvas></div>
+  <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">When RPE exceeds TE, the run felt harder than Garmin thinks — possible fatigue accumulation.</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- TAB: READINESS — "Can I train today?"                         -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div id="tab-readiness" class="tab-content">
+
+  <!-- HRV Hero -->
+  <div style="background:rgba(52,211,153,0.05);border:1px solid rgba(52,211,153,0.12);border-radius:14px;padding:18px 22px;margin:14px 0">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px">Heart Rate Variability</div>
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <span style="font-size:32px;font-weight:700;font-family:var(--mono);color:var(--safe)">62</span>
+          <span style="font-size:12px;color:var(--text-dim)">ms today</span>
+          <span class="badge badge-green">normal</span>
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:11px;color:var(--text-muted)">7-day avg: <strong style="font-family:var(--mono)">58</strong> ms</div>
+        <div style="font-size:11px;color:var(--text-muted)">Baseline: <strong style="font-family:var(--mono)">55</strong> ms</div>
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:8px">
+      HRV above 7-day average — good recovery. You're ready for a quality session today.
+    </div>
+  </div>
+
+  <!-- Readiness Cards -->
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">Readiness</div>
+      <div class="card-value" style="color:var(--safe)">75</div>
+      <div class="card-sub">Garmin composite · good</div>
+    </div>
+    <div class="card">
+      <div class="card-label">ACWR</div>
+      <div class="card-value" style="color:var(--safe)">1.12</div>
+      <div class="card-sub">Sweet spot (0.8–1.3)</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Monotony</div>
+      <div class="card-value" style="color:var(--safe)">1.4</div>
+      <div class="card-sub">Low (safe &lt;2.0)</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Strain</div>
+      <div class="card-value" style="color:var(--text-muted)">312</div>
+      <div class="card-sub">Weekly load &times; monotony</div>
+    </div>
+  </div>
+
+  <!-- ACWR Trend -->
+  <div class="sec"><h2>ACWR Trend</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-acwr" height="180"></canvas></div>
+
+  <!-- Monotony + Strain Trend -->
+  <div class="sec"><h2>Monotony + Strain</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-monotony" height="180"></canvas></div>
+
+  <!-- HRV Trend -->
+  <div class="sec"><h2>HRV Trend</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-hrv" height="180"></canvas></div>
+
+  <!-- RHR Trend -->
+  <div class="sec"><h2>Resting Heart Rate</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-rhr" height="160"></canvas></div>
+
+  <!-- Sleep -->
+  <div class="sec"><h2>Sleep</h2><div class="line"></div></div>
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">Last Night</div>
+      <div class="card-value" style="color:var(--safe)">7:25</div>
+      <div class="card-sub">hrs · good quality</div>
+    </div>
+    <div class="card">
+      <div class="card-label">7-Day Avg</div>
+      <div class="card-value">6:52</div>
+      <div class="card-sub">hrs</div>
+    </div>
+  </div>
+  <div class="chart-box"><canvas id="chart-sleep" height="160"></canvas></div>
+
+  <!-- "Why" Factors -->
+  <div class="sec"><h2>Recovery Factors</h2><div class="line"></div></div>
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">Alcohol</div>
+      <div class="card-value" style="color:var(--safe)">0</div>
+      <div class="card-sub">drinks last 3 days</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Stress</div>
+      <div class="card-value" style="color:var(--caution)">38</div>
+      <div class="card-sub">Garmin avg · moderate</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Body Battery</div>
+      <div class="card-value" style="color:var(--safe)">72</div>
+      <div class="card-sub">morning start</div>
+    </div>
+  </div>
+
+  <!-- Correlation Sparklines with mini charts -->
+  <div class="sec"><h2>Correlations</h2><div class="line"></div></div>
+  <div class="sparkline-grid">
+    <div class="sparkline-card">
+      <div class="sparkline-label">Sleep → Readiness</div>
+      <div class="sparkline-value" style="color:var(--safe)">r = 0.48</div>
+      <canvas id="corr-sleep-readiness" height="30" style="width:100%"></canvas>
+      <div class="sparkline-trend">Strong positive · n=42</div>
+    </div>
+    <div class="sparkline-card">
+      <div class="sparkline-label">Alcohol → HRV</div>
+      <div class="sparkline-value" style="color:var(--danger)">r = -0.35</div>
+      <canvas id="corr-alcohol-hrv" height="30" style="width:100%"></canvas>
+      <div class="sparkline-trend">Moderate negative · n=38</div>
+    </div>
+    <div class="sparkline-card">
+      <div class="sparkline-label">Volume → VO2max</div>
+      <div class="sparkline-value" style="color:var(--safe)">r = 0.41</div>
+      <canvas id="corr-volume-vo2" height="30" style="width:100%"></canvas>
+      <div class="sparkline-trend">Moderate positive · n=20</div>
+    </div>
+    <div class="sparkline-card">
+      <div class="sparkline-label">Stress → Sleep</div>
+      <div class="sparkline-value" style="color:var(--caution)">r = -0.28</div>
+      <canvas id="corr-stress-sleep" height="30" style="width:100%"></canvas>
+      <div class="sparkline-trend">Weak negative · n=45</div>
+    </div>
+    <div class="sparkline-card">
+      <div class="sparkline-label">HRV → Performance</div>
+      <div class="sparkline-value" style="color:var(--safe)">r = 0.32</div>
+      <canvas id="corr-hrv-perf" height="30" style="width:100%"></canvas>
+      <div class="sparkline-trend">Moderate positive · n=30</div>
+    </div>
+    <div class="sparkline-card">
+      <div class="sparkline-label">Load → RHR</div>
+      <div class="sparkline-value" style="color:var(--caution)">r = 0.24</div>
+      <canvas id="corr-load-rhr" height="30" style="width:100%"></canvas>
+      <div class="sparkline-trend">Weak positive · n=44</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- TAB: COACH — Meta/AI, "What does Claude think?"               -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div id="tab-coach" class="tab-content">
+
+  <div class="sec"><h2>Coaching Notes — Apr 8</h2><div class="line"></div></div>
+
+  <div class="insight-box" style="background:rgba(52,211,153,0.05);border:1px solid rgba(52,211,153,0.12)">
+    <div class="insight-title" style="color:var(--safe)">Long Run Progression On Track</div>
+    <div class="insight-body">Your 28 km long run is your best this cycle and right where you need to be at Build week 3. The cardiac drift onset at 18 km suggests your aerobic ceiling is improving. Next week, aim for 30 km if readiness allows — that's your last big long run before peak.</div>
+  </div>
+
+  <div class="insight-box" style="background:rgba(251,191,36,0.05);border:1px solid rgba(251,191,36,0.12)">
+    <div class="insight-title" style="color:var(--caution)">Z2 Compliance Needs Attention</div>
+    <div class="insight-body">Your Z2 time dropped to 62% this week (target 80% for Build phase). The Wednesday tempo pushed Z3-Z4 to 32%. Consider: (1) keep tempo day but add a recovery jog the next day, (2) make sure Friday's easy run is truly easy — watch your HR ceiling at 134 bpm. Two weeks of low Z2 and your aerobic base will start slipping.</div>
+  </div>
+
+  <div class="insight-box" style="background:rgba(96,165,250,0.05);border:1px solid rgba(96,165,250,0.12)">
+    <div class="insight-title" style="color:var(--z2)">HM Result Validates Trajectory</div>
+    <div class="insight-body">Your Halbmarathon 1:42:15 maps to VDOT 46.8 — within 0.4 of your estimated 47.2. This confirms the Garmin VO2max (49) is slightly optimistic but the race-based signal is solid. Riegel back-calculation: on-track pace for a 3:54 marathon. To hit 3:45, you need VDOT 49.0 — that's 1.8 points in 6 weeks. Tight but achievable with Z2 volume consistency.</div>
+  </div>
+
+  <div class="insight-box" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06)">
+    <div class="insight-title" style="color:var(--text-muted)">Recovery Signals Look Good</div>
+    <div class="insight-body">HRV at 62 (above your 7-day avg of 58), sleep 7:25, no alcohol. Body battery started the morning at 72. All systems green — this is a good day for your scheduled tempo session. ACWR at 1.12 is in the sweet spot.</div>
+  </div>
+
+  <!-- Check-in Progress -->
+  <div class="sec"><h2>Check-in Progress</h2><div class="line"></div></div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin:10px 0">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+      <span style="font-size:11px;color:var(--text-muted)">Check-ins this week</span>
+      <span style="font-family:var(--mono);font-weight:700">3 / 4</span>
+    </div>
+    <div class="progress-bar-bg" style="height:10px">
+      <div class="progress-bar-fill" style="width:75%;background:var(--accent)"></div>
+    </div>
+    <div style="font-size:10px;color:var(--text-dim);margin-top:6px">Check in after your next run to keep RPE data flowing. sRPE is the gold standard for internal load.</div>
+  </div>
+
+  <!-- Check-in Timeline -->
+  <div class="sec"><h2>Check-in Timeline</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-checkins" height="140"></canvas></div>
+
+  <!-- Cross-domain Insight -->
+  <div class="sec"><h2>Cross-Domain Insights</h2><div class="line"></div></div>
+  <div class="narrative-item">
+    <strong style="color:var(--accent)">Temperature vs Efficiency:</strong> Your speed_per_bpm drops by ~4% on days above 22C. On your 28 km long run (18C), your efficiency was 0.081 — your best Z2 reading in 3 weeks. Race day forecast (14-18C) is in your sweet spot.
+  </div>
+  <div class="narrative-item">
+    <strong style="color:var(--accent)">Sleep → Next Day RPE:</strong> Nights with &lt;6.5h sleep correlate with +15% higher RPE on the next day's run (r=0.48). Your 7:25h last night should set you up well for tomorrow's easy run.
+  </div>
+</div>
+
+<div class="footer">
+  MOCKUP — fit dashboard concept validation · 5-tab structure · sample data · not generated from real DB
+</div>
+
+<script src="./chartjs.min.js"></script>
+<script src="./chartjs-date-adapter.min.js"></script>
+<script src="./chartjs-annotation.min.js"></script>
+<script>
+function showTab(id, btn) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  btn.classList.add('active');
+}
+
+Chart.defaults.color = '#94a3b8';
+Chart.defaults.borderColor = 'rgba(255,255,255,0.04)';
+Chart.defaults.font.family = "'Inter', 'DM Sans', sans-serif";
+Chart.defaults.font.size = 12;
+
+const weeks = ['W5','W6','W7','W8','W9','W10','W11','W12','W13','W14','W15','W16'];
+const months = ['Oct','Nov','Dec','Jan','Feb','Mar','Apr'];
+const days14 = Array.from({length:14}, (_, i) => {
+  const d = new Date(2026, 2, 25 + i);
+  return d.toISOString().slice(5,10);
+});
+const days28 = Array.from({length:28}, (_, i) => {
+  const d = new Date(2026, 2, 11 + i);
+  return d.toISOString().slice(5,10);
+});
+
+// Helper: tiny sparkline chart (no axes, no labels)
+function sparkline(canvasId, data, color, fillColor) {
+  const el = document.getElementById(canvasId);
+  if (!el) return;
+  new Chart(el, {
+    type: 'line',
+    data: { labels: data.map((_, i) => i), datasets: [{ data, borderColor: color, borderWidth: 1.5, pointRadius: 0, tension: 0.4, fill: fillColor ? { target: 'origin', above: fillColor } : false }] },
+    options: { scales: { x: { display: false }, y: { display: false } }, plugins: { legend: { display: false }, tooltip: { enabled: false } }, responsive: true, maintainAspectRatio: false }
+  });
+}
+
+// ─── OVERVIEW ───
+
+// Sparklines for all overview cards
+sparkline('spark-vdot', [45.0,45.5,45.8,46.0,46.4,46.9,47.2], '#818cf8', 'rgba(129,140,248,0.08)');
+sparkline('spark-weight', [78.5,78.0,77.8,77.5,77.2,76.8,76.2], '#94a3b8', 'rgba(148,163,184,0.06)');
+sparkline('spark-aerobic', [46,46.5,47,47.5,48,48.5,49], '#60a5fa', 'rgba(96,165,250,0.08)');
+sparkline('spark-threshold', [6.15,6.12,6.10,6.08,6.05,6.02,5.97], '#e9b308', 'rgba(233,179,8,0.08)');
+sparkline('spark-economy', [0.071,0.073,0.074,0.075,0.076,0.077,0.078], '#818cf8', 'rgba(129,140,248,0.08)');
+sparkline('spark-resilience', [15,15,16,16,17,18,18], '#c084fc', 'rgba(192,132,252,0.08)');
+sparkline('spark-vol', [28,32,35,33,38,36,39], '#60a5fa', 'rgba(96,165,250,0.08)');
+sparkline('spark-long', [18,20,22,21,25,24,28], '#34d399', 'rgba(52,211,153,0.08)');
+sparkline('spark-z2', [78,75,72,68,70,65,62], '#fbbf24', 'rgba(251,191,36,0.08)');
+sparkline('spark-streak', [2,3,4,5,6,7,8], '#34d399', 'rgba(52,211,153,0.08)');
+sparkline('spark-hrv', [52,48,55,60,50,58,62], '#34d399', 'rgba(52,211,153,0.08)');
+sparkline('spark-acwr', [0.82,0.90,1.05,1.10,1.08,1.15,1.12], '#60a5fa', 'rgba(96,165,250,0.08)');
+sparkline('spark-sleep', [7.2,6.5,7.8,7.0,7.5,6.8,7.4], '#60a5fa', 'rgba(96,165,250,0.08)');
+sparkline('spark-monotony', [1.8,1.5,1.6,1.4,1.5,1.3,1.4], '#fbbf24', 'rgba(251,191,36,0.08)');
+
+// Prediction trend with confidence band + checkpoint markers on the line
+(function() {
+  const labels = [];
+  for (let w = 1; w <= 20; w++) {
+    const d = new Date(2026, 0, 5 + (w-1)*7);
+    labels.push(d.toISOString().slice(0,10));
+  }
+  // Prediction from week 6 onward (need ~6 weeks of data)
+  const pred  = [null,null,null,null,null,268,265,261,258,255,253,250,248,244,240,236,232,null,null,null];
+  const upper = [null,null,null,null,null,275,272,268,265,262,260,257,255,251,247,242,236,null,null,null];
+  const lower = [null,null,null,null,null,262,258,255,252,249,247,244,242,238,234,230,228,null,null,null];
+
+  // Checkpoint data points plotted as extrapolated marathon times
+  // ① HM Apr 6 → VDOT 46.8 → Riegel marathon projection = 3:54 = 234 min
+  // ② 10K May 11 → target 46:30 → if hit, means on-track for 3:45 = 225 min
+  const checkpoints = [{ x: '2026-04-06', y: 234, num: '1' }, { x: '2026-05-11', y: 225, num: '2' }];
+
+  // Plugin: draw checkpoint numbers inside the points
+  const checkpointNumberPlugin = {
+    id: 'checkpointNumbers',
+    afterDatasetsDraw(chart) {
+      const meta = chart.getDatasetMeta(3); // checkpoint dataset
+      if (!meta || !meta.data) return;
+      const ctx = chart.ctx;
+      meta.data.forEach((pt, i) => {
+        if (checkpoints[i]) {
+          ctx.save();
+          ctx.fillStyle = '#fff';
+          ctx.font = 'bold 8px ' + getComputedStyle(document.body).getPropertyValue('--mono');
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(checkpoints[i].num, pt.x, pt.y);
+          ctx.restore();
+        }
+      });
+    }
+  };
+
+  new Chart(document.getElementById('chart-pred-trend'), {
+    type: 'line',
+    plugins: [checkpointNumberPlugin],
+    data: {
+      labels,
+      datasets: [
+        // Upper confidence bound
+        { label: '_upper', data: upper, borderColor: 'rgba(129,140,248,0.2)', borderWidth: 1, borderDash: [2,2], pointRadius: 0, tension: 0.3, fill: false },
+        // Lower confidence bound — fills UP to dataset index 0 (upper)
+        { label: '_lower', data: lower, borderColor: 'rgba(129,140,248,0.2)', borderWidth: 1, borderDash: [2,2], pointRadius: 0, tension: 0.3,
+          fill: { target: 0, above: 'rgba(129,140,248,0.18)', below: 'rgba(129,140,248,0.18)' } },
+        // Main prediction line
+        { label: 'Prediction', data: pred, borderColor: '#818cf8', borderWidth: 2.5, pointRadius: 2, pointBackgroundColor: '#818cf8', tension: 0.3, fill: false },
+        // Checkpoints — filled accent circles with number drawn by plugin
+        { label: 'Checkpoint', data: checkpoints, borderColor: '#c4b5fd', borderWidth: 2, pointRadius: 9, pointBackgroundColor: '#818cf8',
+          pointStyle: 'circle', showLine: false, fill: false }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        y: { min: 198, max: 280, grid: { color: ctx => ctx.tick.value < 210 ? 'transparent' : 'rgba(255,255,255,0.03)' },
+          ticks: { callback: v => v < 210 ? '' : Math.floor(v/60) + ':' + ('0'+Math.floor(v%60)).slice(-2), stepSize: 10 },
+          afterBuildTicks: axis => { axis.ticks = axis.ticks.filter(t => t.value >= 210 || t.value === 200); } },
+        x: { type: 'time', time: { unit: 'month', displayFormats: { month: "MMM ''yy" }, tooltipFormat: 'yyyy-MM-dd' },
+          grid: { display: false }, min: labels[0], max: labels[labels.length-1] }
+      },
+      plugins: {
+        legend: { display: false },
+        annotation: {
+          annotations: {
+            // Separator line between data area and phase band
+            phaseSep: { type: 'line', yMin: 208, yMax: 208, borderColor: 'rgba(255,255,255,0.08)', borderWidth: 1 },
+            // Phase band (y: 198–208) — below data area, aligned with time axis
+            phaseBase:  { type: 'box', xMin: '2026-01-05', xMax: '2026-02-23', yMin: 198, yMax: 208,
+              backgroundColor: 'rgba(52,211,153,0.15)', borderColor: 'rgba(52,211,153,0.25)', borderWidth: 1, borderRadius: 3,
+              label: { display: true, content: 'Base', color: '#34d399', font: { size: 9, weight: 700 } } },
+            phaseBuild: { type: 'box', xMin: '2026-02-23', xMax: '2026-04-06', yMin: 198, yMax: 208,
+              backgroundColor: 'rgba(129,140,248,0.2)', borderColor: 'rgba(129,140,248,0.35)', borderWidth: 1.5, borderRadius: 3,
+              label: { display: true, content: 'Build ←', color: '#a5b4fc', font: { size: 9, weight: 700 } } },
+            phasePeak:  { type: 'box', xMin: '2026-04-06', xMax: '2026-05-04', yMin: 198, yMax: 208,
+              backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderRadius: 3,
+              label: { display: true, content: 'Peak', color: 'rgba(255,255,255,0.5)', font: { size: 9, weight: 700 } } },
+            phaseTaper: { type: 'box', xMin: '2026-05-04', xMax: '2026-05-18', yMin: 198, yMax: 208,
+              backgroundColor: 'rgba(255,255,255,0.03)', borderColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderRadius: 3,
+              label: { display: true, content: 'T', color: 'rgba(255,255,255,0.4)', font: { size: 8, weight: 700 } } },
+            // Target line
+            target: { type: 'line', yMin: 225, yMax: 225, borderColor: 'rgba(52,211,153,0.5)', borderDash: [6,3], borderWidth: 1.5,
+              label: { display: true, content: 'Target 3:45', position: 'start', color: '#34d399', font: { size: 9, weight: 700 }, backgroundColor: 'transparent' } },
+            // Today marker
+            today: { type: 'line', xMin: '2026-04-08', xMax: '2026-04-08', yMin: 208, borderColor: 'rgba(251,191,36,0.5)', borderWidth: 1.5,
+              label: { display: true, content: 'today', position: 'end', color: '#fbbf24', font: { size: 9, weight: 600 }, backgroundColor: 'rgba(10,10,18,0.85)', padding: 3 } }
+          }
+        },
+        tooltip: {
+          filter: ctx => ctx.datasetIndex >= 2,
+          callbacks: {
+            label: ctx => {
+              const v = ctx.parsed.y;
+              const t = Math.floor(v/60)+':'+('0'+Math.floor(v%60)).slice(-2);
+              if (ctx.datasetIndex === 3) { const cp = checkpoints[ctx.dataIndex]; return (cp.num === '1' ? 'HM' : '10K') + ' → marathon: ' + t; }
+              return 'Prediction: ' + t;
+            }
+          }
+        }
+      }
+    }
+  });
+})();
+
+// ─── TRAINING TAB CHARTS ───
+
+// Zone Compliance: actual vs target (grouped bars)
+new Chart(document.getElementById('chart-zone-compliance'), {
+  type: 'bar',
+  data: {
+    labels: ['Z1 Recovery', 'Z2 Easy', 'Z3 Moderate', 'Z4 Hard', 'Z5 V.Hard'],
+    datasets: [
+      { label: 'Target', data: [10, 65, 10, 10, 5], backgroundColor: ['rgba(147,197,253,0.3)','rgba(96,165,250,0.3)','rgba(233,179,8,0.3)','rgba(249,115,22,0.3)','rgba(239,68,68,0.3)'], borderRadius: 4 },
+      { label: 'Actual', data: [12, 50, 18, 14, 6], backgroundColor: ['rgba(147,197,253,0.8)','rgba(96,165,250,0.8)','rgba(233,179,8,0.8)','rgba(249,115,22,0.8)','rgba(239,68,68,0.8)'], borderRadius: 4 }
+    ]
+  },
+  options: {
+    scales: { y: { beginAtZero: true, max: 80, grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { callback: v => v + '%' } }, x: { grid: { display: false } } },
+    plugins: { legend: { labels: { boxWidth: 10, padding: 12 } } }
+  }
+});
+
+// Plan Adherence
+new Chart(document.getElementById('chart-adherence'), {
+  type: 'bar',
+  data: {
+    labels: ['W13','W14','W15','W16'],
+    datasets: [
+      { label: 'Planned', data: [4, 4, 5, 4], backgroundColor: 'rgba(129,140,248,0.4)', borderRadius: 4 },
+      { label: 'Completed', data: [4, 3, 5, 3], backgroundColor: 'rgba(96,165,250,0.7)', borderRadius: 4 },
+      { label: 'Missed', data: [0, 1, 0, 1], backgroundColor: 'rgba(248,113,113,0.5)', borderRadius: 4 }
+    ]
+  },
+  options: {
+    scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.03)' } }, x: { grid: { display: false } } },
+    plugins: { legend: { labels: { boxWidth: 10, padding: 12 } } }
+  }
+});
+
+// Weekly Volume
+new Chart(document.getElementById('chart-volume'), {
+  type: 'bar',
+  data: {
+    labels: weeks,
+    datasets: [{
+      label: 'Volume (km)',
+      data: [28, 32, 30, 35, 33, 38, 36, 40, 35, 42, 35, 39],
+      backgroundColor: weeks.map((_, i) => i === weeks.length - 1 ? 'rgba(96,165,250,0.8)' : 'rgba(96,165,250,0.4)'),
+      borderRadius: 4
+    }]
+  },
+  options: {
+    scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.03)' } }, x: { grid: { display: false } } },
+    plugins: {
+      legend: { display: false },
+      annotation: { annotations: { target: { type: 'line', yMin: 50, yMax: 50, borderColor: 'rgba(129,140,248,0.4)', borderDash: [6,3], borderWidth: 1, label: { display: true, content: 'Target 50km', position: 'end', color: '#818cf8', font: { size: 10 }, backgroundColor: 'transparent' } } } }
+    }
+  }
+});
+
+// Training Load per run (scatter-like bar)
+new Chart(document.getElementById('chart-load'), {
+  type: 'bar',
+  data: {
+    labels: ['Apr 1','Apr 2','Apr 4','Apr 6','Apr 7','Apr 8'],
+    datasets: [{
+      label: 'Load (TRIMP)',
+      data: [45, 85, 110, 280, 35, 75],
+      backgroundColor: ['rgba(147,197,253,0.6)','rgba(96,165,250,0.6)','rgba(249,115,22,0.7)','rgba(96,165,250,0.8)','rgba(147,197,253,0.5)','rgba(96,165,250,0.6)'],
+      borderRadius: 4
+    }]
+  },
+  options: {
+    scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.03)' } }, x: { grid: { display: false } } },
+    plugins: { legend: { display: false } }
+  }
+});
+
+// Run Types
+new Chart(document.getElementById('chart-runtypes'), {
+  type: 'bar',
+  data: {
+    labels: ['Easy', 'Long', 'Tempo', 'Interval', 'Recovery'],
+    datasets: [{
+      label: 'Runs',
+      data: [8, 4, 3, 2, 3],
+      backgroundColor: ['rgba(96,165,250,0.7)', 'rgba(59,130,246,0.7)', 'rgba(233,179,8,0.7)', 'rgba(249,115,22,0.7)', 'rgba(147,197,253,0.5)'],
+      borderRadius: 4
+    }]
+  },
+  options: {
+    indexAxis: 'y',
+    scales: { x: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.03)' } }, y: { grid: { display: false } } },
+    plugins: { legend: { display: false } }
+  }
+});
+
+// sRPE
+new Chart(document.getElementById('chart-srpe'), {
+  type: 'bar',
+  data: {
+    labels: days28.filter((_, i) => i % 2 === 0),
+    datasets: [{
+      label: 'sRPE',
+      data: [180,null,320,150,null,480,200,null,280,160,null,520,100,180],
+      backgroundColor: [180,null,320,150,null,480,200,null,280,160,null,520,100,180].map(v => v === null ? 'transparent' : v > 400 ? 'rgba(249,115,22,0.7)' : v > 250 ? 'rgba(233,179,8,0.6)' : 'rgba(96,165,250,0.5)'),
+      borderRadius: 3
+    }]
+  },
+  options: {
+    scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.03)' } }, x: { grid: { display: false }, ticks: { maxRotation: 45 } } },
+    plugins: { legend: { display: false } }
+  }
+});
+
+// ─── PROFILE TAB CHARTS ───
+
+// VO2max + VDOT trend
+new Chart(document.getElementById('chart-vo2'), {
+  type: 'line',
+  data: {
+    labels: months,
+    datasets: [
+      { label: 'Garmin VO2max', data: [46,46,47,47,48,48,49], borderColor: 'rgba(148,163,184,0.6)', borderWidth: 2, pointRadius: 3, tension: 0.3, borderDash: [4,2] },
+      { label: 'Race VDOT', data: [null,null,44.5,null,null,null,46.8], borderColor: 'rgba(129,140,248,0.9)', borderWidth: 2, pointRadius: 6, pointBackgroundColor: '#818cf8', tension: 0, spanGaps: false },
+      { label: 'Effective VDOT', data: [45.0,45.5,45.8,46.0,46.4,46.9,47.2], borderColor: 'rgba(96,165,250,0.8)', borderWidth: 2, pointRadius: 3, tension: 0.3 }
+    ]
+  },
+  options: {
+    scales: { y: { min: 43, max: 51, grid: { color: 'rgba(255,255,255,0.03)' } }, x: { grid: { display: false } } },
+    plugins: {
+      legend: { labels: { boxWidth: 10, padding: 12 } },
+      annotation: { annotations: { target: { type: 'line', yMin: 49, yMax: 49, borderColor: 'rgba(52,211,153,0.3)', borderDash: [6,3], borderWidth: 1, label: { display: true, content: 'Target VDOT 49.0', position: 'start', color: '#34d399', font: { size: 10 }, backgroundColor: 'transparent' } } } }
+    }
+  }
+});
+
+// Efficiency
+new Chart(document.getElementById('chart-efficiency'), {
+  type: 'line',
+  data: {
+    labels: weeks,
+    datasets: [{
+      label: 'speed/bpm (Z2)',
+      data: [0.071,0.072,0.070,0.074,0.073,0.075,0.074,0.076,0.075,0.077,0.076,0.078],
+      borderColor: 'rgba(129,140,248,0.8)', borderWidth: 2, pointRadius: 3, tension: 0.3,
+      fill: { target: 'origin', above: 'rgba(129,140,248,0.06)' }
+    }]
+  },
+  options: {
+    scales: { y: { grid: { color: 'rgba(255,255,255,0.03)' } }, x: { grid: { display: false } } },
+    plugins: { legend: { display: false } }
+  }
+});
+
+// Split Analysis: Cardiac Drift on long run
+new Chart(document.getElementById('chart-drift'), {
+  type: 'line',
+  data: {
+    labels: Array.from({length:28}, (_, i) => (i+1) + 'km'),
+    datasets: [
+      { label: 'Pace (min/km)', data: [5.9,5.85,5.8,5.8,5.75,5.75,5.8,5.78,5.8,5.82,5.85,5.85,5.88,5.9,5.92,5.95,5.98,6.0,6.05,6.1,6.15,6.18,6.2,6.25,6.3,6.35,6.4,6.5], borderColor: 'rgba(96,165,250,0.8)', borderWidth: 2, pointRadius: 2, tension: 0.3, yAxisID: 'y' },
+      { label: 'Heart Rate', data: [128,130,132,133,133,134,134,135,135,136,137,138,139,140,142,144,146,148,150,152,154,155,156,158,159,160,162,164], borderColor: 'rgba(248,113,113,0.7)', borderWidth: 2, pointRadius: 2, tension: 0.3, yAxisID: 'y1' }
+    ]
+  },
+  options: {
+    scales: {
+      y: { position: 'left', title: { display: true, text: 'Pace', color: '#64748b', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.03)' }, reverse: true },
+      y1: { position: 'right', title: { display: true, text: 'HR', color: '#64748b', font: { size: 10 } }, grid: { display: false } },
+      x: { grid: { display: false }, ticks: { maxTicksLimit: 10 } }
+    },
+    plugins: {
+      legend: { labels: { boxWidth: 10, padding: 12 } },
+      annotation: { annotations: { drift: { type: 'line', xMin: 17, xMax: 17, borderColor: 'rgba(251,191,36,0.5)', borderDash: [4,3], borderWidth: 1, label: { display: true, content: 'Drift onset', position: 'start', color: '#fbbf24', font: { size: 9 }, backgroundColor: 'transparent', yAdjust: -10 } } } }
+    }
+  }
+});
+
+// Pace CV
+new Chart(document.getElementById('chart-pacecv'), {
+  type: 'line',
+  data: {
+    labels: weeks,
+    datasets: [{
+      label: 'Pace CV %',
+      data: [8.2, 7.5, 9.1, 7.0, 6.8, 7.2, 6.5, 6.2, 7.0, 5.8, 6.0, 5.5],
+      borderColor: 'rgba(192,132,252,0.7)', borderWidth: 2, pointRadius: 3, tension: 0.3,
+      fill: { target: 'origin', above: 'rgba(192,132,252,0.05)' }
+    }]
+  },
+  options: {
+    scales: { y: { min: 3, max: 12, grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { callback: v => v + '%' } }, x: { grid: { display: false } } },
+    plugins: { legend: { display: false } }
+  }
+});
+
+// Zone Distribution (stacked)
+new Chart(document.getElementById('chart-zones'), {
+  type: 'bar',
+  data: {
+    labels: months,
+    datasets: [
+      { label: 'Z1', data: [15,12,14,10,12,11,12], backgroundColor: 'rgba(147,197,253,0.7)' },
+      { label: 'Z2', data: [60,58,62,55,58,52,50], backgroundColor: 'rgba(96,165,250,0.7)' },
+      { label: 'Z3', data: [12,15,10,18,14,18,18], backgroundColor: 'rgba(233,179,8,0.7)' },
+      { label: 'Z4', data: [10,10,10,12,12,14,14], backgroundColor: 'rgba(249,115,22,0.7)' },
+      { label: 'Z5', data: [3,5,4,5,4,5,6], backgroundColor: 'rgba(239,68,68,0.7)' }
+    ]
+  },
+  options: {
+    scales: { y: { stacked: true, max: 100, grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { callback: v => v+'%' } }, x: { stacked: true, grid: { display: false } } },
+    plugins: { legend: { labels: { boxWidth: 10, padding: 8 } } }
+  }
+});
+
+// Weight
+new Chart(document.getElementById('chart-weight'), {
+  type: 'line',
+  data: {
+    labels: months,
+    datasets: [{
+      label: 'Weight (kg)', data: [78.5,78.0,77.8,77.5,77.2,76.8,76.2],
+      borderColor: 'rgba(148,163,184,0.6)', borderWidth: 2, pointRadius: 4, pointBackgroundColor: 'rgba(148,163,184,0.8)', tension: 0.3
+    }]
+  },
+  options: {
+    scales: { y: { min: 73, max: 80, grid: { color: 'rgba(255,255,255,0.03)' } }, x: { grid: { display: false } } },
+    plugins: {
+      legend: { display: false },
+      annotation: { annotations: { target: { type: 'box', yMin: 73.5, yMax: 74.5, backgroundColor: 'rgba(52,211,153,0.06)', borderColor: 'rgba(52,211,153,0.15)', label: { display: true, content: 'Race weight', position: 'start', color: '#34d399', font: { size: 10 }, backgroundColor: 'transparent' } } } }
+    }
+  }
+});
+
+// Cadence
+new Chart(document.getElementById('chart-cadence'), {
+  type: 'line',
+  data: {
+    labels: weeks,
+    datasets: [{ label: 'Cadence (spm)', data: [168,170,169,171,170,172,171,173,172,174,173,174], borderColor: 'rgba(192,132,252,0.7)', borderWidth: 2, pointRadius: 3, tension: 0.3 }]
+  },
+  options: {
+    scales: { y: { min: 164, max: 178, grid: { color: 'rgba(255,255,255,0.03)' } }, x: { grid: { display: false } } },
+    plugins: { legend: { display: false } }
+  }
+});
+
+// Effort Gap: TE vs RPE (normalized 1-5 scale)
+new Chart(document.getElementById('chart-effort-gap'), {
+  type: 'line',
+  data: {
+    labels: ['Mar 25','Mar 27','Mar 28','Mar 30','Apr 1','Apr 2','Apr 4','Apr 6','Apr 7','Apr 8'],
+    datasets: [
+      { label: 'Garmin TE', data: [2.1,3.5,2.8,3.8,1.5,2.5,3.8,4.2,1.2,2.4], borderColor: 'rgba(148,163,184,0.6)', borderWidth: 2, pointRadius: 3, tension: 0.3 },
+      { label: 'Check-in RPE', data: [2.0,3.0,3.2,4.0,1.5,2.5,4.2,4.5,1.0,2.5], borderColor: 'rgba(249,115,22,0.7)', borderWidth: 2, pointRadius: 3, tension: 0.3 }
+    ]
+  },
+  options: {
+    scales: { y: { min: 0, max: 5, grid: { color: 'rgba(255,255,255,0.03)' } }, x: { grid: { display: false }, ticks: { maxRotation: 45 } } },
+    plugins: { legend: { labels: { boxWidth: 10, padding: 12 } } }
+  }
+});
+
+// ─── READINESS TAB CHARTS ───
+
+// ACWR
+new Chart(document.getElementById('chart-acwr'), {
+  type: 'line',
+  data: {
+    labels: weeks,
+    datasets: [{ label: 'ACWR', data: [0.75,0.82,0.90,0.95,1.05,1.10,1.08,1.15,1.05,1.12,1.08,1.12], borderColor: 'rgba(96,165,250,0.8)', borderWidth: 2, pointRadius: 3, tension: 0.3 }]
+  },
+  options: {
+    scales: { y: { min: 0.5, max: 1.6, grid: { color: 'rgba(255,255,255,0.03)' } }, x: { grid: { display: false } } },
+    plugins: {
+      legend: { display: false },
+      annotation: { annotations: {
+        safe: { type: 'box', yMin: 0.8, yMax: 1.3, backgroundColor: 'rgba(52,211,153,0.04)', borderColor: 'transparent', label: { display: true, content: 'Sweet spot', position: 'start', color: '#34d399', font: { size: 9 }, backgroundColor: 'transparent' } },
+        danger: { type: 'box', yMin: 1.3, yMax: 1.6, backgroundColor: 'rgba(248,113,113,0.04)', borderColor: 'transparent', label: { display: true, content: 'Injury risk', position: 'start', color: '#f87171', font: { size: 9 }, backgroundColor: 'transparent' } }
+      } }
+    }
+  }
+});
+
+// Monotony + Strain
+new Chart(document.getElementById('chart-monotony'), {
+  type: 'line',
+  data: {
+    labels: weeks,
+    datasets: [
+      { label: 'Monotony', data: [1.8,1.5,1.3,1.6,1.4,1.2,1.5,1.3,1.1,1.4,1.6,1.4], borderColor: 'rgba(251,191,36,0.7)', borderWidth: 2, pointRadius: 3, tension: 0.3, yAxisID: 'y' },
+      { label: 'Strain', data: [280,310,250,340,290,350,320,380,300,340,280,312], borderColor: 'rgba(192,132,252,0.6)', borderWidth: 2, pointRadius: 3, tension: 0.3, yAxisID: 'y1' }
+    ]
+  },
+  options: {
+    scales: {
+      y: { position: 'left', min: 0, max: 2.5, title: { display: true, text: 'Monotony', color: '#64748b', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.03)' } },
+      y1: { position: 'right', min: 0, max: 500, title: { display: true, text: 'Strain', color: '#64748b', font: { size: 10 } }, grid: { display: false } },
+      x: { grid: { display: false } }
+    },
+    plugins: {
+      legend: { labels: { boxWidth: 10, padding: 12 } },
+      annotation: { annotations: { danger: { type: 'line', yMin: 2.0, yMax: 2.0, borderColor: 'rgba(248,113,113,0.3)', borderDash: [6,3], borderWidth: 1, label: { display: true, content: 'Illness risk >2.0', position: 'end', color: '#f87171', font: { size: 9 }, backgroundColor: 'transparent' } } } }
+    }
+  }
+});
+
+// HRV
+new Chart(document.getElementById('chart-hrv'), {
+  type: 'line',
+  data: {
+    labels: days28,
+    datasets: [
+      { label: 'HRV (daily)', data: [50,52,48,55,60,50,58,62,54,56,65,58,60,55,52,48,55,60,50,58,62,54,56,65,58,60,55,62], borderColor: 'rgba(52,211,153,0.4)', borderWidth: 1, pointRadius: 2, pointBackgroundColor: 'rgba(52,211,153,0.5)', tension: 0 },
+      { label: '7-day avg', data: [null,null,null,null,null,null,52,54,53,54,55,55,56,55,54,53,53,54,54,55,55,55,56,57,57,58,57,58], borderColor: 'rgba(52,211,153,0.9)', borderWidth: 2, pointRadius: 0, tension: 0.3 }
+    ]
+  },
+  options: {
+    scales: { y: { min: 35, max: 75, grid: { color: 'rgba(255,255,255,0.03)' } }, x: { grid: { display: false }, ticks: { maxTicksLimit: 10 } } },
+    plugins: { legend: { labels: { boxWidth: 10, padding: 12 } } }
+  }
+});
+
+// RHR
+new Chart(document.getElementById('chart-rhr'), {
+  type: 'line',
+  data: {
+    labels: days28,
+    datasets: [{ label: 'RHR', data: [54,52,54,51,50,53,51,49,52,50,48,51,50,52,53,54,51,50,53,51,49,52,50,48,51,50,52,49], borderColor: 'rgba(248,113,113,0.6)', borderWidth: 2, pointRadius: 2, tension: 0.3 }]
+  },
+  options: {
+    scales: { y: { min: 44, max: 58, grid: { color: 'rgba(255,255,255,0.03)' } }, x: { grid: { display: false }, ticks: { maxTicksLimit: 10 } } },
+    plugins: { legend: { display: false } }
+  }
+});
+
+// Sleep
+new Chart(document.getElementById('chart-sleep'), {
+  type: 'bar',
+  data: {
+    labels: days14,
+    datasets: [{
+      label: 'Sleep (hrs)',
+      data: [7.2,6.5,7.8,7.0,6.3,7.5,8.0,6.8,7.2,7.5,6.5,7.0,6.8,7.4],
+      backgroundColor: [7.2,6.5,7.8,7.0,6.3,7.5,8.0,6.8,7.2,7.5,6.5,7.0,6.8,7.4].map(v => v >= 7 ? 'rgba(96,165,250,0.6)' : v >= 6 ? 'rgba(251,191,36,0.5)' : 'rgba(248,113,113,0.5)'),
+      borderRadius: 3
+    }]
+  },
+  options: {
+    scales: { y: { min: 4, max: 9, grid: { color: 'rgba(255,255,255,0.03)' } }, x: { grid: { display: false } } },
+    plugins: {
+      legend: { display: false },
+      annotation: { annotations: { target: { type: 'box', yMin: 7, yMax: 9, backgroundColor: 'rgba(52,211,153,0.03)', borderColor: 'transparent', label: { display: true, content: '7+ hrs', position: 'start', color: '#34d399', font: { size: 9 }, backgroundColor: 'transparent' } } } }
+    }
+  }
+});
+
+// Correlation sparklines (rolling 8-week r values)
+function corrSparkline(id, data, color) {
+  sparkline(id, data, color, color.replace('0.7', '0.05').replace('0.6', '0.05'));
+}
+corrSparkline('corr-sleep-readiness', [0.35,0.38,0.42,0.40,0.44,0.46,0.45,0.48], 'rgba(52,211,153,0.7)');
+corrSparkline('corr-alcohol-hrv', [-0.28,-0.30,-0.32,-0.34,-0.33,-0.35,-0.34,-0.35], 'rgba(248,113,113,0.7)');
+corrSparkline('corr-volume-vo2', [0.30,0.32,0.35,0.38,0.36,0.39,0.40,0.41], 'rgba(52,211,153,0.7)');
+corrSparkline('corr-stress-sleep', [-0.20,-0.22,-0.24,-0.25,-0.26,-0.27,-0.28,-0.28], 'rgba(251,191,36,0.7)');
+corrSparkline('corr-hrv-perf', [0.25,0.26,0.28,0.30,0.29,0.31,0.31,0.32], 'rgba(52,211,153,0.7)');
+corrSparkline('corr-load-rhr', [0.18,0.20,0.21,0.22,0.23,0.24,0.23,0.24], 'rgba(251,191,36,0.7)');
+
+// ─── COACH TAB CHARTS ───
+
+// Check-in timeline (which days had check-ins)
+new Chart(document.getElementById('chart-checkins'), {
+  type: 'bar',
+  data: {
+    labels: days14,
+    datasets: [
+      { label: 'RPE', data: [null,4,null,7,3,null,8,null,5,null,6,4,null,5], backgroundColor: 'rgba(249,115,22,0.6)', borderRadius: 3 },
+      { label: 'Sleep Quality', data: [3,4,null,3,2,null,4,null,3,null,4,3,null,4], backgroundColor: 'rgba(96,165,250,0.4)', borderRadius: 3 }
+    ]
+  },
+  options: {
+    scales: { y: { min: 0, max: 10, grid: { color: 'rgba(255,255,255,0.03)' }, title: { display: true, text: 'Score', color: '#64748b', font: { size: 10 } } }, x: { grid: { display: false } } },
+    plugins: { legend: { labels: { boxWidth: 10, padding: 12 } } }
+  }
+});
+</script>
+</body>
+</html>

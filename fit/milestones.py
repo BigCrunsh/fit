@@ -4,6 +4,8 @@ import logging
 import sqlite3
 from datetime import date
 
+from fit.analysis import RUNNING_TYPES_SQL
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,9 +23,9 @@ def detect_milestones(conn: sqlite3.Connection) -> list[dict]:
     milestones = []
 
     # ── Longest run ──
-    longest = conn.execute("""
+    longest = conn.execute(f"""
         SELECT date, distance_km FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') AND distance_km IS NOT NULL
+        WHERE type IN {RUNNING_TYPES_SQL} AND distance_km IS NOT NULL
         ORDER BY distance_km DESC LIMIT 2
     """).fetchall()
     if len(longest) >= 2:
@@ -40,23 +42,23 @@ def detect_milestones(conn: sqlite3.Connection) -> list[dict]:
                 "new_value": round(current_best["distance_km"], 1),
             })
 
-    # ── Best speed_per_bpm (aerobic efficiency) ──
-    best_eff = conn.execute("""
-        SELECT date, speed_per_bpm FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') AND speed_per_bpm IS NOT NULL
-        ORDER BY speed_per_bpm DESC LIMIT 2
+    # ── Best speed_per_bpm_z2 (aerobic efficiency — Z2 only for honest signal) ──
+    best_eff = conn.execute(f"""
+        SELECT date, speed_per_bpm_z2 FROM activities
+        WHERE type IN {RUNNING_TYPES_SQL} AND speed_per_bpm_z2 IS NOT NULL
+        ORDER BY speed_per_bpm_z2 DESC LIMIT 2
     """).fetchall()
     if len(best_eff) >= 2:
         current_best = best_eff[0]
         previous_best = best_eff[1]
         days_ago = (date.today() - date.fromisoformat(current_best["date"])).days
-        if days_ago <= 14 and current_best["speed_per_bpm"] > previous_best["speed_per_bpm"]:
+        if days_ago <= 14 and current_best["speed_per_bpm_z2"] > previous_best["speed_per_bpm_z2"]:
             milestones.append({
                 "type": "best_efficiency",
-                "message": f"New efficiency PB: {current_best['speed_per_bpm']:.2f} m/min/bpm!",
+                "message": f"New Z2 efficiency PB: {current_best['speed_per_bpm_z2']:.2f} m/min/bpm!",
                 "date": current_best["date"],
-                "previous_value": round(previous_best["speed_per_bpm"], 2),
-                "new_value": round(current_best["speed_per_bpm"], 2),
+                "previous_value": round(previous_best["speed_per_bpm_z2"], 2),
+                "new_value": round(current_best["speed_per_bpm_z2"], 2),
             })
 
     # ── VO2max peak ──

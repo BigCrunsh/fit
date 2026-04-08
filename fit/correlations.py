@@ -6,6 +6,8 @@ import math
 import sqlite3
 from datetime import date, timedelta
 
+from fit.analysis import RUNNING_TYPES_SQL
+
 logger = logging.getLogger(__name__)
 
 # Predefined correlation pairs: (name, query_x, query_y, lag_days, min_n_report, min_n_coaching)
@@ -20,8 +22,8 @@ CORRELATION_PAIRS = [
      "SELECT c.date, CASE c.sleep_quality WHEN 'Poor' THEN 1 WHEN 'OK' THEN 2 WHEN 'Good' THEN 3 ELSE NULL END as x FROM checkins c WHERE c.sleep_quality IS NOT NULL",
      "SELECT h.date, h.training_readiness as y FROM daily_health h WHERE h.training_readiness IS NOT NULL"),
     ("temp→efficiency", "temp_speed_per_bpm", 0, 20, 30,
-     "SELECT a.date, a.temp_at_start_c as x FROM activities a WHERE a.temp_at_start_c IS NOT NULL AND a.type IN ('running', 'track_running', 'trail_running')",
-     "SELECT a.date, a.speed_per_bpm as y FROM activities a WHERE a.speed_per_bpm IS NOT NULL AND a.type IN ('running', 'track_running', 'trail_running')"),
+     f"SELECT a.date, a.temp_at_start_c as x FROM activities a WHERE a.temp_at_start_c IS NOT NULL AND a.type IN {RUNNING_TYPES_SQL}",
+     f"SELECT a.date, a.speed_per_bpm as y FROM activities a WHERE a.speed_per_bpm IS NOT NULL AND a.type IN {RUNNING_TYPES_SQL}"),
     ("water→HRV (lag 1)", "water_lag1_hrv", 1, 20, 30,
      "SELECT c.date, c.water_liters as x FROM checkins c WHERE c.water_liters IS NOT NULL",
      "SELECT h.date, h.hrv_last_night as y FROM daily_health h WHERE h.hrv_last_night IS NOT NULL"),

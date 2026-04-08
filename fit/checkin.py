@@ -7,6 +7,8 @@ from datetime import date
 from rich.console import Console
 from rich.prompt import Prompt
 
+from fit.analysis import RUNNING_TYPES_SQL
+
 logger = logging.getLogger(__name__)
 console = Console()
 
@@ -56,7 +58,7 @@ def run_checkin(conn: sqlite3.Connection) -> None:
 
     # RPE (show today's activity for context)
     activity_today = conn.execute(
-        "SELECT name, avg_hr, hr_zone FROM activities WHERE date = ? AND type IN ('running', 'track_running', 'trail_running') ORDER BY training_load DESC LIMIT 1",
+        f"SELECT name, avg_hr, hr_zone FROM activities WHERE date = ? AND type IN {RUNNING_TYPES_SQL} ORDER BY training_load DESC LIMIT 1",
         (today,),
     ).fetchone()
     if activity_today:
@@ -94,7 +96,7 @@ def run_checkin(conn: sqlite3.Connection) -> None:
 
     # RPE cross-write to activities
     if data.get("rpe") and activity_today:
-        conn.execute("UPDATE activities SET rpe = ? WHERE date = ? AND type IN ('running', 'track_running', 'trail_running')", (data["rpe"], today))
+        conn.execute(f"UPDATE activities SET rpe = ? WHERE date = ? AND type IN {RUNNING_TYPES_SQL}", (data["rpe"], today))
 
     conn.commit()
 

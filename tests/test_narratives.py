@@ -147,26 +147,25 @@ class TestTrendBadges:
 
         badges = generate_trend_badges(db)
         metrics = [b["metric"] for b in badges]
-        # Should have at least Z2 compliance and Volume badges
-        assert "Z2 compliance" in metrics
+        # Should have at least Z2 time and Volume badges
+        assert "Z2 time" in metrics
         assert "Volume" in metrics
 
-    def test_z2_compliance_green_when_high(self, db):
-        """Z2 compliance >= 80 should be green."""
-        self._insert_weeks(db, count=5)
+    def test_z2_trend_shows_change(self, db):
+        """Z2 badge should show trend direction (pp change), not absolute value."""
+        self._insert_weeks(db, count=8)
         badges = generate_trend_badges(db)
-        z2_badge = next((b for b in badges if b["metric"] == "Z2 compliance"), None)
+        z2_badge = next((b for b in badges if b["metric"] == "Z2 time"), None)
         assert z2_badge is not None
-        assert z2_badge["color"] == "green"
+        assert "pp" in z2_badge["value"]
 
-    def test_volume_badge_always_blue(self, db):
-        """Volume badge should always be blue (informational)."""
+    def test_volume_badge_shows_change(self, db):
+        """Volume badge should show week-over-week % change."""
         self._insert_weeks(db, count=5)
         badges = generate_trend_badges(db)
         vol_badge = next((b for b in badges if b["metric"] == "Volume"), None)
         assert vol_badge is not None
-        assert vol_badge["color"] == "blue"
-        assert "km/wk" in vol_badge["value"]
+        assert "%" in vol_badge["value"]
 
 
 # ── Why Connectors ──

@@ -4,6 +4,8 @@ import logging
 import sqlite3
 from datetime import date
 
+from fit.analysis import RUNNING_TYPES_SQL
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,14 +35,14 @@ def generate_trend_badges(conn: sqlite3.Connection) -> list[dict]:
     badges = []
 
     # Efficiency: compare last 4 weeks avg vs prior 4 weeks
-    eff_recent = conn.execute("""
+    eff_recent = conn.execute(f"""
         SELECT AVG(speed_per_bpm_z2) as avg_eff FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') AND speed_per_bpm_z2 IS NOT NULL
+        WHERE type IN {RUNNING_TYPES_SQL} AND speed_per_bpm_z2 IS NOT NULL
         AND date >= date('now', '-28 days')
     """).fetchone()
-    eff_prior = conn.execute("""
+    eff_prior = conn.execute(f"""
         SELECT AVG(speed_per_bpm_z2) as avg_eff FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') AND speed_per_bpm_z2 IS NOT NULL
+        WHERE type IN {RUNNING_TYPES_SQL} AND speed_per_bpm_z2 IS NOT NULL
         AND date >= date('now', '-56 days') AND date < date('now', '-28 days')
     """).fetchone()
 
@@ -95,33 +97,51 @@ def generate_trend_badges(conn: sqlite3.Connection) -> list[dict]:
                 "detail": f"{vo2_latest['vo2max']:.0f} vs {vo2_4wk['vo2max']:.0f} (4wk ago)",
             })
 
-    # Z2 compliance: latest week z12_pct
-    if weeks and weeks[0]["z12_pct"] is not None:
-        z12 = weeks[0]["z12_pct"]
-        if z12 >= 80:
-            color = "green"
-        elif z12 >= 50:
-            color = "yellow"
+    # Z2 compliance: trend (recent 4wk vs prior 4wk)
+    z12_recent = conn.execute(
+        "SELECT ROUND(AVG(z12_pct), 1) as avg FROM (SELECT z12_pct FROM weekly_agg ORDER BY week DESC LIMIT 4)"
+    ).fetchone()
+    z12_prior = conn.execute(
+        "SELECT ROUND(AVG(z12_pct), 1) as avg FROM (SELECT z12_pct FROM weekly_agg ORDER BY week DESC LIMIT 4 OFFSET 4)"
+    ).fetchone()
+    if (z12_recent and z12_recent["avg"] is not None
+            and z12_prior and z12_prior["avg"] is not None):
+        diff = z12_recent["avg"] - z12_prior["avg"]
+        if diff > 5:
+            # Improving — but only green if actually near target
+            color = "green" if z12_recent["avg"] >= 60 else "yellow"
+            direction = "up"
+        elif diff < -5:
+            color, direction = "red", "down"
         else:
-            color = "red"
+            color, direction = "gray", "flat"
         badges.append({
-            "metric": "Z2 compliance",
-            "direction": "up" if z12 >= 80 else "down" if z12 < 50 else "flat",
-            "value": f"{z12:.0f}%",
+            "metric": "Z2 time",
+            "direction": direction,
+            "value": f"{diff:+.0f}pp",
             "color": color,
-            "detail": f"Z1+Z2 time this week: {z12:.0f}% (target: >=80%)",
+            "detail": f"Z1+Z2 4wk avg: {z12_recent['avg']:.0f}% vs prior {z12_prior['avg']:.0f}%",
         })
 
-    # Volume: latest week run_km (informational, always blue)
-    if weeks and weeks[0]["run_km"] is not None:
-        km = weeks[0]["run_km"]
-        badges.append({
-            "metric": "Volume",
-            "direction": "info",
-            "value": f"{km:.0f}km/wk",
-            "color": "blue",
-            "detail": f"This week: {km:.1f}km across {weeks[0]['run_count'] or 0} runs",
-        })
+    # Volume: week-over-week trend
+    if len(weeks) >= 2 and weeks[0]["run_km"] is not None and weeks[1]["run_km"] is not None:
+        this_km = weeks[0]["run_km"]
+        last_km = weeks[1]["run_km"]
+        if last_km > 0:
+            pct = ((this_km - last_km) / last_km) * 100
+            if pct > 10:
+                color, direction = "yellow", "up"
+            elif pct < -20:
+                color, direction = "blue", "down"
+            else:
+                color, direction = "gray", "flat"
+            badges.append({
+                "metric": "Volume",
+                "direction": direction,
+                "value": f"{pct:+.0f}%",
+                "color": color,
+                "detail": f"This week: {this_km:.0f}km vs last: {last_km:.0f}km",
+            })
 
     return badges
 
@@ -135,10 +155,10 @@ def generate_why_connectors(conn: sqlite3.Connection) -> list[dict]:
     Returns list of connector dicts with pattern descriptions and run dates.
     """
     # Check data sufficiency
-    run_count = conn.execute("""
+    run_count = conn.execute(f"""
         SELECT COUNT(*) as n FROM activities a
         JOIN checkins c ON a.date = c.date OR c.date = date(a.date, '-1 day')
-        WHERE a.type IN ('running', 'track_running', 'trail_running') AND a.speed_per_bpm IS NOT NULL
+        WHERE a.type IN {RUNNING_TYPES_SQL} AND a.speed_per_bpm IS NOT NULL
     """).fetchone()
 
     if not run_count or run_count["n"] < 10:
@@ -149,12 +169,12 @@ def generate_why_connectors(conn: sqlite3.Connection) -> list[dict]:
         }]
 
     # Get 5 worst efficiency runs (lowest speed_per_bpm)
-    worst_runs = conn.execute("""
+    worst_runs = conn.execute(f"""
         SELECT a.id, a.date, a.speed_per_bpm, a.name,
                c.sleep_quality, c.alcohol, c.alcohol_detail
         FROM activities a
         LEFT JOIN checkins c ON c.date = date(a.date, '-1 day')
-        WHERE a.type IN ('running', 'track_running', 'trail_running') AND a.speed_per_bpm IS NOT NULL
+        WHERE a.type IN {RUNNING_TYPES_SQL} AND a.speed_per_bpm IS NOT NULL
         ORDER BY a.speed_per_bpm ASC LIMIT 5
     """).fetchall()
 
@@ -411,11 +431,11 @@ def detect_walk_break_need(conn: sqlite3.Connection) -> dict | None:
     Without split-level data, uses per-run pace variability as proxy.
     """
     # Get recent Z2 runs
-    z2_runs = conn.execute("""
+    z2_runs = conn.execute(f"""
         SELECT id, date, distance_km, duration_min, pace_sec_per_km,
                avg_hr, speed_per_bpm
         FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') AND hr_zone IN ('Z1', 'Z2')
+        WHERE type IN {RUNNING_TYPES_SQL} AND hr_zone IN ('Z1', 'Z2')
         AND date >= date('now', '-42 days')
         ORDER BY date DESC LIMIT 10
     """).fetchall()
@@ -508,9 +528,9 @@ def generate_z2_remediation(conn: sqlite3.Connection, config: dict) -> dict | No
     ) / max(low_weeks, 1)
 
     # Calculate target pace from recent Z2 runs
-    z2_pace = conn.execute("""
+    z2_pace = conn.execute(f"""
         SELECT AVG(pace_sec_per_km) as avg_pace FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') AND hr_zone IN ('Z1', 'Z2')
+        WHERE type IN {RUNNING_TYPES_SQL} AND hr_zone IN ('Z1', 'Z2')
         AND date >= date('now', '-21 days')
     """).fetchone()
 
@@ -670,7 +690,7 @@ def generate_volume_story(conn: sqlite3.Connection) -> dict | None:
     Returns dict with gap_annotations and milestone_annotations for the volume chart.
     """
     dates = conn.execute(
-        "SELECT DISTINCT date FROM activities WHERE type IN ('running','track_running','trail_running') ORDER BY date"
+        f"SELECT DISTINCT date FROM activities WHERE type IN {RUNNING_TYPES_SQL} ORDER BY date"
     ).fetchall()
     if len(dates) < 2:
         return None
@@ -685,9 +705,9 @@ def generate_volume_story(conn: sqlite3.Connection) -> dict | None:
             gaps.append({"start": date_list[i - 1], "end": date_list[i], "days": gap_days})
 
     # Find first Z2 run (ever or after a gap)
-    first_z2 = conn.execute("""
+    first_z2 = conn.execute(f"""
         SELECT date, distance_km FROM activities
-        WHERE type IN ('running','track_running','trail_running')
+        WHERE type IN {RUNNING_TYPES_SQL}
         AND hr_zone IN ('Z1', 'Z2') AND date >= date('now', '-30 days')
         ORDER BY date ASC LIMIT 1
     """).fetchone()

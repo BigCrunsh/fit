@@ -90,6 +90,30 @@ def run_alerts(conn: sqlite3.Connection, config: dict) -> list[dict]:
                                {"avg_spo2": avg_spo2, "consecutive_days": consecutive_low,
                                 "threshold": spo2_threshold}))
 
+    # Rule: Monotony >2.0 — overtraining risk (Foster's guideline)
+    mono_row = conn.execute(
+        "SELECT monotony FROM weekly_agg WHERE monotony IS NOT NULL ORDER BY week DESC LIMIT 1"
+    ).fetchone()
+    if mono_row and mono_row["monotony"] and mono_row["monotony"] > 2.0:
+        fired.append(_fire(conn, today, "high_monotony",
+                           f"Training monotony is {mono_row['monotony']:.1f} (threshold: 2.0). "
+                           f"Vary your sessions — mix easy, tempo, and long runs to reduce overtraining risk.",
+                           {"monotony": mono_row["monotony"]}))
+
+    # Rule: ACWR <0.6 — undertraining / detraining risk
+    acwr_row = conn.execute(
+        "SELECT acwr, week FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1"
+    ).fetchone()
+    if acwr_row and acwr_row["acwr"] is not None and acwr_row["acwr"] < 0.6:
+        # Don't fire on partial current week (Mon-Wed)
+        iso = date.today().isocalendar()
+        current_week = f"{iso.year}-W{iso.week:02d}"
+        if acwr_row["week"] != current_week or iso.weekday >= 5:
+            fired.append(_fire(conn, today, "undertraining",
+                               f"ACWR is {acwr_row['acwr']:.2f} — significantly below optimal (0.8-1.3). "
+                               f"You may be losing fitness. Gradually increase training load.",
+                               {"acwr": acwr_row["acwr"]}))
+
     # Rule: Deload overdue — no deload week in 4+ consecutive build weeks (task 4.9)
     deload_alert = _check_deload_overdue(conn, today)
     if deload_alert:

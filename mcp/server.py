@@ -10,6 +10,7 @@ from mcp.server.fastmcp import FastMCP
 logger = logging.getLogger(__name__)
 
 # Load config to find DB path (must be after mcp import to avoid circular)
+from fit.analysis import RUNNING_TYPES_SQL  # noqa: E402
 from fit.config import get_config  # noqa: E402
 
 config = get_config(Path(__file__).parent.parent)
@@ -100,9 +101,9 @@ def get_health_summary(days: int = 7) -> str:
         if not row or row["days"] == 0:
             return f"No health data available for the last {days} days."
 
-        run_count = conn.execute("""
+        run_count = conn.execute(f"""
             SELECT COUNT(*) FROM activities
-            WHERE type IN ('running', 'track_running', 'trail_running') AND date >= date('now', ?)
+            WHERE type IN {RUNNING_TYPES_SQL} AND date >= date('now', ?)
         """, (f"-{days} days",)).fetchone()[0]
 
         weight = conn.execute("""
@@ -251,10 +252,10 @@ def _ctx_health(conn) -> list[str]:
     s = []
     # Today's completed activity (so coaching knows what was already done)
     from datetime import date as _date
-    today_runs = conn.execute("""
+    today_runs = conn.execute(f"""
         SELECT name, distance_km, duration_min, avg_hr, hr_zone, run_type, pace_sec_per_km
         FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') AND date = date('now')
+        WHERE type IN {RUNNING_TYPES_SQL} AND date = date('now')
     """).fetchall()
     if today_runs:
         for r in today_runs:
@@ -291,6 +292,12 @@ def _ctx_health(conn) -> list[str]:
     streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
     if streak:
         s.append(f"Consistency streak: {streak['consecutive_weeks_3plus']} weeks with 3+ runs")
+    # Monotony/strain — leading overtraining indicators
+    ms_row = conn.execute("SELECT monotony, strain FROM weekly_agg WHERE monotony IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
+    if ms_row:
+        m, st = ms_row["monotony"], ms_row["strain"]
+        m_flag = " (HIGH — overtraining risk)" if m and m > 2.0 else ""
+        s.append(f"Monotony: {m}{m_flag}, Strain: {st}")
     return s
 
 
@@ -309,20 +316,20 @@ def _ctx_training(conn) -> list[str]:
         s.append(f"Active phase: {phase['phase']} — {phase['name']} ({phase['start_date']} to {phase['end_date']})")
         if phase["z12_pct_target"]:
             s.append(f"  Phase Z1+Z2 target: {phase['z12_pct_target']}%")
-    types = conn.execute("""
+    types = conn.execute(f"""
         SELECT run_type, COUNT(*) as n FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') AND date >= date('now', '-28 days')
+        WHERE type IN {RUNNING_TYPES_SQL} AND date >= date('now', '-28 days')
         GROUP BY run_type ORDER BY n DESC
     """).fetchall()
     if types:
         s.append("Run types (4wk): " + ", ".join(f"{r['run_type']}:{r['n']}" for r in types))
-    spb = conn.execute("""
+    spb = conn.execute(f"""
         SELECT ROUND(AVG(speed_per_bpm), 3) as recent FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') AND speed_per_bpm IS NOT NULL AND date >= date('now', '-28 days')
+        WHERE type IN {RUNNING_TYPES_SQL} AND speed_per_bpm IS NOT NULL AND date >= date('now', '-28 days')
     """).fetchone()
-    spb_prev = conn.execute("""
+    spb_prev = conn.execute(f"""
         SELECT ROUND(AVG(speed_per_bpm), 3) as prev FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') AND speed_per_bpm IS NOT NULL
+        WHERE type IN {RUNNING_TYPES_SQL} AND speed_per_bpm IS NOT NULL
         AND date BETWEEN date('now', '-56 days') AND date('now', '-29 days')
     """).fetchone()
     if spb and spb["recent"]:
@@ -363,10 +370,10 @@ def _ctx_splits(conn) -> list[str]:
     s = []
     try:
         # Most recent running activity with splits
-        act = conn.execute("""
+        act = conn.execute(f"""
             SELECT a.id, a.date, a.name, a.distance_km, a.temp_at_start_c, a.humidity_at_start_pct
             FROM activities a
-            WHERE a.type IN ('running', 'track_running', 'trail_running') AND a.splits_status = 'done'
+            WHERE a.type IN {RUNNING_TYPES_SQL} AND a.splits_status = 'done'
             ORDER BY a.date DESC LIMIT 1
         """).fetchone()
         if not act:
@@ -415,12 +422,13 @@ def _ctx_plan(conn) -> list[str]:
 
         # Plan adherence
         adherence = compute_plan_adherence(conn)
-        if adherence and adherence.get("compliance_pct") is not None:
-            s.append(f"Plan adherence: {adherence['compliance_pct']:.0f}% weekly compliance")
-            if adherence.get("missed_count"):
-                s.append(f"  Missed workouts: {adherence['missed_count']}")
-            if adherence.get("override_pattern"):
-                s.append(f"  Override pattern: {adherence['override_pattern']}")
+        if adherence and adherence.get("weekly_compliance_pct") is not None:
+            s.append(f"Plan adherence: {adherence['weekly_compliance_pct']:.0f}% weekly compliance")
+            missed = adherence.get("missed", [])
+            if missed:
+                s.append(f"  Missed workouts: {len(missed)}")
+            if adherence.get("systematic_override"):
+                s.append("  Systematic intensity override detected (easy→hard pattern)")
 
         # This week's plan (all upcoming workouts in next 10 days)
         upcoming = conn.execute("""
@@ -438,10 +446,11 @@ def _ctx_plan(conn) -> list[str]:
 
         # Readiness recommendation
         try:
-            config = {"coaching": {"readiness_gate_threshold": 40}}
-            rec = get_readiness_recommendation(conn, config)
-            if rec and rec.get("swap_recommended"):
-                s.append(f"  READINESS WARNING: {rec['message']}")
+            from fit.config import get_config as _get_config
+            _cfg = _get_config(Path(__file__).parent.parent)
+            rec = get_readiness_recommendation(conn, _cfg)
+            if rec and rec.get("recommend_swap"):
+                s.append(f"  READINESS WARNING: {rec['recommendation']}")
         except Exception:
             pass
     except Exception:

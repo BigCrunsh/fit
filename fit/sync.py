@@ -8,7 +8,7 @@ from pathlib import Path
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn
 
 from fit import garmin, weather
-from fit.analysis import enrich_activity, compute_weekly_agg
+from fit.analysis import RUNNING_TYPES_SQL, enrich_activity, compute_weekly_agg
 from fit.calibration import get_active_calibration, extract_lthr_from_race
 
 logger = logging.getLogger(__name__)
@@ -280,9 +280,9 @@ def _match_race_calendar(conn: sqlite3.Connection) -> None:
         WHERE rc.status = 'completed' AND rc.activity_id IS NULL
     """).fetchall()
     for rc in unmatched:
-        activity = conn.execute("""
+        activity = conn.execute(f"""
             SELECT id, distance_km, duration_min FROM activities
-            WHERE date = ? AND type IN ('running', 'track_running', 'trail_running') ORDER BY distance_km DESC LIMIT 1
+            WHERE date = ? AND type IN {RUNNING_TYPES_SQL} ORDER BY distance_km DESC LIMIT 1
         """, (rc["date"],)).fetchone()
         if activity:
             dur = activity["duration_min"] or 0

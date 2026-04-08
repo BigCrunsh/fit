@@ -16,6 +16,13 @@ REPO_ROOT = Path(__file__).parent.parent
 MIGRATIONS_DIR = REPO_ROOT / "migrations"
 
 
+def _conn():
+    """Get a database connection with migrations applied."""
+    from fit.config import get_config
+    from fit.db import get_db
+    return get_db(get_config(), migrations_dir=MIGRATIONS_DIR)
+
+
 @click.group()
 @click.version_option(version="0.1.0", prog_name="fit")
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug logging to console.")
@@ -73,6 +80,7 @@ def splits(backfill: bool, activity_id: str):
 
     try:
         from fit import garmin
+        from fit.analysis import RUNNING_TYPES_SQL
         from fit.fit_file import process_splits_for_activity
 
         token_dir = config["sync"]["garmin_token_dir"]
@@ -83,9 +91,9 @@ def splits(backfill: bool, activity_id: str):
             n = process_splits_for_activity(conn, api, activity_id, config)
             console.print(f"  [green]✓[/green] {n} splits for activity {activity_id}")
         elif backfill:
-            rows = conn.execute("""
+            rows = conn.execute(f"""
                 SELECT id FROM activities
-                WHERE type IN ('running', 'track_running', 'trail_running') AND (splits_status IS NULL OR splits_status = 'download_failed')
+                WHERE type IN {RUNNING_TYPES_SQL} AND (splits_status IS NULL OR splits_status = 'download_failed')
                 ORDER BY date DESC LIMIT ?
             """, (max_downloads,)).fetchall()
             console.print(f"[bold]Processing {len(rows)} activities (max {max_downloads} per batch)...[/bold]")
@@ -112,11 +120,8 @@ def splits(backfill: bool, activity_id: str):
 def checkin():
     """Interactive daily check-in logger."""
     from fit.checkin import run_checkin
-    from fit.config import get_config
-    from fit.db import get_db
 
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
         run_checkin(conn)
     finally:
@@ -180,11 +185,7 @@ def races(ctx):
 @races.command("list")
 def races_list():
     """Show race calendar with match status."""
-    from fit.config import get_config
-    from fit.db import get_db
-
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
         rows = conn.execute("""
             SELECT rc.id, rc.date, rc.name, rc.distance, rc.status, rc.target_time, rc.result_time,
@@ -226,11 +227,7 @@ def races_add():
     """Add a race to the calendar interactively."""
     from rich.prompt import Prompt
 
-    from fit.config import get_config
-    from fit.db import get_db
-
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
         name = Prompt.ask("  Race name")
         race_date = Prompt.ask("  Date (YYYY-MM-DD)")
@@ -276,11 +273,7 @@ def races_update(race_id):
     """Update a race in the calendar."""
     from rich.prompt import Prompt
 
-    from fit.config import get_config
-    from fit.db import get_db
-
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
         row = conn.execute("SELECT * FROM race_calendar WHERE id = ?", (race_id,)).fetchone()
         if not row:
@@ -333,11 +326,7 @@ def races_delete(race_id):
     """Delete a race from the calendar."""
     from rich.prompt import Prompt
 
-    from fit.config import get_config
-    from fit.db import get_db
-
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
         row = conn.execute("SELECT name, date, distance FROM race_calendar WHERE id = ?", (race_id,)).fetchone()
         if not row:
@@ -378,12 +367,9 @@ def target(ctx):
 @click.argument("race_id", type=int)
 def target_set(race_id):
     """Set the target race. Objectives re-derive automatically."""
-    from fit.config import get_config
-    from fit.db import get_db
     from fit.goals import set_target_race
 
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
         race = set_target_race(conn, race_id)
         console.print(f"\n  [green]✓ Target set: {race['name']} ({race['distance']}) on {race['date']}[/green]")
@@ -435,12 +421,9 @@ def target_show():
     from rich.panel import Panel
     from rich.table import Table
 
-    from fit.config import get_config
-    from fit.db import get_db
     from fit.goals import get_target_race
 
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
         race = get_target_race(conn)
         if not race:
@@ -600,12 +583,9 @@ def target_show():
 @target.command("clear")
 def target_clear():
     """Remove the target race."""
-    from fit.config import get_config
-    from fit.db import get_db
     from fit.goals import clear_target_race
 
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
         clear_target_race(conn)
         console.print("  [green]✓ Target race cleared[/green]")
@@ -624,12 +604,9 @@ def goal_add():
     """Add a new goal interactively."""
     from rich.prompt import Prompt
 
-    from fit.config import get_config
-    from fit.db import get_db
     from fit.goals import create_goal
 
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
         name = Prompt.ask("  Goal name")
         goal_type = Prompt.ask("  Type", choices=["race", "metric", "habit"])
@@ -659,11 +636,7 @@ def goal_add():
 @goal.command("list")
 def goal_list():
     """Show all active goals with progress."""
-    from fit.config import get_config
-    from fit.db import get_db
-
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
         from rich import box as rich_box
         from rich.panel import Panel
@@ -707,17 +680,18 @@ def goal_list():
 @click.argument("goal_id", type=int)
 def goal_complete(goal_id: int):
     """Mark a goal as achieved."""
-    from fit.config import get_config
-    from fit.db import get_db
     from fit.goals import log_goal_event
 
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
+        existing = conn.execute("SELECT id, name FROM goals WHERE id = ? AND active = 1", (goal_id,)).fetchone()
+        if not existing:
+            console.print(f"  [red]Goal {goal_id} not found or already completed.[/red]")
+            return
         conn.execute("UPDATE goals SET active = 0 WHERE id = ?", (goal_id,))
         log_goal_event(conn, goal_id, None, "goal_completed", "Goal marked as achieved")
         conn.commit()
-        console.print(f"  [green]✓ Goal {goal_id} completed[/green]")
+        console.print(f"  [green]✓ Goal {goal_id} ({existing['name']}) completed[/green]")
     finally:
         conn.close()
 
@@ -736,11 +710,7 @@ def plan_show(ctx):
     """Show next 7 days of planned workouts."""
     from datetime import date, timedelta
 
-    from fit.config import get_config
-    from fit.db import get_db
-
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
         today = date.today()
         end = today + timedelta(days=7)
@@ -785,12 +755,9 @@ def plan_show(ctx):
 @click.argument("file", type=click.Path(exists=True))
 def plan_import(file):
     """Import planned workouts from CSV."""
-    from fit.config import get_config
-    from fit.db import get_db
     from fit.plan import import_plan_csv
 
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
         count = import_plan_csv(conn, file)
         console.print(f"  [green]✓ Imported {count} workouts from {file}[/green]")
@@ -818,11 +785,8 @@ def plan_validate(file):
 def import_health(file):
     """Import body comp from Apple Health export (Export.zip or Export.xml)."""
     from fit.apple_health import import_apple_health
-    from fit.config import get_config
-    from fit.db import get_db
 
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
         result = import_apple_health(conn, file)
         if result.get("error"):
@@ -844,12 +808,9 @@ def import_health(file):
 def doctor():
     """Validate data pipeline health."""
     from fit.calibration import get_calibration_status
-    from fit.config import get_config
     from fit.data_health import check_data_sources
-    from fit.db import get_db
 
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
         from rich import box as rich_box
         from rich.panel import Panel
@@ -921,12 +882,9 @@ def doctor():
 @main.command()
 def correlate():
     """Compute cross-domain correlations and display results."""
-    from fit.config import get_config
     from fit.correlations import compute_all_correlations
-    from fit.db import get_db
 
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
     try:
         from rich import box as rich_box
         from rich.panel import Panel
@@ -1005,11 +963,8 @@ def calibrate(metric: str):
     from rich.prompt import Prompt
 
     from fit.calibration import add_calibration
-    from fit.config import get_config
-    from fit.db import get_db
 
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
 
     try:
         if metric == "max_hr":
@@ -1040,11 +995,7 @@ def status():
     from rich.panel import Panel
     from rich.table import Table
 
-    from fit.config import get_config
-    from fit.db import get_db
-
-    config = get_config()
-    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    conn = _conn()
 
     try:
         last_sync = conn.execute("SELECT MAX(date) FROM daily_health").fetchone()[0] or "never"
@@ -1088,12 +1039,16 @@ def status():
             t.add_row("HRV", f"{h['hrv_last_night'] or '—'} ms", "")
             t.add_row("Sleep", f"{h['sleep_duration_hours']:.1f}h" if h["sleep_duration_hours"] else "—", "")
 
-        # ACWR
-        acwr_row = conn.execute("SELECT acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
-        if acwr_row and acwr_row["acwr"]:
-            v = acwr_row["acwr"]
+        # ACWR + monotony
+        agg_row = conn.execute("SELECT acwr, monotony, strain FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
+        if agg_row and agg_row["acwr"]:
+            v = agg_row["acwr"]
             safety = "[green]safe[/]" if 0.8 <= v <= 1.3 else "[yellow]caution[/]" if v <= 1.5 else "[red]DANGER[/]"
             t.add_row("ACWR", f"{v:.2f}", safety)
+        if agg_row and agg_row["monotony"]:
+            m = agg_row["monotony"]
+            m_status = "[red]high[/]" if m > 2.0 else "[yellow]moderate[/]" if m > 1.5 else ""
+            t.add_row("Monotony", f"{m:.1f}", m_status)
 
         # Streak
         streak_row = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()

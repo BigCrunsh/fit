@@ -4,6 +4,8 @@ import json
 import logging
 from datetime import date
 
+from fit.analysis import RUNNING_TYPES_SQL
+
 logger = logging.getLogger(__name__)
 
 SAFE = "#34d399"
@@ -49,7 +51,7 @@ def _all_charts(conn):
         })})
 
     # Load (Training tab)
-    runs = conn.execute("SELECT date, training_load FROM activities WHERE type IN ('running', 'track_running', 'trail_running') AND training_load IS NOT NULL ORDER BY date").fetchall()
+    runs = conn.execute(f"SELECT date, training_load FROM activities WHERE type IN {RUNNING_TYPES_SQL} AND training_load IS NOT NULL ORDER BY date").fetchall()
     if runs:
         colors = [Z2 + "99" if (r["training_load"] or 0) < 150 else Z3 + "99" if r["training_load"] < 250 else Z4 + "99" if r["training_load"] < 350 else DANGER + "99" for r in runs]
         charts.append({"id": "chart-load", "config": json.dumps({
@@ -206,7 +208,7 @@ def _all_charts(conn):
         })})
 
     # Speed per BPM (Fitness tab — hero chart)
-    eff = conn.execute("SELECT date, speed_per_bpm, speed_per_bpm_z2 FROM activities WHERE type IN ('running', 'track_running', 'trail_running') AND speed_per_bpm IS NOT NULL ORDER BY date").fetchall()
+    eff = conn.execute(f"SELECT date, speed_per_bpm, speed_per_bpm_z2 FROM activities WHERE type IN {RUNNING_TYPES_SQL} AND speed_per_bpm IS NOT NULL ORDER BY date").fetchall()
     if eff:
         charts.append({"id": "chart-efficiency", "config": json.dumps({
             "type": "line",
@@ -289,11 +291,11 @@ def _all_charts(conn):
         })})
 
     # Run type breakdown stacked (Training tab)
-    type_weeks = conn.execute("""
+    type_weeks = conn.execute(f"""
         SELECT strftime('%Y-W', date, 'weekday 0', '-6 days') ||
                substr('0' || (cast(strftime('%W', date) as integer)), -2) as week,
                run_type, COUNT(*) as n
-        FROM activities WHERE type IN ('running', 'track_running', 'trail_running') AND run_type IS NOT NULL
+        FROM activities WHERE type IN {RUNNING_TYPES_SQL} AND run_type IS NOT NULL
         GROUP BY week, run_type ORDER BY week
     """).fetchall()
     if type_weeks:
@@ -328,9 +330,9 @@ def _all_charts(conn):
             })})
 
     # Cadence trend (Fitness tab — W3)
-    cadence = conn.execute("""
+    cadence = conn.execute(f"""
         SELECT date, avg_cadence FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') AND avg_cadence IS NOT NULL AND date >= date('now','-90 days')
+        WHERE type IN {RUNNING_TYPES_SQL} AND avg_cadence IS NOT NULL AND date >= date('now','-90 days')
         ORDER BY date
     """).fetchall()
     if cadence:
@@ -349,11 +351,11 @@ def _all_charts(conn):
 
     # RPE chart (Fitness tab) — Garmin effort (from aerobic_te) vs actual RPE
     # aerobic_te is 1-5 Garmin scale, map to RPE 1-10: RPE ≈ aerobic_te * 2
-    rpe_data = conn.execute("""
+    rpe_data = conn.execute(f"""
         SELECT a.date, a.rpe as actual_rpe, a.aerobic_te,
                ROUND(a.aerobic_te * 2, 1) as garmin_rpe
         FROM activities a
-        WHERE a.type IN ('running', 'track_running', 'trail_running') AND a.aerobic_te IS NOT NULL
+        WHERE a.type IN {RUNNING_TYPES_SQL} AND a.aerobic_te IS NOT NULL
         
         ORDER BY a.date
     """).fetchall()
@@ -657,9 +659,9 @@ def _get_event_annotations(conn) -> dict:
 
     # First Z2 run (milestone annotation — only on training charts)
     try:
-        first_z2 = conn.execute("""
+        first_z2 = conn.execute(f"""
             SELECT date FROM activities
-            WHERE type IN ('running','track_running','trail_running')
+            WHERE type IN {RUNNING_TYPES_SQL}
             AND hr_zone IN ('Z1', 'Z2') AND date >= date('now', '-30 days')
             ORDER BY date ASC LIMIT 1
         """).fetchone()

@@ -7,6 +7,8 @@ import re
 from datetime import date, timedelta
 from pathlib import Path
 
+from fit.analysis import RUNNING_TYPES_SQL
+
 logger = logging.getLogger(__name__)
 
 # Runna workout name pattern (German):
@@ -436,12 +438,12 @@ def compute_plan_adherence(conn, week_str=None):
     planned = [dict(r) for r in planned]
 
     # Get actual running activities for the week
-    actuals = conn.execute("""
+    actuals = conn.execute(f"""
         SELECT id, date, type, distance_km, duration_min, avg_hr,
                hr_zone, effort_class, run_type, pace_sec_per_km
         FROM activities
         WHERE date BETWEEN ? AND ?
-          AND type IN ('running', 'track_running', 'trail_running')
+          AND type IN {RUNNING_TYPES_SQL}
         ORDER BY date
     """, (week_start.isoformat(), week_end.isoformat())).fetchall()
     actuals = [dict(r) for r in actuals]
@@ -623,9 +625,9 @@ def _detect_systematic_override(conn, week_start):
     # Check how many of those days had Z3+ runs
     z3_plus_count = 0
     for d in easy_dates:
-        activity = conn.execute("""
+        activity = conn.execute(f"""
             SELECT hr_zone FROM activities
-            WHERE date = ? AND type IN ('running', 'track_running', 'trail_running') AND hr_zone IS NOT NULL
+            WHERE date = ? AND type IN {RUNNING_TYPES_SQL} AND hr_zone IS NOT NULL
             ORDER BY duration_min DESC LIMIT 1
         """, (d,)).fetchone()
         if activity and activity["hr_zone"]:
@@ -715,15 +717,15 @@ def get_readiness_recommendation(conn, config):
     threshold = base_threshold
 
     # Check for return-to-run (gap >= 14 days in last 30 days)
-    gap_check = conn.execute("""
+    gap_check = conn.execute(f"""
         SELECT MAX(date) as last_run FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running')
+        WHERE type IN {RUNNING_TYPES_SQL}
           AND date < date('now', '-14 days')
           AND date >= date('now', '-60 days')
     """).fetchone()
-    recent_run = conn.execute("""
+    recent_run = conn.execute(f"""
         SELECT MIN(date) as first_recent FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') AND date >= date('now', '-14 days')
+        WHERE type IN {RUNNING_TYPES_SQL} AND date >= date('now', '-14 days')
     """).fetchone()
 
     if gap_check and gap_check["last_run"] and recent_run and recent_run["first_recent"]:
@@ -801,12 +803,12 @@ def get_upcoming_plan(conn, days=7):
 
     plan_version = version_row[0]
 
-    planned = conn.execute("""
+    planned = conn.execute(f"""
         SELECT pw.*, a.id as activity_id, a.distance_km as actual_km,
                a.duration_min as actual_min, a.effort_class as actual_effort
         FROM planned_workouts pw
         LEFT JOIN activities a
-            ON pw.date = a.date AND a.type IN ('running', 'track_running', 'trail_running')
+            ON pw.date = a.date AND a.type IN {RUNNING_TYPES_SQL}
         WHERE pw.date BETWEEN ? AND ?
           AND pw.plan_version = ?
           AND pw.status = 'active'

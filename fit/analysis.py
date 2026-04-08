@@ -6,6 +6,10 @@ from datetime import date, timedelta
 
 logger = logging.getLogger(__name__)
 
+# Canonical set of running activity types (Garmin classifies some as track/trail)
+RUNNING_TYPES = ("running", "track_running", "trail_running")
+RUNNING_TYPES_SQL = "('running','track_running','trail_running')"
+
 
 # ── HR Zone Computation (parallel models) ──
 
@@ -108,7 +112,7 @@ def classify_run_type(activity: dict, config: dict = None, recent_long_run_avg: 
     Long run detection uses dual condition:
     - (>30% of weekly volume AND >=8km) OR (>=12km absolute floor override)
     """
-    if activity.get("type") not in ("running", "track_running", "trail_running"):
+    if activity.get("type") not in RUNNING_TYPES:
         return None
 
     name = (activity.get("name") or "").lower()
@@ -166,7 +170,7 @@ def enrich_activity(activity: dict, config: dict, lthr: int | None = None,
 
     z2_range = config.get("analysis", {}).get("speed_per_bpm_hr_range", [115, 134])
     # Speed per BPM only for running activities
-    if activity.get("type") in ("running", "track_running", "trail_running"):
+    if activity.get("type") in RUNNING_TYPES:
         activity["speed_per_bpm"] = compute_speed_per_bpm(
             activity.get("distance_km"), activity.get("duration_min"), activity.get("avg_hr")
         )
@@ -203,17 +207,17 @@ def compute_weekly_agg(conn: sqlite3.Connection, week_str: str,
     monday = date.fromisocalendar(year, week_num, 1)
     sunday = monday + timedelta(days=6)
 
-    runs = conn.execute("""
+    runs = conn.execute(f"""
         SELECT distance_km, duration_min, pace_sec_per_km, avg_hr, avg_cadence,
                training_load, hr_zone, run_type
         FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') AND date BETWEEN ? AND ?
+        WHERE type IN {RUNNING_TYPES_SQL} AND date BETWEEN ? AND ?
     """, (monday.isoformat(), sunday.isoformat())).fetchall()
 
-    cross = conn.execute("""
+    cross = conn.execute(f"""
         SELECT duration_min, training_load
         FROM activities
-        WHERE type NOT IN ('running', 'track_running', 'trail_running') AND date BETWEEN ? AND ?
+        WHERE type NOT IN {RUNNING_TYPES_SQL} AND date BETWEEN ? AND ?
     """, (monday.isoformat(), sunday.isoformat())).fetchall()
 
     health = conn.execute("""
@@ -529,7 +533,7 @@ def detect_training_gap(conn: sqlite3.Connection) -> dict | None:
     Returns dict with gap info and volume cap recommendations, or None if no gap.
     """
     last_run = conn.execute(
-        "SELECT MAX(date) as last_date FROM activities WHERE type IN ('running', 'track_running', 'trail_running')"
+        f"SELECT MAX(date) as last_date FROM activities WHERE type IN {RUNNING_TYPES_SQL}"
     ).fetchone()
 
     if not last_run or not last_run["last_date"]:
@@ -543,11 +547,11 @@ def detect_training_gap(conn: sqlite3.Connection) -> dict | None:
 
     # Compute pre-gap weekly average (4 weeks before last run)
     pre_gap_start = last_date - timedelta(days=28)
-    pre_gap = conn.execute("""
+    pre_gap = conn.execute(f"""
         SELECT AVG(weekly_km) as avg_km FROM (
             SELECT SUM(distance_km) as weekly_km
             FROM activities
-            WHERE type IN ('running', 'track_running', 'trail_running') AND date BETWEEN ? AND ?
+            WHERE type IN {RUNNING_TYPES_SQL} AND date BETWEEN ? AND ?
             GROUP BY strftime('%Y-W%W', date)
         )
     """, (pre_gap_start.isoformat(), last_run["last_date"])).fetchone()

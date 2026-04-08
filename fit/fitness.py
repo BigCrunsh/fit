@@ -5,6 +5,8 @@ import math
 import sqlite3
 from datetime import date
 
+from fit.analysis import RUNNING_TYPES_SQL
+
 logger = logging.getLogger(__name__)
 
 # ── Daniels VDOT Formula ──
@@ -75,9 +77,9 @@ def _compute_aerobic(conn: sqlite3.Connection) -> dict:
 
 def _compute_threshold(conn: sqlite3.Connection) -> dict:
     """Threshold: Z2 pace at HR ceiling (speed at controlled effort)."""
-    rows = conn.execute("""
+    rows = conn.execute(f"""
         SELECT date, speed_per_bpm_z2 FROM activities
-        WHERE type IN ('running','track_running','trail_running')
+        WHERE type IN {RUNNING_TYPES_SQL}
         AND speed_per_bpm_z2 IS NOT NULL
         AND date >= date('now', '-56 days')
         ORDER BY date
@@ -102,9 +104,9 @@ def _compute_threshold(conn: sqlite3.Connection) -> dict:
 
 def _compute_economy(conn: sqlite3.Connection) -> dict:
     """Economy: overall speed per BPM (running efficiency)."""
-    rows = conn.execute("""
+    rows = conn.execute(f"""
         SELECT date, speed_per_bpm FROM activities
-        WHERE type IN ('running','track_running','trail_running')
+        WHERE type IN {RUNNING_TYPES_SQL}
         AND speed_per_bpm IS NOT NULL
         AND date >= date('now', '-56 days')
         ORDER BY date
@@ -130,9 +132,9 @@ def _compute_economy(conn: sqlite3.Connection) -> dict:
 def _compute_resilience(conn: sqlite3.Connection) -> dict:
     """Resilience: drift onset km from split analysis (how far before HR decouples)."""
     # Check if split data exists
-    splits_runs = conn.execute("""
+    splits_runs = conn.execute(f"""
         SELECT a.id, a.date, a.distance_km FROM activities a
-        WHERE a.type IN ('running','track_running','trail_running')
+        WHERE a.type IN {RUNNING_TYPES_SQL}
         AND a.splits_status = 'done'
         AND a.distance_km >= 8
         AND a.date >= date('now', '-56 days')
@@ -586,12 +588,25 @@ def compute_achievability(conn, objectives: list[dict], days_remaining: int) -> 
             trend_rate = dim.get("rate_per_month")
 
         elif "volume" in obj["name"].lower() or "km/week" in unit:
-            row = conn.execute("SELECT run_km FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
-            current = row["run_km"] if row else 0
+            # Use 4-week avg (not just latest week which may be a deload)
+            row = conn.execute(
+                "SELECT ROUND(AVG(run_km), 1) as avg FROM (SELECT run_km FROM weekly_agg ORDER BY week DESC LIMIT 4)"
+            ).fetchone()
+            current = row["avg"] if row and row["avg"] else 0
+            # Safe ramp projection: ~7% per week avg (accounts for deloads)
+            if current and current > 0:
+                weeks = max(days_remaining / 7 - 3, 1)  # -3 for taper
+                projected_peak = current * (1.07 ** weeks)
+                trend_rate = (projected_peak - current) / max(months, 0.5)
 
         elif "long run" in obj["name"].lower():
             row = conn.execute("SELECT longest_run_km FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
             current = row["longest_run_km"] if row else 0
+            # Long run builds ~1-2km per week safely
+            if current and current > 0:
+                weeks = max(days_remaining / 7 - 3, 1)
+                projected_peak = current + weeks * 1.5
+                trend_rate = (projected_peak - current) / max(months, 0.5)
 
         elif "consistency" in obj["name"].lower() or "consecutive" in unit:
             row = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
@@ -609,25 +624,30 @@ def compute_achievability(conn, objectives: list[dict], days_remaining: int) -> 
             gap = target - current
             obj["gap"] = round(gap, 1)
 
-            # Project: can we close the gap in time?
+            # Achievability: on_track = already met OR within 10%.
+            # tight = projected to reach with safe progression.
+            # at_risk = projected won't reach in time.
             if gap <= 0:
+                obj["achievability"] = "on_track"
+            elif gap <= target * 0.1:
+                # Within 10% of target — almost there
                 obj["achievability"] = "on_track"
             elif trend_rate and trend_rate > 0:
                 months_needed = gap / trend_rate
                 if months_needed <= months:
-                    obj["achievability"] = "on_track"
-                elif months_needed <= months * 1.2:
+                    obj["achievability"] = "tight"  # achievable but not there yet
+                elif months_needed <= months * 1.3:
                     obj["achievability"] = "tight"
                 else:
                     obj["achievability"] = "at_risk"
             elif "consistency" in obj["name"].lower():
                 weeks_remaining = days_remaining / 7
                 if current + weeks_remaining >= target:
-                    obj["achievability"] = "on_track" if current > 0 else "tight"
+                    obj["achievability"] = "tight" if current > 0 else "at_risk"
                 else:
                     obj["achievability"] = "at_risk"
             else:
-                obj["achievability"] = "tight" if gap < target * 0.1 else "at_risk"
+                obj["achievability"] = "at_risk"
         else:
             obj["gap"] = None
             obj["achievability"] = "unknown"

@@ -5,6 +5,8 @@ import logging
 import sqlite3
 from datetime import date
 
+from fit.analysis import RUNNING_TYPES_SQL
+
 logger = logging.getLogger(__name__)
 
 
@@ -18,13 +20,13 @@ def generate_run_story(conn: sqlite3.Connection, config: dict) -> dict | None:
     Degrades gracefully without .fit data (uses per-run averages).
     """
     # Find most recent long run
-    long_run = conn.execute("""
+    long_run = conn.execute(f"""
         SELECT a.id, a.date, a.name, a.distance_km, a.duration_min,
                a.avg_hr, a.pace_sec_per_km, a.speed_per_bpm, a.run_type,
                a.temp_at_start_c, a.humidity_at_start_pct, a.splits_status,
                a.training_load, a.hr_zone
         FROM activities a
-        WHERE a.type IN ('running', 'track_running', 'trail_running') AND a.run_type = 'long'
+        WHERE a.type IN {RUNNING_TYPES_SQL} AND a.run_type = 'long'
         ORDER BY a.date DESC LIMIT 1
     """).fetchone()
 
@@ -289,10 +291,10 @@ def compute_heat_acclimatization(conn: sqlite3.Connection) -> dict | None:
     Returns heat acclimatization trend and race-day projection.
     """
     # Get runs with temperature data in the last 8 weeks
-    hot_runs = conn.execute("""
+    hot_runs = conn.execute(f"""
         SELECT date, speed_per_bpm, temp_at_start_c, humidity_at_start_pct
         FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') AND temp_at_start_c IS NOT NULL
+        WHERE type IN {RUNNING_TYPES_SQL} AND temp_at_start_c IS NOT NULL
             AND temp_at_start_c > 20
             AND date >= date('now', '-56 days')
         ORDER BY date
@@ -315,9 +317,9 @@ def compute_heat_acclimatization(conn: sqlite3.Connection) -> dict | None:
 
     # Race-day projection (Berlin late September: ~15°C)
     race_temp = 15
-    cool_runs = conn.execute("""
+    cool_runs = conn.execute(f"""
         SELECT AVG(speed_per_bpm) as avg_eff FROM activities
-        WHERE type IN ('running', 'track_running', 'trail_running') AND temp_at_start_c IS NOT NULL
+        WHERE type IN {RUNNING_TYPES_SQL} AND temp_at_start_c IS NOT NULL
             AND temp_at_start_c BETWEEN 10 AND 20
             AND date >= date('now', '-56 days')
     """).fetchone()
