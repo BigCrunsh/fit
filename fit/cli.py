@@ -116,14 +116,61 @@ def splits(backfill: bool, activity_id: str):
         conn.close()
 
 
-@main.command()
-def checkin():
+@main.group(invoke_without_command=True)
+@click.pass_context
+def checkin(ctx):
     """Interactive daily check-in logger."""
+    if ctx.invoked_subcommand is None:
+        from fit.checkin import run_checkin
+
+        conn = _conn()
+        try:
+            run_checkin(conn)
+        finally:
+            conn.close()
+
+
+@checkin.command("list")
+@click.option("--days", default=30, help="Number of days to show (default 30).")
+def checkin_list(days: int):
+    """List previous check-ins."""
+    conn = _conn()
+    try:
+        rows = conn.execute(
+            "SELECT date, rpe, sleep_quality, energy, legs, hydration, alcohol, notes "
+            "FROM checkins WHERE date >= date('now', ?) ORDER BY date DESC",
+            (f"-{days} days",),
+        ).fetchall()
+        if not rows:
+            click.echo(f"No check-ins in the last {days} days.")
+            return
+        click.echo(f"{'Date':<12} {'RPE':>4} {'Sleep':<6} {'Energy':<8} "
+                    f"{'Legs':<6} {'Hydra':<6} {'Alc':>4}  Notes")
+        click.echo("─" * 80)
+        for r in rows:
+            rpe = str(r["rpe"]) if r["rpe"] is not None else "–"
+            sleep = r["sleep_quality"] or "–"
+            energy = r["energy"] or "–"
+            legs = r["legs"] or "–"
+            hydra = r["hydration"] or "–"
+            alc = str(r["alcohol"]) if r["alcohol"] else "–"
+            notes = (r["notes"] or "")[:30]
+            click.echo(f"{r['date']:<12} {rpe:>4} {sleep:<6} {energy:<8} "
+                       f"{legs:<6} {hydra:<6} {alc:>4}  {notes}")
+        click.echo(f"\n{len(rows)} check-in{'s' if len(rows) != 1 else ''} shown.")
+    finally:
+        conn.close()
+
+
+@checkin.command("update")
+@click.option("--date", "target_date", default=None, help="Date to update (YYYY-MM-DD, default: today).")
+def checkin_update(target_date: str | None):
+    """Update or add a check-in for any date."""
     from fit.checkin import run_checkin
 
     conn = _conn()
     try:
-        run_checkin(conn)
+        run_checkin(conn, target_date=target_date, update=True)
     finally:
         conn.close()
 
