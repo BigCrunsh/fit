@@ -21,6 +21,7 @@ from fit.report.sections.cards import (  # noqa: E402
     _headline,
     _headline_signal,
     _status_cards,
+    _training_phases_json,
     _checkin,
     _journey,
     _week_over_week,
@@ -56,6 +57,10 @@ from fit.report.sections.cards import (  # noqa: E402
     _next_workouts,
     _overview_objectives,
     _readiness_summary,
+    _race_readiness_hero,
+    _todays_capability,
+    _fitness_gap_analysis,
+    _body_comp_data,
 )
 from fit.report.sections.charts import _all_charts  # noqa: E402
 from fit.report.sections.predictions import _prediction_summary, _race_prediction  # noqa: E402
@@ -79,8 +84,8 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "date_adapter_code": date_adapter_code,
         "tabs": [
             {"id": "overview", "label": "Overview"},
-            {"id": "training", "label": "Training"},
             {"id": "profile", "label": "Profile"},
+            {"id": "training", "label": "Training"},
             {"id": "readiness", "label": "Readiness"},
             {"id": "coach", "label": "Coach"},
         ],
@@ -133,6 +138,11 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "next_workouts": _next_workouts(conn),
         "overview_objectives": _overview_objectives(conn),
         "readiness_summary": _readiness_summary(conn),
+        "race_readiness": _race_readiness_hero(conn),
+        "todays_capability": _todays_capability(conn),
+        "fitness_gaps": _fitness_gap_analysis(conn),
+        "body_comp": _body_comp_data(conn),
+        "training_phases_json": _training_phases_json(conn),
     }
 
     html = template.render(**context)

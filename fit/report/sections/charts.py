@@ -23,9 +23,6 @@ ACCENT = "#818cf8"
 def _all_charts(conn):
     charts = []
 
-    # Event annotations for all time-series charts
-    event_annots = _get_event_annotations(conn)
-
     # Volume (Training tab)
     weeks = conn.execute("SELECT week, run_km, longest_run_km FROM weekly_agg WHERE run_km > 0 ORDER BY week").fetchall()
     if weeks:
@@ -169,31 +166,40 @@ def _all_charts(conn):
     # Weight (Body tab) — last 6 months by default (the actionable trend)
     # Older data creates visual gaps and scale jumps that obscure the trend
     weight = conn.execute(
-        "SELECT date, weight_kg, body_fat_pct FROM body_comp WHERE date >= date('now', '-180 days') ORDER BY date"
+        "SELECT date, weight_kg, body_fat_pct, muscle_mass_kg FROM body_comp WHERE date >= date('now', '-180 days') ORDER BY date"
     ).fetchall()
     # Fallback to all data if <5 records in last 6 months
     if len(weight) < 5:
-        weight = conn.execute("SELECT date, weight_kg, body_fat_pct FROM body_comp ORDER BY date").fetchall()
+        weight = conn.execute("SELECT date, weight_kg, body_fat_pct, muscle_mass_kg FROM body_comp ORDER BY date").fetchall()
     if weight:
         weight_target = conn.execute("SELECT target_value FROM goals WHERE type = 'metric' AND name LIKE '%eight%' AND active = 1 LIMIT 1").fetchone()
-        weight_annots = dict(event_annots)
+        weight_annots = {}  # today/race markers added via JS
         if weight_target and weight_target["target_value"]:
+            tv = weight_target["target_value"]
             weight_annots["target"] = {
-                "type": "line", "yMin": weight_target["target_value"], "yMax": weight_target["target_value"],
-                "borderColor": SAFE + "60", "borderDash": [6, 3],
-                "label": {"content": f"Target {weight_target['target_value']}kg", "display": True, "position": "end", "font": {"size": 8}},
+                "type": "box", "yMin": tv - 0.5, "yMax": tv + 0.5,
+                "backgroundColor": SAFE + "0f", "borderColor": SAFE + "26",
+                "label": {"content": "Race weight", "display": True, "position": "start",
+                          "color": SAFE, "font": {"size": 10}, "backgroundColor": "transparent"},
             }
-        # Use real dates only — time scale handles spacing, spanGaps:false breaks line at nulls
         weight_labels = [w["date"] for w in weight]
         weight_data = [w["weight_kg"] for w in weight]
         bf_data = [w["body_fat_pct"] for w in weight]
+        muscle_data = [w["muscle_mass_kg"] for w in weight]
 
         datasets = [{"label": "Weight (kg)", "data": weight_data,
-                      "borderColor": Z3, "backgroundColor": Z3 + "15", "fill": True,
-                      "borderWidth": 2, "pointRadius": 4, "yAxisID": "y", "spanGaps": False}]
+                      "borderColor": "rgba(148,163,184,0.6)", "borderWidth": 2,
+                      "pointRadius": 4, "pointBackgroundColor": "rgba(148,163,184,0.8)",
+                      "tension": 0.3, "fill": False, "yAxisID": "y", "spanGaps": False}]
         has_bf = any(v is not None for v in bf_data)
-        scales = {"x": {"type": "time", "time": {"unit": "month", "displayFormats": {"month": "MMM ''yy"}}, "grid": {"color": "rgba(255,255,255,0.03)"}},
-                  "y": {"grid": {"color": "rgba(255,255,255,0.03)"}, "position": "left", "title": {"display": True, "text": "Weight (kg)"}}}
+        has_muscle = any(v is not None for v in muscle_data)
+        has_secondary = has_bf or has_muscle
+        scales = {"x": {"type": "time", "time": {"unit": "month", "displayFormats": {"month": "MMM ''yy"}, "tooltipFormat": "yyyy-MM-dd"}, "grid": {"display": False}},
+                  "y": {"grid": {"color": "rgba(255,255,255,0.03)"}, "position": "left", "title": {"display": True, "text": "kg"}}}
+        if has_muscle:
+            datasets.append({"label": "Muscle (kg)", "data": muscle_data, "borderColor": Z2 + "80",
+                              "borderWidth": 1.5, "pointRadius": 3, "fill": False, "yAxisID": "y", "spanGaps": True,
+                              "borderDash": [4, 2]})
         if has_bf:
             datasets.append({"label": "Body Fat %", "data": bf_data, "borderColor": DANGER + "60",
                               "borderWidth": 1.5, "pointRadius": 2, "fill": False, "yAxisID": "y1", "spanGaps": True})
@@ -202,61 +208,363 @@ def _all_charts(conn):
         charts.append({"id": "chart-weight", "config": json.dumps({
             "type": "line",
             "data": {"labels": weight_labels, "datasets": datasets},
-            "options": {"responsive": True, "plugins": {"legend": {"display": has_bf, "position": "bottom", "labels": {"boxWidth": 12}},
+            "options": {"responsive": True, "plugins": {"legend": {"display": has_secondary, "position": "bottom", "labels": {"boxWidth": 12}},
                                                          "annotation": {"annotations": weight_annots}},
                         "scales": scales}
         })})
 
-    # Speed per BPM (Fitness tab — hero chart)
-    eff = conn.execute(f"SELECT date, speed_per_bpm, speed_per_bpm_z2 FROM activities WHERE type IN {RUNNING_TYPES_SQL} AND speed_per_bpm IS NOT NULL ORDER BY date").fetchall()
-    if eff:
+    # Aerobic Efficiency — Z2 speed/bpm preferred, fallback to all-runs speed/bpm
+    eff_z2 = conn.execute(f"SELECT date, speed_per_bpm_z2 FROM activities WHERE type IN {RUNNING_TYPES_SQL} AND speed_per_bpm_z2 IS NOT NULL ORDER BY date").fetchall()
+    if eff_z2:
+        eff_label = "speed/bpm (Z2)"
+        eff_dates = [e["date"] for e in eff_z2]
+        eff_values = [round(e["speed_per_bpm_z2"], 4) for e in eff_z2]
+    else:
+        eff_all = conn.execute(f"SELECT date, speed_per_bpm FROM activities WHERE type IN {RUNNING_TYPES_SQL} AND speed_per_bpm IS NOT NULL ORDER BY date").fetchall()
+        eff_label = "speed/bpm (all runs)"
+        eff_dates = [e["date"] for e in eff_all]
+        eff_values = [round(e["speed_per_bpm"], 4) for e in eff_all]
+    if eff_values:
         charts.append({"id": "chart-efficiency", "config": json.dumps({
             "type": "line",
-            "data": {"labels": [e["date"] for e in eff],
+            "data": {"labels": eff_dates,
                      "datasets": [
-                         {"label": "All runs", "data": [e["speed_per_bpm"] for e in eff], "borderColor": Z3 + "99", "borderWidth": 1.5, "pointRadius": 3, "pointBackgroundColor": Z3 + "80", "fill": False},
-                         {"label": "Z2 only (key signal)", "data": [e["speed_per_bpm_z2"] for e in eff], "borderColor": ACCENT, "borderWidth": 2.5, "pointRadius": 4, "fill": False, "spanGaps": True},
+                         {"label": eff_label, "data": eff_values,
+                          "borderColor": ACCENT + "cc", "borderWidth": 2, "pointRadius": 3, "tension": 0.3,
+                          "fill": {"target": "origin", "above": ACCENT + "0f"}},
                      ]},
-            "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}},
-                                                         "annotation": {"annotations": event_annots}},
-                        "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
-                                   "y": {"grid": {"color": "rgba(255,255,255,0.03)"}, "title": {"display": True, "text": "m/min/bpm (higher=better)"}}}}
-        })})
-
-    # VO2max (Fitness tab)
-    vo2 = conn.execute("SELECT date, vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date").fetchall()
-    if vo2:
-        charts.append({"id": "chart-vo2", "config": json.dumps({
-            "type": "line",
-            "data": {"labels": [v["date"] for v in vo2],
-                     "datasets": [{"label": "VO2max", "data": [v["vo2max"] for v in vo2],
-                                   "borderColor": ACCENT, "backgroundColor": ACCENT + "20", "fill": True, "borderWidth": 2, "pointRadius": 3}]},
-            "options": {"responsive": True, "plugins": {"legend": {"display": False},
-                                                         "annotation": {"annotations": {**event_annots, "sub4": {"type": "line", "yMin": 50, "yMax": 50, "borderColor": CAUTION + "60", "borderDash": [6, 3], "label": {"content": "Sub-4 ≥50", "display": True, "position": "end", "font": {"size": 8}}}}}},
-                        "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
+            "options": {"responsive": True, "plugins": {"legend": {"display": False}},
+                        "scales": {"x": {"grid": {"display": False}},
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
-    # Zone distribution (Fitness tab) with phase target
+    # VO2max + VDOT Trend — 3 datasets: Garmin VO2max (gray dashed), Race VDOT (scatter dots), Effective VDOT (blue line)
+    # Plus green target VDOT annotation line
+    vo2 = conn.execute("SELECT date, vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date").fetchall()
+    if vo2:
+        # Monthly Garmin VO2max (gray dashed line)
+        vo2_monthly = conn.execute("""
+            SELECT substr(date, 1, 7) as month, ROUND(AVG(vo2max), 1) as avg_vo2
+            FROM activities WHERE vo2max IS NOT NULL GROUP BY month ORDER BY month
+        """).fetchall()
+
+        # Race VDOT points (computed from race_calendar result_time + distance_km)
+        race_rows = conn.execute("""
+            SELECT rc.date, rc.distance_km, rc.result_time FROM race_calendar rc
+            WHERE rc.result_time IS NOT NULL AND rc.distance_km IS NOT NULL
+            ORDER BY rc.date
+        """).fetchall()
+        race_vdots = []
+        try:
+            from fit.fitness import compute_vdot_from_race
+            for rr in race_rows:
+                _tp = rr["result_time"].split(":")
+                if len(_tp) == 3:
+                    _secs = int(_tp[0]) * 3600 + int(_tp[1]) * 60 + int(_tp[2])
+                elif len(_tp) == 2:
+                    _secs = int(_tp[0]) * 60 + int(_tp[1])
+                else:
+                    continue
+                _vdot = round(compute_vdot_from_race(rr["distance_km"], _secs), 1)
+                race_vdots.append({"date": rr["date"], "vdot": _vdot})
+        except Exception:
+            pass
+
+        # Merge all months from Garmin VO2max AND race data, sorted chronologically
+        garmin_by_month = {v["month"]: v["avg_vo2"] for v in vo2_monthly}
+        race_by_month = {r["date"][:7]: r["vdot"] for r in race_vdots}
+
+        all_months = sorted(set(list(garmin_by_month.keys()) + list(race_by_month.keys())))
+        # Convert YYYY-MM to YYYY-MM-15 for time axis (mid-month for visual centering)
+        labels = [m + "-15" for m in all_months]
+        garmin_data = [garmin_by_month.get(m, None) for m in all_months]
+        race_data = [race_by_month.get(m, None) for m in all_months]
+
+        # Effective VDOT = blend of Garmin + race data
+        effective_data = []
+        for m in all_months:
+            rv = race_by_month.get(m)
+            gv = garmin_by_month.get(m)
+            if rv and gv:
+                effective_data.append(round((rv + gv) / 2, 1))
+            elif rv:
+                effective_data.append(rv)
+            elif gv:
+                effective_data.append(gv)
+            else:
+                effective_data.append(None)
+
+        datasets = [
+            {"label": "Garmin VO2max", "data": garmin_data,
+             "borderColor": "rgba(148,163,184,0.6)", "borderWidth": 2, "pointRadius": 3,
+             "tension": 0.3, "borderDash": [4, 2], "fill": False, "spanGaps": True},
+            {"label": "Race VDOT", "data": race_data,
+             "borderColor": ACCENT + "e6", "borderWidth": 2, "pointRadius": 6,
+             "pointBackgroundColor": ACCENT, "tension": 0, "spanGaps": False, "fill": False,
+             "showLine": False},
+            {"label": "Effective VDOT", "data": effective_data,
+             "borderColor": Z2 + "cc", "borderWidth": 2, "pointRadius": 3,
+             "tension": 0.3, "fill": False, "spanGaps": True},
+        ]
+
+        # Target VDOT annotation (green line) — today/race markers added via JS
+        vo2_annots = {}
+        try:
+            from fit.goals import get_target_race as _gtr
+            _target = _gtr(conn)
+            if _target and _target.get("target_time"):
+                from fit.fitness import compute_vdot_from_race
+                _tt = _target["target_time"]
+                _tp = _tt.split(":")
+                _secs = int(_tp[0]) * 3600 + int(_tp[1]) * 60 + (int(_tp[2]) if len(_tp) > 2 else 0)
+                _dist = _target.get("distance_km", 42.195)
+                _target_vdot = round(compute_vdot_from_race(_dist, _secs), 1)
+                vo2_annots["target"] = {
+                    "type": "line", "yMin": _target_vdot, "yMax": _target_vdot,
+                    "borderColor": SAFE + "4d", "borderDash": [6, 3], "borderWidth": 1,
+                    "label": {"content": f"Target VDOT {_target_vdot}", "display": True,
+                              "position": "start", "color": SAFE, "font": {"size": 10},
+                              "backgroundColor": "transparent"},
+                }
+        except Exception:
+            pass
+
+        charts.append({"id": "chart-vo2", "config": json.dumps({
+            "type": "line",
+            "data": {"labels": labels, "datasets": datasets},
+            "options": {"responsive": True,
+                        "plugins": {"legend": {"labels": {"boxWidth": 10, "padding": 12}},
+                                    "annotation": {"annotations": vo2_annots}},
+                        "scales": {"x": {"grid": {"display": False}},
+                                   "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
+        })})
+
+    # Zone distribution (Profile tab) — percentages, stacked to 100%
     zone_weeks = conn.execute("SELECT week, z1_min, z2_min, z3_min, z4_min, z5_min FROM weekly_agg WHERE (z1_min+z2_min+z3_min+z4_min+z5_min) > 0 ORDER BY week DESC LIMIT 8").fetchall()
     if zone_weeks:
         zone_weeks = list(reversed(zone_weeks))
-        # Get phase target for subtitle
-        phase = conn.execute("SELECT z12_pct_target, z45_pct_target, name FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
-        phase_note = f" (Phase target: Z1+Z2 ≥{phase['z12_pct_target']}%)" if phase and phase["z12_pct_target"] else ""
+        # Convert to percentages
+        z1_pct, z2_pct, z3_pct, z4_pct, z5_pct = [], [], [], [], []
+        for w in zone_weeks:
+            total = (w["z1_min"] or 0) + (w["z2_min"] or 0) + (w["z3_min"] or 0) + (w["z4_min"] or 0) + (w["z5_min"] or 0)
+            if total > 0:
+                z1_pct.append(round((w["z1_min"] or 0) / total * 100, 1))
+                z2_pct.append(round((w["z2_min"] or 0) / total * 100, 1))
+                z3_pct.append(round((w["z3_min"] or 0) / total * 100, 1))
+                z4_pct.append(round((w["z4_min"] or 0) / total * 100, 1))
+                z5_pct.append(round((w["z5_min"] or 0) / total * 100, 1))
+            else:
+                z1_pct.append(0)
+                z2_pct.append(0)
+                z3_pct.append(0)
+                z4_pct.append(0)
+                z5_pct.append(0)
+        # Get active phase targets for annotation
+        zone_annots = {}
+        phase_row = conn.execute(
+            "SELECT z12_pct_target, z45_pct_target, name FROM training_phases WHERE status = 'active' LIMIT 1"
+        ).fetchone()
+        if phase_row and phase_row["z12_pct_target"]:
+            z12_target = phase_row["z12_pct_target"]
+            zone_annots["z12_target"] = {
+                "type": "line", "yMin": z12_target, "yMax": z12_target,
+                "borderColor": SAFE + "66", "borderDash": [6, 3], "borderWidth": 1,
+                "label": {"content": f"Z1+Z2 target {z12_target:.0f}%", "display": True,
+                          "position": "end", "color": SAFE, "font": {"size": 9},
+                          "backgroundColor": "transparent"},
+            }
+
         charts.append({"id": "chart-zones", "config": json.dumps({
             "type": "bar",
             "data": {"labels": [w["week"] for w in zone_weeks],
                      "datasets": [
-                         {"label": f"Z1 Recovery{phase_note}", "data": [w["z1_min"] or 0 for w in zone_weeks], "backgroundColor": Z1 + "80", "stack": "s"},
-                         {"label": "Z2 Easy", "data": [w["z2_min"] or 0 for w in zone_weeks], "backgroundColor": Z2 + "80", "stack": "s"},
-                         {"label": "Z3 Moderate", "data": [w["z3_min"] or 0 for w in zone_weeks], "backgroundColor": Z3 + "80", "stack": "s"},
-                         {"label": "Z4 Hard", "data": [w["z4_min"] or 0 for w in zone_weeks], "backgroundColor": Z4 + "80", "stack": "s"},
-                         {"label": "Z5 Very Hard", "data": [w["z5_min"] or 0 for w in zone_weeks], "backgroundColor": Z5 + "80", "stack": "s"},
+                         {"label": "Z1", "data": z1_pct, "backgroundColor": Z1 + "b3"},
+                         {"label": "Z2", "data": z2_pct, "backgroundColor": Z2 + "b3"},
+                         {"label": "Z3", "data": z3_pct, "backgroundColor": Z3 + "b3"},
+                         {"label": "Z4", "data": z4_pct, "backgroundColor": Z4 + "b3"},
+                         {"label": "Z5", "data": z5_pct, "backgroundColor": Z5 + "b3"},
                      ]},
-            "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
-                        "scales": {"x": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}},
-                                   "y": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}, "title": {"display": True, "text": "minutes"}}}}
+            "options": {"responsive": True, "plugins": {"legend": {"labels": {"boxWidth": 10, "padding": 8}},
+                                                         "annotation": {"annotations": zone_annots}},
+                        "scales": {"x": {"stacked": True, "grid": {"display": False}},
+                                   "y": {"stacked": True, "max": 100, "grid": {"color": "rgba(255,255,255,0.03)"},
+                                         "ticks": {"callback": "__PCT_CB__"}}}}
+        }).replace('"__PCT_CB__"', 'function(v){return v+"%"}')})
+
+    # Cardiac Drift chart (Profile tab) — 2-week average across runs, dual-axis: pace (left, reversed) + HR (right)
+    # Get all runs from last 14 days with ≥5 splits
+    drift_runs = conn.execute("""
+        SELECT a.id, a.date, COUNT(s.split_num) as n_splits
+        FROM activities a
+        JOIN activity_splits s ON s.activity_id = a.id
+        WHERE a.type IN ('running','track_running','trail_running')
+          AND a.date >= date('now', '-14 days')
+        GROUP BY a.id HAVING n_splits >= 5
+        ORDER BY a.date DESC
+    """).fetchall()
+    if drift_runs:
+        # Collect per-km averages across all recent runs
+        from collections import defaultdict
+        pace_by_km = defaultdict(list)
+        hr_by_km = defaultdict(list)
+        max_splits = 0
+        for run in drift_runs:
+            splits = conn.execute(
+                "SELECT split_num, pace_sec_per_km, avg_hr FROM activity_splits WHERE activity_id = ? ORDER BY split_num",
+                (run["id"],)
+            ).fetchall()
+            for s in splits:
+                if s["pace_sec_per_km"]:
+                    pace_by_km[s["split_num"]].append(s["pace_sec_per_km"])
+                if s["avg_hr"]:
+                    hr_by_km[s["split_num"]].append(s["avg_hr"])
+                max_splits = max(max_splits, s["split_num"])
+
+        if max_splits >= 5:
+            split_labels = [f"{i}km" for i in range(1, max_splits + 1)]
+            pace_data = [round(sum(pace_by_km[i]) / len(pace_by_km[i]) / 60, 2) if pace_by_km.get(i) else None for i in range(1, max_splits + 1)]
+            hr_data = [round(sum(hr_by_km[i]) / len(hr_by_km[i]), 0) if hr_by_km.get(i) else None for i in range(1, max_splits + 1)]
+
+            # Detect drift onset (first split in second half where HR > first-half avg + 5)
+            drift_onset = None
+            valid_first_half = [h for h in hr_data[:max_splits // 2] if h is not None]
+            if valid_first_half:
+                first_half_avg = sum(valid_first_half) / len(valid_first_half)
+                for i in range(max_splits // 2, max_splits):
+                    if hr_data[i] and hr_data[i] > first_half_avg + 5:
+                        drift_onset = i
+                        break
+
+            drift_annots = {}
+            if drift_onset is not None:
+                drift_annots["drift"] = {
+                    "type": "line", "xMin": drift_onset, "xMax": drift_onset,
+                    "borderColor": CAUTION + "80", "borderDash": [4, 3], "borderWidth": 1,
+                    "label": {"display": True, "content": "Drift onset", "position": "start",
+                              "color": CAUTION, "font": {"size": 9}, "backgroundColor": "transparent",
+                              "yAdjust": -10},
+                }
+
+            n_runs = len(drift_runs)
+            charts.append({"id": "chart-drift", "config": json.dumps({
+                "type": "line",
+                "data": {"labels": split_labels,
+                         "datasets": [
+                             {"label": "Pace (min/km)", "data": pace_data,
+                              "borderColor": Z2 + "cc", "borderWidth": 2, "pointRadius": 2,
+                              "tension": 0.3, "yAxisID": "y", "fill": False},
+                             {"label": "Heart Rate", "data": hr_data,
+                              "borderColor": DANGER + "b3", "borderWidth": 2, "pointRadius": 2,
+                              "tension": 0.3, "yAxisID": "y1", "fill": False},
+                         ]},
+                "options": {"responsive": True,
+                            "plugins": {"legend": {"labels": {"boxWidth": 10, "padding": 12}},
+                                        "annotation": {"annotations": drift_annots}},
+                            "scales": {
+                                "y": {"position": "left", "reverse": True,
+                                      "title": {"display": True, "text": "Pace", "color": "#64748b", "font": {"size": 10}},
+                                      "grid": {"color": "rgba(255,255,255,0.03)"}},
+                                "y1": {"position": "right",
+                                       "title": {"display": True, "text": "HR", "color": "#64748b", "font": {"size": 10}},
+                                       "grid": {"display": False}},
+                                "x": {"grid": {"display": False}, "ticks": {"maxTicksLimit": 10}}}}
+            }), "n_runs": n_runs})
+
+    # Pace Consistency (CV%) — line chart with purple fill (Profile tab)
+    pace_cv = conn.execute(f"""
+        SELECT a.date, a.id,
+               (SELECT AVG(s.pace_sec_per_km) FROM activity_splits s WHERE s.activity_id = a.id) as avg_pace,
+               (SELECT COUNT(*) FROM activity_splits s WHERE s.activity_id = a.id) as n_splits
+        FROM activities a
+        WHERE a.type IN {RUNNING_TYPES_SQL}
+          AND a.id IN (SELECT DISTINCT activity_id FROM activity_splits)
+        ORDER BY a.date
+    """).fetchall()
+    if pace_cv and len(pace_cv) >= 2:
+        # Compute CV for each run that has splits
+        cv_labels, cv_data = [], []
+        for row in pace_cv:
+            if row["n_splits"] and row["n_splits"] >= 3 and row["avg_pace"]:
+                splits = conn.execute(
+                    "SELECT pace_sec_per_km FROM activity_splits WHERE activity_id = ? AND pace_sec_per_km IS NOT NULL",
+                    (row["id"],)
+                ).fetchall()
+                if len(splits) >= 3:
+                    paces = [s["pace_sec_per_km"] for s in splits]
+                    mean_p = sum(paces) / len(paces)
+                    if mean_p > 0:
+                        stdev_p = (sum((p - mean_p) ** 2 for p in paces) / len(paces)) ** 0.5
+                        cv = round(stdev_p / mean_p * 100, 1)
+                        cv_labels.append(row["date"])
+                        cv_data.append(cv)
+        if len(cv_labels) >= 2:
+            PURPLE = "#c084fc"
+            charts.append({"id": "chart-pacecv", "config": json.dumps({
+                "type": "line",
+                "data": {"labels": cv_labels,
+                         "datasets": [{"label": "Pace CV %", "data": cv_data,
+                                       "borderColor": PURPLE + "b3", "borderWidth": 2, "pointRadius": 3, "tension": 0.3,
+                                       "fill": {"target": "origin", "above": PURPLE + "0d"}}]},
+                "options": {"responsive": True, "plugins": {"legend": {"display": False}},
+                            "scales": {"y": {"grid": {"color": "rgba(255,255,255,0.03)"},
+                                             "ticks": {"callback": "__PCVCB__"}},
+                                       "x": {"grid": {"display": False}}}}
+            }).replace('"__PCVCB__"', 'function(v){return v+"%"}')})
+
+    # Effort Gap — Garmin TE vs Check-in RPE (Profile tab)
+    # Join activities with checkins to get RPE from check-in table (activities.rpe is rarely populated)
+    effort_data = conn.execute(f"""
+        SELECT a.date, a.aerobic_te,
+               c.rpe as checkin_rpe
+        FROM activities a
+        LEFT JOIN checkins c ON a.date = c.date
+        WHERE a.type IN {RUNNING_TYPES_SQL} AND a.aerobic_te IS NOT NULL
+        ORDER BY a.date
+    """).fetchall()
+    if effort_data and len(effort_data) >= 3:
+        te_values = [e["aerobic_te"] for e in effort_data]
+        # Normalize check-in RPE from 1-10 to 1-5 scale to match TE scale
+        rpe_values = [round(e["checkin_rpe"] / 2, 1) if e["checkin_rpe"] is not None else None for e in effort_data]
+        has_rpe = any(v is not None for v in rpe_values)
+
+        # Compute 5-point moving average trend lines
+        def _moving_avg(data, window=5):
+            result = []
+            for i in range(len(data)):
+                vals = [data[j] for j in range(max(0, i - window + 1), i + 1) if data[j] is not None]
+                result.append(round(sum(vals) / len(vals), 2) if vals else None)
+            return result
+
+        te_trend = _moving_avg(te_values)
+
+        datasets = [
+            {"label": "Garmin TE", "data": te_values,
+             "borderColor": "rgba(148,163,184,0.3)", "borderWidth": 1, "pointRadius": 2, "tension": 0.3, "fill": False},
+            {"label": "TE trend", "data": te_trend,
+             "borderColor": "rgba(148,163,184,0.8)", "borderWidth": 2, "pointRadius": 0, "tension": 0.4, "fill": False},
+        ]
+        if has_rpe:
+            rpe_trend = _moving_avg(rpe_values)
+            datasets.append(
+                {"label": "Check-in RPE", "data": rpe_values,
+                 "borderColor": Z4 + "40", "borderWidth": 1, "pointRadius": 3, "tension": 0.3,
+                 "fill": False, "spanGaps": False}
+            )
+            datasets.append(
+                {"label": "RPE trend", "data": rpe_trend,
+                 "borderColor": Z4 + "cc", "borderWidth": 2, "pointRadius": 0, "tension": 0.4,
+                 "fill": False, "spanGaps": True}
+            )
+        # Find actual max to set y-axis with headroom
+        all_vals = [v for v in te_values if v is not None] + [v for v in rpe_values if v is not None]
+        y_max = max(6, round(max(all_vals) + 1)) if all_vals else 6
+        charts.append({"id": "chart-effort-gap", "config": json.dumps({
+            "type": "line",
+            "data": {"labels": [e["date"] for e in effort_data], "datasets": datasets},
+            "options": {"responsive": True,
+                        "plugins": {"legend": {"labels": {"boxWidth": 10, "padding": 12}}},
+                        "scales": {"y": {"min": 0, "max": y_max, "grid": {"color": "rgba(255,255,255,0.03)"}},
+                                   "x": {"grid": {"display": False}, "ticks": {"maxRotation": 45}}}}
         })})
 
     # ACWR trend (Body tab) — line chart with safe zone band
@@ -336,16 +644,23 @@ def _all_charts(conn):
         ORDER BY date
     """).fetchall()
     if cadence:
+        PURPLE = "#c084fc"
+        cadence_annots = {
+            "target_band": {
+                "type": "box", "yMin": 170, "yMax": 180,
+                "backgroundColor": SAFE + "08", "borderColor": SAFE + "1a",
+                "label": {"content": "Target 170-180", "display": True, "position": "start",
+                          "color": SAFE + "80", "font": {"size": 9}, "backgroundColor": "transparent"},
+            }
+        }
         charts.append({"id": "chart-cadence", "config": json.dumps({
             "type": "line",
             "data": {"labels": [c["date"] for c in cadence],
                      "datasets": [{"label": "Cadence (spm)", "data": [c["avg_cadence"] for c in cadence],
-                                   "borderColor": Z2, "borderWidth": 2, "pointRadius": 3, "fill": False}]},
+                                   "borderColor": PURPLE + "b3", "borderWidth": 2, "pointRadius": 3, "tension": 0.3, "fill": False}]},
             "options": {"responsive": True, "plugins": {"legend": {"display": False},
-                        "annotation": {"annotations": {**event_annots, "threshold": {"type": "line", "yMin": 165, "yMax": 165,
-                                       "borderColor": CAUTION + "60", "borderDash": [6, 3],
-                                       "label": {"content": "Low threshold 165", "display": True, "position": "end", "font": {"size": 8}}}}}},
-                        "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
+                                                         "annotation": {"annotations": cadence_annots}},
+                        "scales": {"x": {"grid": {"display": False}},
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 

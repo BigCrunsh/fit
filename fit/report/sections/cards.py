@@ -334,6 +334,7 @@ def _definitions(conn):
         "zones": "HR zones by training TIME (minutes per week), not run count. Compared to your active training phase targets. Blue = Z1+Z2 (easy), amber = Z3 (moderate), orange = Z4+Z5 (hard). Phase 1 targets ~90% easy.",
         "volume": "Total running km per week. The darker segment shows the longest single run. For marathon training: long run should build gradually to 30-32 km, weekly volume to 50-60 km at peak.",
         "cadence": f"Your 30d avg cadence: {avg_cadence_val} spm. Below 165 often indicates overstriding. Target: 170-180. Tends to improve with fatigue resilience and form work.",
+        "cardiac_drift": "Cardiac drift = HR rising while pace stays constant. Shows aerobic decoupling — your heart works harder to maintain the same speed as glycogen depletes and core temp rises. Drift onset before km 15 suggests your aerobic base needs work. This chart averages across your last 2 weeks of runs with split data.",
         "rpe": "Garmin Effort = Aerobic Training Effect × 2 (dashed line, from every run). Your RPE = subjective effort from check-in (solid line, when available). When your RPE consistently exceeds Garmin's estimate, you're more fatigued than the numbers suggest.",
         "race_prediction": "Riegel formula: extrapolates from shorter race times using T2 = T1 × (D2/D1)^1.06. VDOT: from Daniels' tables using VO2max. Both are estimates — actual performance depends on training specificity, fueling, and conditions.",
         "acwr": f"Acute:Chronic Workload Ratio. Current: {acwr_val}. This week's load ÷ avg of previous 4 weeks. <strong style='color:var(--safe)'>0.8-1.3 = safe</strong>, <strong style='color:var(--caution)'>1.3-1.5 = caution</strong>, <strong style='color:var(--danger)'>> 1.5 = injury risk (spike)</strong>, < 0.6 = detraining. Critical for comeback training.",
@@ -1431,4 +1432,316 @@ def _prediction_trend_data(conn):
         })
     except Exception as e:
         logger.debug("prediction_trend_data failed: %s", e)
+        return None
+
+
+# ── Profile Tab Data Functions ──
+
+
+def _race_readiness_hero(conn):
+    """Race readiness hero: current VDOT vs required, gap, trend, verdict.
+
+    Answers: "Am I fit enough for race day?"
+    """
+    try:
+        from fit.fitness import (
+            get_fitness_profile,
+            compute_vdot_from_race,
+            vdot_to_race_time,
+        )
+        from fit.goals import get_target_race
+
+        profile = get_fitness_profile(conn)
+        if not profile:
+            return None
+
+        target = get_target_race(conn)
+        effective_vdot = profile.get("effective_vdot")
+        garmin_vo2 = profile.get("garmin_vo2max")
+        race_vdot = profile.get("race_vdot")
+        race_vdot_date = profile.get("race_vdot_date")
+
+        result = {
+            "effective_vdot": effective_vdot,
+            "garmin_vo2max": garmin_vo2,
+            "race_vdot": race_vdot,
+            "race_vdot_date": race_vdot_date,
+            "required_vdot": None,
+            "vdot_gap": None,
+            "predicted_time": None,
+            "target_time": None,
+            "gap_minutes": None,
+            "trend": profile["aerobic"].get("trend"),
+            "rate_per_month": profile["aerobic"].get("rate_per_month"),
+            "verdict": None,
+            "vdot_history": profile["aerobic"].get("history", []),
+        }
+
+        if not target or not target.get("target_time"):
+            result["verdict"] = "no_target"
+            return result
+
+        distance_km = target.get("distance_km") or 42.195
+        target_time = target["target_time"]
+        result["target_time"] = target_time
+        result["race_name"] = target.get("name")
+        result["distance_km"] = distance_km
+
+        # Parse target time to seconds
+        parts = target_time.split(":")
+        if len(parts) == 3:
+            target_secs = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        elif len(parts) == 2:
+            target_secs = int(parts[0]) * 60 + int(parts[1])
+        else:
+            return result
+
+        required_vdot = compute_vdot_from_race(distance_km, target_secs)
+        result["required_vdot"] = required_vdot
+
+        if effective_vdot and required_vdot:
+            result["vdot_gap"] = round(required_vdot - effective_vdot, 1)
+
+        # What can current fitness produce?
+        if effective_vdot:
+            pred_secs = vdot_to_race_time(effective_vdot, distance_km)
+            if pred_secs:
+                h = int(pred_secs // 3600)
+                m = int((pred_secs % 3600) // 60)
+                s = int(pred_secs % 60)
+                result["predicted_time"] = f"{h}:{m:02d}:{s:02d}"
+                gap_min = round((pred_secs - target_secs) / 60)
+                result["gap_minutes"] = gap_min
+
+        # Verdict based on gap and trend
+        gap = result.get("vdot_gap")
+        rate = result.get("rate_per_month")
+        days_left = None
+        if target.get("date"):
+            days_left = (date.fromisoformat(target["date"]) - date.today()).days
+
+        if gap is None:
+            result["verdict"] = "insufficient_data"
+        elif gap <= 0:
+            result["verdict"] = "ready"
+        elif gap <= 1.0:
+            result["verdict"] = "almost"
+        elif rate and rate > 0 and days_left and days_left > 0:
+            months_needed = gap / rate
+            months_left = days_left / 30
+            if months_needed <= months_left:
+                result["verdict"] = "on_track"
+            elif months_needed <= months_left * 1.3:
+                result["verdict"] = "tight"
+            else:
+                result["verdict"] = "at_risk"
+        else:
+            result["verdict"] = "at_risk"
+
+        return result
+    except Exception as e:
+        logger.debug("race_readiness_hero failed: %s", e)
+        return None
+
+
+def _todays_capability(conn):
+    """What can you run today? Sustainable pace + distance ceiling.
+
+    Returns dict with pace and distance info from threshold + resilience dimensions.
+    """
+    try:
+        from fit.fitness import get_fitness_profile
+
+        profile = get_fitness_profile(conn)
+        if not profile:
+            return None
+
+        threshold = profile.get("threshold", {})
+        resilience = profile.get("resilience", {})
+
+        result = {}
+
+        # Sustainable pace from threshold (speed_per_bpm_z2)
+        spd = threshold.get("current_value")
+        if spd:
+            # Convert speed_per_bpm to approximate pace
+            # speed_per_bpm_z2 is in m/min/bpm. At Z2 HR ~130 bpm:
+            # actual speed = spd * HR => m/min => pace = 1000/speed sec/km
+            z2_hr = 130  # approximate mid-Z2
+            speed_m_per_min = spd * z2_hr
+            if speed_m_per_min > 0:
+                pace_sec_per_km = 1000 / speed_m_per_min * 60
+                pace_min = int(pace_sec_per_km // 60)
+                pace_sec = int(pace_sec_per_km % 60)
+                result["z2_pace"] = f"{pace_min}:{pace_sec:02d}"
+                result["z2_pace_label"] = "min/km at Z2"
+                result["z2_speed_per_bpm"] = round(spd, 4)
+                result["threshold_trend"] = threshold.get("trend")
+                result["threshold_rate"] = threshold.get("rate_per_month")
+        else:
+            result["z2_pace"] = None
+            result["z2_pace_label"] = threshold.get("message", "Need 3+ Z2 runs")
+
+        # Distance ceiling from resilience (drift onset km)
+        drift_km = resilience.get("current_value")
+        if drift_km:
+            result["distance_ceiling"] = drift_km
+            result["distance_unit"] = "km before HR decouples"
+            result["resilience_trend"] = resilience.get("trend")
+            result["resilience_rate"] = resilience.get("rate_per_month")
+        else:
+            result["distance_ceiling"] = None
+            result["distance_unit"] = resilience.get(
+                "message", "Need split data from long runs"
+            )
+
+        return result
+    except Exception as e:
+        logger.debug("todays_capability failed: %s", e)
+        return None
+
+
+def _fitness_gap_analysis(conn):
+    """4 dimensions with current vs required for target race.
+
+    Returns list of dicts: name, current, required, gap, pct, trend, history.
+    """
+    try:
+        from fit.fitness import (
+            get_fitness_profile,
+            derive_objectives,
+        )
+        from fit.goals import get_target_race
+
+        profile = get_fitness_profile(conn)
+        if not profile:
+            return None
+
+        target = get_target_race(conn)
+        targets = {}
+        if target:
+            derived = derive_objectives(conn, target["id"])
+            for obj in derived:
+                if obj["name"].startswith("_dim_"):
+                    dim_name = obj["name"].replace("_dim_", "")
+                    targets[dim_name] = obj["target_value"]
+
+        dims = []
+        dim_config = [
+            ("aerobic", "VO2max", "var(--z2)", True),     # higher is better
+            ("threshold", "spd/bpm", "var(--z3)", True),   # higher is better
+            ("economy", "spd/bpm", "var(--accent)", True), # higher is better
+            ("resilience", "km", "var(--purple)", True),   # higher is better
+        ]
+        for name, unit, color, higher_better in dim_config:
+            dim = profile.get(name, {})
+            current = dim.get("current_value")
+            required = targets.get(name)
+            gap = None
+            pct = None
+            if current is not None and required is not None and required > 0:
+                gap = round(required - current, 2)
+                pct = min(int(current / required * 100), 100)
+
+            dims.append({
+                "name": name.capitalize(),
+                "current": current,
+                "required": required,
+                "gap": gap,
+                "pct": pct,
+                "unit": unit,
+                "color": color,
+                "trend": dim.get("trend"),
+                "rate_per_month": dim.get("rate_per_month"),
+                "history": dim.get("history", []),
+                "message": dim.get("message"),
+            })
+
+        return dims
+    except Exception as e:
+        logger.debug("fitness_gap_analysis failed: %s", e)
+        return None
+
+
+def _body_comp_data(conn):
+    """Weight + body composition cards and history for Profile tab.
+
+    Returns dict with weight, body_fat, muscle_mass cards and chart history.
+    """
+    try:
+        rows = conn.execute("""
+            SELECT date, weight_kg, body_fat_pct, muscle_mass_kg
+            FROM body_comp
+            WHERE weight_kg IS NOT NULL
+            ORDER BY date DESC LIMIT 20
+        """).fetchall()
+        if not rows:
+            return None
+
+        rows = list(reversed(rows))  # oldest first
+        latest = rows[-1]
+
+        # Weight target from goals
+        weight_target = None
+        try:
+            goal = conn.execute(
+                "SELECT target_value FROM goals WHERE metric = 'weight' AND active = 1 LIMIT 1"
+            ).fetchone()
+            if goal:
+                weight_target = goal["target_value"]
+        except Exception:
+            pass
+
+        # Compute change over window
+        weight_change = None
+        change_span = None
+        if len(rows) >= 2:
+            weight_change = round(rows[-1]["weight_kg"] - rows[0]["weight_kg"], 1)
+            days = (
+                date.fromisoformat(rows[-1]["date"])
+                - date.fromisoformat(rows[0]["date"])
+            ).days
+            if days < 60:
+                change_span = f"{days}d"
+            elif days < 365:
+                change_span = f"{days // 30}mo"
+            else:
+                change_span = f"{days // 365}yr"
+
+        return {
+            "weight": round(latest["weight_kg"], 1),
+            "weight_target": weight_target,
+            "weight_change": weight_change,
+            "weight_change_span": change_span,
+            "body_fat": round(latest["body_fat_pct"], 1) if latest["body_fat_pct"] else None,
+            "muscle_mass": round(latest["muscle_mass_kg"], 1) if latest["muscle_mass_kg"] else None,
+            "dates": [r["date"] for r in rows],
+            "weight_history": [r["weight_kg"] for r in rows],
+            "body_fat_history": [r["body_fat_pct"] for r in rows],
+            "muscle_mass_history": [r["muscle_mass_kg"] for r in rows],
+        }
+    except Exception as e:
+        logger.debug("body_comp_data failed: %s", e)
+        return None
+
+
+def _training_phases_json(conn):
+    """Return training phases as JSON string for Chart.js phase bar plugin."""
+    import json
+    try:
+        rows = conn.execute("""
+            SELECT name, start_date, end_date, status
+            FROM training_phases ORDER BY start_date
+        """).fetchall()
+        phases = []
+        for r in rows:
+            phases.append({
+                "label": r["name"],
+                "start": r["start_date"],
+                "end": r["end_date"],
+                "status": r["status"] or "planned",
+                "active": r["status"] == "active",
+            })
+        return json.dumps(phases) if phases else None
+    except Exception:
         return None
