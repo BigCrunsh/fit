@@ -748,6 +748,31 @@ const genericPhaseBandPlugin = {
   }
 };
 
+// Profile x-axis range — same as prediction trend (first phase start - 2 weeks → race + 10 days)
+const profileXMin = (function() {
+  if (trainingPhases.length > 0) {
+    const d = new Date(trainingPhases[0].start);
+    d.setDate(d.getDate() - 14);
+    return d.toISOString().slice(0, 10);
+  }
+  return null;
+})();
+const profileXMax = (function() {
+  {% if race_countdown and race_countdown.race_date %}
+  const d = new Date('{{ race_countdown.race_date }}');
+  d.setDate(d.getDate() + 10);
+  return d.toISOString().slice(0, 10);
+  {% else %}
+  if (trainingPhases.length > 0) {
+    const last = trainingPhases[trainingPhases.length - 1];
+    const d = new Date(last.end);
+    d.setDate(d.getDate() + 10);
+    return d.toISOString().slice(0, 10);
+  }
+  return null;
+  {% endif %}
+})();
+
 const chartInstances = {};
 {% for chart in charts %}
 {
@@ -762,9 +787,12 @@ const chartInstances = {};
     if (!cfg.options.scales) cfg.options.scales = {};
     if (!cfg.options.scales.x) cfg.options.scales.x = {};
     cfg.options.scales.x.type = 'time';
-    // Profile charts use month ticks to match prediction trend chart
+    // Profile charts: exact same x-axis as prediction trend (same range, format, no rotation)
     if (isPhaseBarChart) {
       cfg.options.scales.x.time = { unit: 'month', displayFormats: { month: "MMM ''yy" }, tooltipFormat: 'yyyy-MM-dd' };
+      cfg.options.scales.x.min = profileXMin;
+      cfg.options.scales.x.max = profileXMax;
+      cfg.options.scales.x.ticks = { maxRotation: 0, autoSkipPadding: 20 };
     } else {
       const labels = cfg.data.labels || [];
       const span = labels.length > 1 ? (new Date(labels[labels.length-1]) - new Date(labels[0])) / 86400000 : 0;
@@ -773,30 +801,39 @@ const chartInstances = {};
     }
     cfg.options.scales.x.grid = { display: false };
   }
-  // Add phase bars + today/race markers to Profile time-series charts
+  // Profile charts: phase bars, today/race markers, padding (matching prediction trend exactly)
   if (isPhaseBarChart) {
     if (!cfg.options) cfg.options = {};
+    // Also apply time axis to chart-weight (has own config from Python, override min/max/ticks)
+    if (!cfg.options.scales) cfg.options.scales = {};
+    if (!cfg.options.scales.x) cfg.options.scales.x = {};
+    cfg.options.scales.x.min = profileXMin;
+    cfg.options.scales.x.max = profileXMax;
+    cfg.options.scales.x.ticks = Object.assign(cfg.options.scales.x.ticks || {}, { maxRotation: 0, autoSkipPadding: 20 });
     if (!cfg.options.layout) cfg.options.layout = {};
     if (!cfg.options.layout.padding) cfg.options.layout.padding = {};
-    if (trainingPhases.length > 0) cfg.options.layout.padding.bottom = 24;
-    // Add today + race day annotation markers (matching prediction trend chart)
+    cfg.options.layout.padding.bottom = 30;
+    cfg.options.layout.padding.right = 20;
+    // Today + race day markers
     if (!cfg.options.plugins) cfg.options.plugins = {};
     if (!cfg.options.plugins.annotation) cfg.options.plugins.annotation = {};
     if (!cfg.options.plugins.annotation.annotations) cfg.options.plugins.annotation.annotations = {};
     cfg.options.plugins.annotation.annotations._today = {
       type: 'line', xMin: '{{ generated_at[:10] }}', xMax: '{{ generated_at[:10] }}',
-      borderColor: 'rgba(251,191,36,0.4)', borderWidth: 1,
-      label: { display: true, content: 'today', position: 'start',
-               color: '#fbbf24', font: { size: 8, weight: 600 },
-               backgroundColor: 'rgba(10,10,18,0.85)', padding: { top: 1, bottom: 1, left: 4, right: 4 } }
+      borderColor: 'rgba(251,191,36,0.5)', borderWidth: 1.5,
+      label: { display: true, content: 'today', position: 'end',
+               color: '#fbbf24', font: { size: 9, weight: 600 },
+               backgroundColor: 'rgba(10,10,18,0.85)', padding: { top: 2, bottom: 2, left: 5, right: 5 },
+               rotation: 0, yAdjust: -4 }
     };
     {% if race_countdown and race_countdown.race_date %}
     cfg.options.plugins.annotation.annotations._race = {
       type: 'line', xMin: '{{ race_countdown.race_date }}', xMax: '{{ race_countdown.race_date }}',
-      borderColor: 'rgba(248,113,113,0.4)', borderWidth: 1,
-      label: { display: true, content: 'race', position: 'start',
-               color: '#f87171', font: { size: 8, weight: 600 },
-               backgroundColor: 'rgba(10,10,18,0.85)', padding: { top: 1, bottom: 1, left: 4, right: 4 } }
+      borderColor: 'rgba(248,113,113,0.6)', borderWidth: 1.5,
+      label: { display: true, content: 'race', position: 'end',
+               color: '#f87171', font: { size: 9, weight: 600 },
+               backgroundColor: 'rgba(10,10,18,0.85)', padding: { top: 2, bottom: 2, left: 5, right: 5 },
+               rotation: 0, yAdjust: -4 }
     };
     {% endif %}
   }
