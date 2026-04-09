@@ -410,17 +410,17 @@
   {% endif %}
 
   <!-- 7. Pace Consistency (CV%) -->
-  <div class="sec"><h2>Pace Consistency (CV%)</h2><div class="line"></div></div>
+  <div class="sec"><h2>Pace Consistency (CV%)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.pacecv }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-pacecv" height="160"></canvas></div>
 
   <!-- 8. Zone Distribution -->
-  <div class="sec"><h2>Zone Distribution</h2><div class="line"></div></div>
+  <div class="sec"><h2>Zone Distribution</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.zones }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-zones" height="180"></canvas></div>
 
   <!-- 9. Weight + Body Composition -->
   {% if body_comp %}
   {% set bc = body_comp %}
-  <div class="sec"><h2>Weight + Body Composition</h2><div class="line"></div></div>
+  <div class="sec"><h2>Weight + Body Composition</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.weight }}</div><div class="line"></div></div>
   <div class="cards">
     <div class="card">
       <div class="card-label">Weight</div>
@@ -450,7 +450,7 @@
   <div class="chart-box"><canvas id="chart-cadence" height="160"></canvas></div>
 
   <!-- 11. Effort Gap — Garmin TE vs RPE -->
-  <div class="sec"><h2>Effort Gap — Garmin TE vs RPE</h2><div class="line"></div></div>
+  <div class="sec"><h2>Effort Gap — Garmin TE vs RPE</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.effort_gap }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-effort-gap" height="160"></canvas></div>
   <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">When RPE exceeds TE, the run felt harder than Garmin thinks — possible fatigue accumulation.</div>
 

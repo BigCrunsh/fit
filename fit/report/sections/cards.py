@@ -338,6 +338,8 @@ def _definitions(conn):
         "rpe": "Garmin Effort = Aerobic Training Effect × 2 (dashed line, from every run). Your RPE = subjective effort from check-in (solid line, when available). When your RPE consistently exceeds Garmin's estimate, you're more fatigued than the numbers suggest.",
         "race_prediction": "Riegel formula: extrapolates from shorter race times using T2 = T1 × (D2/D1)^1.06. VDOT: from Daniels' tables using VO2max. Both are estimates — actual performance depends on training specificity, fueling, and conditions.",
         "acwr": f"Acute:Chronic Workload Ratio. Current: {acwr_val}. This week's load ÷ avg of previous 4 weeks. <strong style='color:var(--safe)'>0.8-1.3 = safe</strong>, <strong style='color:var(--caution)'>1.3-1.5 = caution</strong>, <strong style='color:var(--danger)'>> 1.5 = injury risk (spike)</strong>, < 0.6 = detraining. Critical for comeback training.",
+        "pacecv": "Coefficient of Variation of pace within a run — how even your pacing is. Lower = more consistent. <strong style='color:var(--safe)'>< 5% = very even</strong>, <strong style='color:var(--caution)'>5-10% = moderate variation</strong>, <strong style='color:var(--danger)'>> 10% = erratic pacing</strong>. Even pacing is a key predictor of marathon success. Interval sessions naturally have higher CV.",
+        "effort_gap": "Garmin Training Effect (TE) measures physiological load from sensor data. Check-in RPE is your subjective effort score (scaled to match). When RPE consistently exceeds TE, you're accumulating fatigue the watch can't see — consider extra recovery. When TE exceeds RPE, you're adapting well.",
     }
 
 
