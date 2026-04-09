@@ -693,11 +693,11 @@ function resolveAnnotationCollisions(annotations) {
   }
   return annotations;
 }
-const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-stress','chart-efficiency','chart-cadence','chart-rpe','chart-acwr','chart-pacecv','chart-effort-gap','chart-vo2']);
+const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-stress','chart-efficiency','chart-cadence','chart-rpe','chart-acwr','chart-pacecv','chart-effort-gap','chart-vo2','chart-zones']);
 // chart-weight has its own time scale config (set in charts.py) — not in this set to avoid double-applying
 
 // Phase bar data + plugin for Profile time-series charts
-const phaseBarCharts = new Set(['chart-vo2','chart-efficiency','chart-cadence','chart-pacecv','chart-effort-gap','chart-weight']);
+const phaseBarCharts = new Set(['chart-vo2','chart-efficiency','chart-cadence','chart-pacecv','chart-effort-gap','chart-weight','chart-zones']);
 {% if training_phases_json %}
 const trainingPhases = {{ training_phases_json | safe }};
 {% else %}

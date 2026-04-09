@@ -374,9 +374,19 @@ def _all_charts(conn):
                           "backgroundColor": "transparent"},
             }
 
+        # Convert ISO week labels to Monday dates for time-axis compatibility
+        def _week_to_date(w):
+            """Convert '2026-W15' to '2026-04-06' (Monday of that week)."""
+            from datetime import datetime
+            try:
+                return datetime.strptime(w + "-1", "%G-W%V-%u").strftime("%Y-%m-%d")
+            except Exception:
+                return w
+        zone_labels = [_week_to_date(w["week"]) for w in zone_weeks]
+
         charts.append({"id": "chart-zones", "config": json.dumps({
             "type": "bar",
-            "data": {"labels": [w["week"] for w in zone_weeks],
+            "data": {"labels": zone_labels,
                      "datasets": [
                          {"label": "Z1", "data": z1_pct, "backgroundColor": Z1 + "b3"},
                          {"label": "Z2", "data": z2_pct, "backgroundColor": Z2 + "b3"},
@@ -386,7 +396,9 @@ def _all_charts(conn):
                      ]},
             "options": {"responsive": True, "plugins": {"legend": {"labels": {"boxWidth": 10, "padding": 8}},
                                                          "annotation": {"annotations": zone_annots}},
-                        "scales": {"x": {"stacked": True, "grid": {"display": False}},
+                        "scales": {"x": {"stacked": True, "type": "time", "offset": True,
+                                         "time": {"unit": "week", "displayFormats": {"week": "MMM d"}, "tooltipFormat": "yyyy-MM-dd"},
+                                         "grid": {"display": False}},
                                    "y": {"stacked": True, "max": 100, "grid": {"color": "rgba(255,255,255,0.03)"},
                                          "ticks": {"callback": "__PCT_CB__"}}}}
         }).replace('"__PCT_CB__"', 'function(v){return v+"%"}')})
