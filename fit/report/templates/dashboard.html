@@ -710,6 +710,14 @@ const phaseStatusColors = {
   active:    { bg: 'rgba(129,140,248,0.22)', border: 'rgba(129,140,248,0.45)', text: '#a5b4fc' },
   planned:   { bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.08)', text: 'rgba(255,255,255,0.4)' }
 };
+const phaseNameColors = {
+  base:    { bg: 'rgba(96,165,250,0.22)',  border: 'rgba(96,165,250,0.45)',  text: '#60a5fa' },
+  build:   { bg: 'rgba(234,179,8,0.22)',   border: 'rgba(234,179,8,0.45)',   text: '#eab308' },
+  volume:  { bg: 'rgba(234,179,8,0.22)',   border: 'rgba(234,179,8,0.45)',   text: '#eab308' },
+  peak:    { bg: 'rgba(249,115,22,0.22)',  border: 'rgba(249,115,22,0.45)',  text: '#f97316' },
+  taper:   { bg: 'rgba(52,211,153,0.22)',  border: 'rgba(52,211,153,0.45)',  text: '#34d399' },
+  race:    { bg: 'rgba(248,113,113,0.22)', border: 'rgba(248,113,113,0.45)', text: '#f87171' },
+};
 const genericPhaseBandPlugin = {
   id: 'genericPhaseBand',
   afterDraw(chart) {
@@ -728,8 +736,8 @@ const genericPhaseBandPlugin = {
       const right = Math.min(x2, xScale.right);
       const w = right - left;
       if (w < 2) return;
-      const s = p.status === 'completed' ? 'completed' : p.active ? 'active' : 'planned';
-      const c = phaseStatusColors[s];
+      const nameKey = (p.label || '').toLowerCase().split(/[\s_-]/)[0];
+      const c = phaseNameColors[nameKey] || phaseStatusColors[p.status === 'completed' ? 'completed' : p.active ? 'active' : 'planned'];
       ctx.save();
       ctx.fillStyle = c.bg;
       ctx.strokeStyle = c.border;
@@ -956,11 +964,6 @@ sparkline('{{ rd.spark_id }}', {{ rd.history | tojson }}, '{{ rd.color | replace
   };
 
   // Phase bar plugin — draws colored phase segments below the x-axis labels
-  const statusColors = {
-    completed: { bg: 'rgba(52,211,153,0.18)', border: 'rgba(52,211,153,0.35)', text: '#34d399' },
-    active:    { bg: 'rgba(129,140,248,0.22)', border: 'rgba(129,140,248,0.45)', text: '#a5b4fc' },
-    upcoming:  { bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.08)', text: 'rgba(255,255,255,0.4)' }
-  };
   const phaseBandPlugin = {
     id: 'phaseBand',
     afterDraw(chart) {
@@ -981,8 +984,8 @@ sparkline('{{ rd.spark_id }}', {{ rd.history | tojson }}, '{{ rd.color | replace
         const w = right - left;
         if (w < 2) return;
 
-        const s = p.status === 'completed' ? 'completed' : p.active ? 'active' : 'upcoming';
-        const c = statusColors[s];
+        const nameKey = (p.label || '').toLowerCase().split(/[\s_-]/)[0];
+        const c = phaseNameColors[nameKey] || phaseStatusColors[p.status === 'completed' ? 'completed' : p.active ? 'active' : 'planned'];
 
         ctx.save();
         ctx.fillStyle = c.bg;

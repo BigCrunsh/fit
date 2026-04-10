@@ -784,7 +784,7 @@ def plan_show(ctx, days: int, upcoming: int):
         from fit.analysis import RUNNING_TYPES_SQL as rts
         actuals = conn.execute(f"""
             SELECT date, distance_km, duration_min, avg_hr, hr_zone,
-                   pace_sec_per_km
+                   pace_sec_per_km, aerobic_te
             FROM activities
             WHERE date BETWEEN ? AND ? AND type IN {rts}
             ORDER BY date, training_load DESC
@@ -813,12 +813,38 @@ def plan_show(ctx, days: int, upcoming: int):
         t.add_column("Plan", justify="right")
         t.add_column("Actual", justify="right")
         t.add_column("Zone", justify="right")
+        t.add_column("TE", justify="right")
         t.add_column("Time", justify="right")
         t.add_column("RPE", justify="right")
         t.add_column("Detail", style="dim")
 
-        type_colors = {"easy": "blue", "long": "green", "tempo": "yellow",
-                       "intervals": "red", "recovery": "cyan", "rest": "dim"}
+        # Unified zone color palette (matches dashboard design system)
+        _Z1 = "#93c5fd"  # light blue
+        _Z2 = "#60a5fa"  # blue
+        _Z3 = "#eab308"  # yellow
+        _Z4 = "#f97316"  # orange
+        _Z5 = "#ef4444"  # red
+
+        def _zone_color(zone_str):
+            """Return Rich hex color for a zone string like 'Z2'."""
+            return {"Z1": _Z1, "Z2": _Z2, "Z3": _Z3, "Z4": _Z4, "Z5": _Z5}.get(zone_str, "dim")
+
+        # Workout type — distinct color per type
+        type_colors = {
+            "easy": _Z2, "recovery": _Z1, "long": "#34d399",
+            "tempo": _Z3, "intervals": _Z4, "progression": "#c084fc",
+            "rest": "dim",
+        }
+        # TE → zone color (Garmin scale 0-5)
+        def _te_color(te):
+            if te < 2.0:
+                return _Z1
+            if te < 3.0:
+                return _Z2
+            if te < 4.0:
+                return _Z3
+            return _Z4
+
         status_icons = {"completed": "[green]✓[/]", "missed": "[red]✗[/]", "active": "[dim]·[/]"}
 
         for r in rows:
@@ -841,17 +867,19 @@ def plan_show(ctx, days: int, upcoming: int):
                 time_str = f"{int(dur)}m" if dur else "—"
                 rpe = rpe_by_date.get(r["date"])
                 rpe_str = str(rpe) if rpe else "—"
-                # Zone adherence: show actual zone, colored by compliance
+                # Zone — colored by actual zone
                 zone = actual["hr_zone"] or ""
-                if zone and wtype not in ("rest", "other"):
-                    from fit.plan import _zone_compatible
-                    ok = _zone_compatible(wtype, zone)
-                    zone_str = f"[green]{zone}[/]" if ok else f"[red]{zone}[/]"
+                zone_str = f"[{_zone_color(zone)}]{zone}[/]" if zone else ""
+                # Garmin Training Effect (0-5) — same zone palette
+                te = actual["aerobic_te"]
+                if te is not None:
+                    te_str = f"[{_te_color(te)}]{te:.1f}[/]"
                 else:
-                    zone_str = zone
+                    te_str = "—"
             else:
                 act_dist = ""
                 zone_str = ""
+                te_str = ""
                 time_str = ""
                 rpe_str = ""
 
@@ -861,8 +889,8 @@ def plan_show(ctx, days: int, upcoming: int):
                 date_str = f"[bold]{date_str}[/]"
 
             t.add_row(date_str, icon, f"[{color}]{wtype}[/]",
-                      plan_dist, act_dist, zone_str, time_str, rpe_str,
-                      detail)
+                      plan_dist, act_dist, zone_str, te_str, time_str,
+                      rpe_str, detail)
 
         # Summary
         completed = sum(1 for r in rows if r["status"] == "completed")

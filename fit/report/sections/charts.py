@@ -320,8 +320,8 @@ def _all_charts(conn):
                 _dist = _target.get("distance_km", 42.195)
                 _target_vdot = round(compute_vdot_from_race(_dist, _secs), 1)
                 vo2_annots["target"] = {
-                    "type": "line", "yMin": _target_vdot, "yMax": _target_vdot,
-                    "borderColor": SAFE + "4d", "borderDash": [6, 3], "borderWidth": 1,
+                    "type": "box", "yMin": _target_vdot - 0.5, "yMax": _target_vdot + 0.5,
+                    "backgroundColor": SAFE + "28", "borderColor": SAFE + "44",
                     "label": {"content": f"Target VDOT {_target_vdot}", "display": True,
                               "position": "start", "color": SAFE, "font": {"size": 10},
                               "backgroundColor": "transparent"},
@@ -371,7 +371,7 @@ def _all_charts(conn):
             zone_annots[f"z12_band_{i}"] = {
                 "type": "box", "yMin": 0, "yMax": z12,
                 "xMin": pr["start_date"], "xMax": pr["end_date"],
-                "backgroundColor": Z2 + "30", "borderWidth": 0,
+                "backgroundColor": Z2 + "28", "borderColor": Z2 + "44",
             }
             # Z3 target band (yellow, middle zone)
             z3_implied = 100 - z12 - z45
@@ -379,14 +379,14 @@ def _all_charts(conn):
                 zone_annots[f"z3_band_{i}"] = {
                     "type": "box", "yMin": z12, "yMax": z12 + z3_implied,
                     "xMin": pr["start_date"], "xMax": pr["end_date"],
-                    "backgroundColor": Z3 + "28", "borderWidth": 0,
+                    "backgroundColor": Z3 + "28", "borderColor": Z3 + "44",
                 }
             # Z4+Z5 target band (red, from top down)
             if z45 > 0:
                 zone_annots[f"z45_band_{i}"] = {
                     "type": "box", "yMin": 100 - z45, "yMax": 100,
                     "xMin": pr["start_date"], "xMax": pr["end_date"],
-                    "backgroundColor": DANGER + "30", "borderWidth": 0,
+                    "backgroundColor": DANGER + "28", "borderColor": DANGER + "44",
                 }
 
         # Convert ISO week labels to Monday dates for time-axis compatibility
@@ -597,10 +597,10 @@ def _all_charts(conn):
                                     "tooltip": {"callbacks": {"__DRIFT_ONSET_TT__": True}},
                                     "annotation": {"annotations": {
                                         "good": {"type": "box", "yMin": 15, "yMax": max(max_onset + 2, 20),
-                                                 "backgroundColor": SAFE + "20", "borderWidth": 0,
+                                                 "backgroundColor": SAFE + "28", "borderColor": SAFE + "44",
                                                  "label": {"content": "Good (>15km)", "display": True,
-                                                           "position": "start", "color": SAFE + "99",
-                                                           "font": {"size": 8}, "backgroundColor": "transparent"}},
+                                                           "position": "start", "color": SAFE,
+                                                           "font": {"size": 10}, "backgroundColor": "transparent"}},
                                     }}},
                         "scales": {"y": {"title": {"display": True, "text": "Drift onset (km)",
                                                    "color": "#64748b", "font": {"size": 10}},
@@ -788,9 +788,9 @@ def _all_charts(conn):
         cadence_annots = {
             "target_band": {
                 "type": "box", "yMin": 170, "yMax": 180,
-                "backgroundColor": SAFE + "20", "borderColor": SAFE + "40",
+                "backgroundColor": SAFE + "28", "borderColor": SAFE + "44",
                 "label": {"content": "Target 170-180", "display": True, "position": "start",
-                          "color": SAFE + "80", "font": {"size": 9}, "backgroundColor": "transparent"},
+                          "color": SAFE, "font": {"size": 10}, "backgroundColor": "transparent"},
             }
         }
         charts.append({"id": "chart-cadence", "config": json.dumps({
