@@ -752,25 +752,54 @@ def plan(ctx):
 
 
 @plan.command("show")
+@click.option("--days", default=14, help="Days of history to show (default 14).")
+@click.option("--upcoming", default=7, help="Days ahead to show (default 7).")
 @click.pass_context
-def plan_show(ctx):
-    """Show next 7 days of planned workouts."""
+def plan_show(ctx, days: int, upcoming: int):
+    """Show planned workouts with adherence for past + upcoming."""
     from datetime import date, timedelta
 
     conn = _conn()
     try:
+        # Update statuses for past workouts first
+        from fit.plan import update_plan_statuses
+        update_plan_statuses(conn)
+
         today = date.today()
-        end = today + timedelta(days=7)
+        start = today - timedelta(days=days)
+        end = today + timedelta(days=upcoming)
         rows = conn.execute("""
-            SELECT date, workout_name, workout_type, target_distance_km
-            FROM planned_workouts
-            WHERE date BETWEEN ? AND ? AND status = 'active'
-            ORDER BY date, sequence_ordinal
-        """, (today.isoformat(), end.isoformat())).fetchall()
+            SELECT pw.date, pw.workout_name, pw.workout_type,
+                   pw.target_distance_km, pw.status
+            FROM planned_workouts pw
+            WHERE pw.date BETWEEN ? AND ?
+            ORDER BY pw.date, pw.sequence_ordinal
+        """, (start.isoformat(), end.isoformat())).fetchall()
 
         if not rows:
             console.print("  No planned workouts. Import: [bold]fit plan import <file>[/]")
             return
+
+        # Pre-fetch actual activities for the date range
+        from fit.analysis import RUNNING_TYPES_SQL as rts
+        actuals = conn.execute(f"""
+            SELECT date, distance_km, duration_min, avg_hr, hr_zone,
+                   pace_sec_per_km
+            FROM activities
+            WHERE date BETWEEN ? AND ? AND type IN {rts}
+            ORDER BY date, training_load DESC
+        """, (start.isoformat(), end.isoformat())).fetchall()
+        actual_by_date = {}
+        for a in actuals:
+            if a["date"] not in actual_by_date:
+                actual_by_date[a["date"]] = a
+
+        # Pre-fetch RPE from checkins
+        checkins = conn.execute(
+            "SELECT date, rpe FROM checkins WHERE date BETWEEN ? AND ? AND rpe IS NOT NULL",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+        rpe_by_date = {c["date"]: c["rpe"] for c in checkins}
 
         from rich import box as rich_box
         from rich.panel import Panel
@@ -779,21 +808,61 @@ def plan_show(ctx):
         import re
         t = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False, padding=(0, 2))
         t.add_column("Date", style="dim")
+        t.add_column("", width=2)  # status icon
         t.add_column("Type", style="bold")
-        t.add_column("Dist", justify="right")
+        t.add_column("Plan", justify="right")
+        t.add_column("Actual", justify="right")
+        t.add_column("Time", justify="right")
+        t.add_column("RPE", justify="right")
         t.add_column("Detail", style="dim")
 
+        type_colors = {"easy": "blue", "long": "green", "tempo": "yellow",
+                       "intervals": "red", "recovery": "cyan", "rest": "dim"}
+        status_icons = {"completed": "[green]✓[/]", "missed": "[red]✗[/]", "active": "[dim]·[/]"}
+
         for r in rows:
-            dist = f"{r['target_distance_km']:.1f}km" if r["target_distance_km"] else "—"
+            plan_dist = f"{r['target_distance_km']:.1f}" if r["target_distance_km"] else "—"
             wtype = r["workout_type"] or "other"
-            color = {"easy": "blue", "long": "green", "tempo": "yellow", "intervals": "red"}.get(wtype, "dim")
-            # Clean Runna name: extract the descriptive part after the dash
+            color = type_colors.get(wtype, "dim")
+            status = r["status"] or "active"
+            icon = status_icons.get(status, "·")
+
+            # Clean Runna name
             name = r["workout_name"] or ""
             m = re.search(r"-\s*(.+?)\s*\(", name)
-            detail = m.group(1).strip() if m else name[:30]
-            t.add_row(r["date"][5:], f"[{color}]{wtype}[/]", dist, detail)
+            detail = m.group(1).strip() if m else name[:25]
 
-        console.print(Panel(t, title="[bold]Plan[/] [dim]next 7 days[/]", border_style="blue", padding=(0, 1)))
+            # Match actual activity
+            actual = actual_by_date.get(r["date"])
+            if actual and status != "active":
+                act_dist = f"{actual['distance_km']:.1f}" if actual["distance_km"] else "—"
+                dur = actual["duration_min"]
+                time_str = f"{int(dur)}m" if dur else "—"
+                rpe = rpe_by_date.get(r["date"])
+                rpe_str = str(rpe) if rpe else "—"
+            else:
+                act_dist = ""
+                time_str = ""
+                rpe_str = ""
+
+            # Highlight today
+            date_str = r["date"][5:]
+            if r["date"] == today.isoformat():
+                date_str = f"[bold]{date_str}[/]"
+
+            t.add_row(date_str, icon, f"[{color}]{wtype}[/]",
+                      plan_dist, act_dist, time_str, rpe_str, detail)
+
+        # Summary
+        completed = sum(1 for r in rows if r["status"] == "completed")
+        missed = sum(1 for r in rows if r["status"] == "missed")
+        active = sum(1 for r in rows if r["status"] == "active")
+        total_past = completed + missed
+        pct = f" ({round(completed / total_past * 100)}%)" if total_past else ""
+
+        title = f"[bold]Plan[/] [dim]{days}d back + {upcoming}d ahead[/]"
+        footer = f"[green]✓ {completed}[/] [red]✗ {missed}[/] [dim]· {active} upcoming[/]{pct}"
+        console.print(Panel(t, title=title, subtitle=footer, border_style="blue", padding=(0, 1)))
     finally:
         conn.close()
 

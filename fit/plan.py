@@ -375,6 +375,59 @@ def _upsert_planned_workout(conn, workout):
     })
 
 
+# ── Plan Status Transitions ──
+
+
+def update_plan_statuses(conn):
+    """Transition past planned workouts from 'active' to 'completed' or 'missed'.
+
+    For each active workout with a date before today:
+    - If a matching running activity exists on that date → 'completed'
+    - If the date has passed with no matching activity → 'missed'
+    - Rest days with no activity → 'completed' (rest respected)
+
+    Returns count of updated workouts.
+    """
+    today = date.today().isoformat()
+    past_active = conn.execute("""
+        SELECT id, date, workout_type, target_distance_km
+        FROM planned_workouts
+        WHERE status = 'active' AND date < ?
+        ORDER BY date
+    """, (today,)).fetchall()
+
+    if not past_active:
+        return 0
+
+    count = 0
+    for pw in past_active:
+        if pw["workout_type"] == "rest":
+            # Rest day: completed if no activity, missed if they ran
+            has_activity = conn.execute(
+                f"SELECT 1 FROM activities WHERE date = ? AND type IN {RUNNING_TYPES_SQL} LIMIT 1",
+                (pw["date"],)
+            ).fetchone()
+            new_status = "missed" if has_activity else "completed"
+        else:
+            # Training day: completed if matching activity exists
+            has_activity = conn.execute(
+                f"SELECT 1 FROM activities WHERE date = ? AND type IN {RUNNING_TYPES_SQL} LIMIT 1",
+                (pw["date"],)
+            ).fetchone()
+            new_status = "completed" if has_activity else "missed"
+
+        conn.execute(
+            "UPDATE planned_workouts SET status = ? WHERE id = ?",
+            (new_status, pw["id"])
+        )
+        count += 1
+
+    conn.commit()
+    if count:
+        logger.info("Updated %d planned workout statuses", count)
+    return count
+
+
 # ── Plan Adherence ──
 
 

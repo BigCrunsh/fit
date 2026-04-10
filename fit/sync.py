@@ -223,6 +223,13 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     except Exception as e:
         logger.debug("Plan sync skipped: %s", e)
 
+    # 8b2. Update plan statuses (active → completed/missed for past dates)
+    try:
+        from fit.plan import update_plan_statuses
+        update_plan_statuses(conn)
+    except Exception as e:
+        logger.debug("Plan status update skipped: %s", e)
+
     # 8c. Auto-compute correlations + run alerts
     try:
         from fit.correlations import compute_all_correlations
