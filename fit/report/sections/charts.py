@@ -361,18 +361,33 @@ def _all_charts(conn):
                 z5_pct.append(0)
         # Get active phase targets for annotation
         zone_annots = {}
-        phase_row = conn.execute(
-            "SELECT z12_pct_target, z45_pct_target, name FROM training_phases WHERE status = 'active' LIMIT 1"
-        ).fetchone()
-        if phase_row and phase_row["z12_pct_target"]:
-            z12_target = phase_row["z12_pct_target"]
-            zone_annots["z12_target"] = {
-                "type": "line", "yMin": z12_target, "yMax": z12_target,
-                "borderColor": SAFE + "66", "borderDash": [6, 3], "borderWidth": 1,
-                "label": {"content": f"Z1+Z2 target {z12_target:.0f}%", "display": True,
-                          "position": "end", "color": SAFE, "font": {"size": 9},
-                          "backgroundColor": "transparent"},
+        phase_rows = conn.execute(
+            "SELECT name, start_date, end_date, z12_pct_target, z45_pct_target FROM training_phases WHERE z12_pct_target IS NOT NULL ORDER BY start_date"
+        ).fetchall()
+        for i, pr in enumerate(phase_rows):
+            z12 = pr["z12_pct_target"]
+            z45 = pr["z45_pct_target"] or 0
+            # Z1+Z2 target band (blue, from bottom up)
+            zone_annots[f"z12_band_{i}"] = {
+                "type": "box", "yMin": 0, "yMax": z12,
+                "xMin": pr["start_date"], "xMax": pr["end_date"],
+                "backgroundColor": Z2 + "30", "borderWidth": 0,
             }
+            # Z3 target band (yellow, middle zone)
+            z3_implied = 100 - z12 - z45
+            if z3_implied > 0:
+                zone_annots[f"z3_band_{i}"] = {
+                    "type": "box", "yMin": z12, "yMax": z12 + z3_implied,
+                    "xMin": pr["start_date"], "xMax": pr["end_date"],
+                    "backgroundColor": Z3 + "28", "borderWidth": 0,
+                }
+            # Z4+Z5 target band (red, from top down)
+            if z45 > 0:
+                zone_annots[f"z45_band_{i}"] = {
+                    "type": "box", "yMin": 100 - z45, "yMax": 100,
+                    "xMin": pr["start_date"], "xMax": pr["end_date"],
+                    "backgroundColor": DANGER + "30", "borderWidth": 0,
+                }
 
         # Convert ISO week labels to Monday dates for time-axis compatibility
         def _week_to_date(w):

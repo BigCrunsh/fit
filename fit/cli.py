@@ -163,7 +163,7 @@ def checkin_list(days: int):
 
 
 @checkin.command("update")
-@click.option("--date", "target_date", default=None, help="Date to update (YYYY-MM-DD, default: today).")
+@click.argument("target_date", default=None, required=False)
 def checkin_update(target_date: str | None):
     """Update or add a check-in for any date."""
     from fit.checkin import run_checkin
