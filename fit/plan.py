@@ -37,23 +37,24 @@ WORKOUT_TYPE_MAP = {
 def sync_planned_workouts(api, conn, months=2):
     """Sync planned workouts from Garmin Calendar (Runna integration).
 
-    Best-effort: the Garmin Calendar API is undocumented and may change.
-    Falls back gracefully with a warning if the API is unavailable.
-    Use 'fit plan import' as a robust CSV fallback.
+    Replace strategy: delete all Garmin-sourced active workouts and re-insert
+    from the API each sync. This handles Runna date swaps naturally — the API
+    always returns current dates, so we just trust it.
+
+    Calendar items can appear in a month different from their date (e.g.,
+    items scheduled for April may appear in March's response after a
+    reschedule). We scan previous month through months ahead.
+
+    CSV-imported workouts (no garmin_workout_id) are not affected.
 
     Returns count of synced workouts.
     """
     try:
         today = date.today()
-        count = 0
 
-        # Determine current plan version
-        row = conn.execute(
-            "SELECT MAX(plan_version) FROM planned_workouts"
-        ).fetchone()
-        plan_version = (row[0] or 0) + 1
-
-        for month_offset in range(months):
+        # Collect all workouts from the API first
+        all_workouts = []
+        for month_offset in range(-1, months):
             target = _month_offset(today, month_offset)
             try:
                 items = api.garth.connectapi(
@@ -74,23 +75,84 @@ def sync_planned_workouts(api, conn, months=2):
                     else []
                 )
 
-            ordinal_by_date = {}
             for item in items:
                 if item.get("itemType") == "workout":
                     workout = _parse_calendar_item(item)
                     if workout:
-                        d = workout.get("date", "")
-                        ordinal_by_date[d] = ordinal_by_date.get(d, 0) + 1
-                        workout["plan_version"] = plan_version
-                        workout["sequence_ordinal"] = ordinal_by_date[d]
-                        _upsert_planned_workout(conn, workout)
-                        count += 1
+                        all_workouts.append(workout)
+
+        if not all_workouts:
+            logger.info("No planned workouts found in Garmin Calendar")
+            return 0
+
+        # Deduplicate by garmin_workout_id (same item can appear in
+        # multiple months' responses)
+        seen_ids = {}
+        for w in all_workouts:
+            gid = w.get("garmin_workout_id", "")
+            if gid:
+                seen_ids[gid] = w  # last wins (same data)
+            else:
+                seen_ids[id(w)] = w
+        unique_workouts = list(seen_ids.values())
+
+        # Use plan_version 1 for all Garmin-sourced workouts
+        plan_version = 1
+
+        # 1. Delete all active Garmin-sourced workouts (will be re-inserted)
+        conn.execute("""
+            DELETE FROM planned_workouts
+            WHERE garmin_workout_id IS NOT NULL
+              AND garmin_workout_id != ''
+              AND status = 'active'
+        """)
+
+        # 2. Delete completed/missed workouts whose garmin_workout_id
+        #    appears in fresh data with a DIFFERENT date (Runna reschedule).
+        #    This prevents stale duplicates while preserving history for
+        #    items the API no longer returns.
+        fresh_ids = {
+            w["garmin_workout_id"] for w in unique_workouts
+            if w.get("garmin_workout_id")
+        }
+        if fresh_ids:
+            existing = conn.execute("""
+                SELECT id, date, garmin_workout_id FROM planned_workouts
+                WHERE garmin_workout_id IS NOT NULL
+                  AND garmin_workout_id != ''
+                  AND status IN ('completed', 'missed')
+            """).fetchall()
+            fresh_by_id = {
+                w["garmin_workout_id"]: w["date"]
+                for w in unique_workouts
+                if w.get("garmin_workout_id")
+            }
+            stale_ids = [
+                row["id"] for row in existing
+                if row["garmin_workout_id"] in fresh_by_id
+                and row["date"] != fresh_by_id[row["garmin_workout_id"]]
+            ]
+            if stale_ids:
+                conn.execute(
+                    f"DELETE FROM planned_workouts WHERE id IN "
+                    f"({','.join('?' * len(stale_ids))})",
+                    stale_ids,
+                )
+
+        ordinal_by_date = {}
+        for workout in unique_workouts:
+            d = workout.get("date", "")
+            ordinal_by_date[d] = ordinal_by_date.get(d, 0) + 1
+            workout["plan_version"] = plan_version
+            workout["sequence_ordinal"] = ordinal_by_date[d]
+            _upsert_planned_workout(conn, workout)
 
         conn.commit()
         logger.info(
-            "Synced %d planned workouts from Garmin Calendar", count
+            "Synced %d planned workouts from Garmin Calendar",
+            len(unique_workouts),
         )
-        return count
+        return len(unique_workouts)
 
     except Exception as e:
         logger.warning(
@@ -381,46 +443,70 @@ def _upsert_planned_workout(conn, workout):
 def update_plan_statuses(conn):
     """Transition past planned workouts from 'active' to 'completed' or 'missed'.
 
-    For each active workout with a date before today:
-    - If a matching running activity exists on that date → 'completed'
-    - If the date has passed with no matching activity → 'missed'
-    - Rest days with no activity → 'completed' (rest respected)
+    Simple date-based matching: the Garmin Calendar API provides correct dates
+    (including Runna swaps), so we just match by date. No fuzzy matching needed.
+
+    - Run workout on same date as activity → completed
+    - Rest day with no activity → completed
+    - Rest day with activity → missed (ran on rest day)
+    - Past workout with no activity and >1 day ago → missed
 
     Returns count of updated workouts.
     """
-    today = date.today().isoformat()
+    today = date.today()
+    cutoff = today.isoformat()
     past_active = conn.execute("""
-        SELECT id, date, workout_type, target_distance_km
+        SELECT id, date, workout_name, workout_type, target_distance_km
         FROM planned_workouts
-        WHERE status = 'active' AND date < ?
+        WHERE status = 'active' AND date <= ?
         ORDER BY date
-    """, (today,)).fetchall()
+    """, (cutoff,)).fetchall()
 
     if not past_active:
         return 0
 
     count = 0
     for pw in past_active:
+        pw_date = date.fromisoformat(pw["date"])
+
         if pw["workout_type"] == "rest":
-            # Rest day: completed if no activity, missed if they ran
             has_activity = conn.execute(
-                f"SELECT 1 FROM activities WHERE date = ? AND type IN {RUNNING_TYPES_SQL} LIMIT 1",
+                f"SELECT 1 FROM activities WHERE date = ? "
+                f"AND type IN {RUNNING_TYPES_SQL} LIMIT 1",
                 (pw["date"],)
             ).fetchone()
             new_status = "missed" if has_activity else "completed"
-        else:
-            # Training day: completed if matching activity exists
-            has_activity = conn.execute(
-                f"SELECT 1 FROM activities WHERE date = ? AND type IN {RUNNING_TYPES_SQL} LIMIT 1",
-                (pw["date"],)
-            ).fetchone()
-            new_status = "completed" if has_activity else "missed"
+            conn.execute(
+                "UPDATE planned_workouts SET status = ? WHERE id = ?",
+                (new_status, pw["id"]),
+            )
+            count += 1
+            continue
 
-        conn.execute(
-            "UPDATE planned_workouts SET status = ? WHERE id = ?",
-            (new_status, pw["id"])
-        )
-        count += 1
+        # Check for a running activity on the same date
+        activity = conn.execute(f"""
+            SELECT 1 FROM activities
+            WHERE date = ? AND type IN {RUNNING_TYPES_SQL}
+            LIMIT 1
+        """, (pw["date"],)).fetchone()
+
+        if activity:
+            conn.execute(
+                "UPDATE planned_workouts SET status = 'completed' "
+                "WHERE id = ?",
+                (pw["id"],),
+            )
+            count += 1
+        else:
+            # Only mark missed if >1 day past (give today's workout time)
+            days_past = (today - pw_date).days
+            if days_past > 1:
+                conn.execute(
+                    "UPDATE planned_workouts SET status = 'missed' "
+                    "WHERE id = ?",
+                    (pw["id"],),
+                )
+                count += 1
 
     conn.commit()
     if count:
@@ -457,14 +543,17 @@ def compute_plan_adherence(conn, week_str=None):
     week_start = _iso_week_to_monday(week_str)
     week_end = week_start + timedelta(days=6)
 
-    # Get latest active plan version
-    version_row = conn.execute("""
-        SELECT plan_version FROM planned_workouts
-        WHERE status = 'active'
-        ORDER BY plan_version DESC LIMIT 1
-    """).fetchone()
+    # Get planned workouts for the week (all statuses — past weeks
+    # will have completed/missed, current week may have active)
+    planned = conn.execute("""
+        SELECT * FROM planned_workouts
+        WHERE date BETWEEN ? AND ?
+        ORDER BY date, sequence_ordinal
+    """, (week_start.isoformat(), week_end.isoformat())
+    ).fetchall()
+    planned = [dict(r) for r in planned]
 
-    if not version_row:
+    if not planned:
         return {
             "week": week_str,
             "planned": [],
@@ -476,19 +565,6 @@ def compute_plan_adherence(conn, week_str=None):
             "rest_compliance": None,
             "systematic_override": False,
         }
-
-    plan_version = version_row[0]
-
-    # Get planned workouts for the week
-    planned = conn.execute("""
-        SELECT * FROM planned_workouts
-        WHERE date BETWEEN ? AND ?
-          AND plan_version = ?
-          AND status = 'active'
-        ORDER BY date, sequence_ordinal
-    """, (week_start.isoformat(), week_end.isoformat(), plan_version)
-    ).fetchall()
-    planned = [dict(r) for r in planned]
 
     # Get actual running activities for the week
     actuals = conn.execute(f"""
@@ -836,25 +912,14 @@ def get_readiness_recommendation(conn, config):
 # ── Display Helpers ──
 
 
-def get_upcoming_plan(conn, days=7):
-    """Get planned workouts for the next N days.
+def get_upcoming_plan(conn, days=7, past_days=14):
+    """Get planned workouts: past N days (with status) + next N days.
 
-    Returns list of dicts with planned workout info + match status.
+    Returns list of dicts with planned workout info + actual activity data.
     """
     today = date.today()
+    start = today - timedelta(days=past_days)
     end = today + timedelta(days=days)
-
-    # Get latest active plan version
-    version_row = conn.execute("""
-        SELECT plan_version FROM planned_workouts
-        WHERE status = 'active'
-        ORDER BY plan_version DESC LIMIT 1
-    """).fetchone()
-
-    if not version_row:
-        return []
-
-    plan_version = version_row[0]
 
     planned = conn.execute(f"""
         SELECT pw.*, a.id as activity_id, a.distance_km as actual_km,
@@ -863,9 +928,7 @@ def get_upcoming_plan(conn, days=7):
         LEFT JOIN activities a
             ON pw.date = a.date AND a.type IN {RUNNING_TYPES_SQL}
         WHERE pw.date BETWEEN ? AND ?
-          AND pw.plan_version = ?
-          AND pw.status = 'active'
         ORDER BY pw.date, pw.sequence_ordinal
-    """, (today.isoformat(), end.isoformat(), plan_version)).fetchall()
+    """, (start.isoformat(), end.isoformat())).fetchall()
 
     return [dict(r) for r in planned]

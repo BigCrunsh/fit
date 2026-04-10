@@ -812,6 +812,7 @@ def plan_show(ctx, days: int, upcoming: int):
         t.add_column("Type", style="bold")
         t.add_column("Plan", justify="right")
         t.add_column("Actual", justify="right")
+        t.add_column("Zone", justify="right")
         t.add_column("Time", justify="right")
         t.add_column("RPE", justify="right")
         t.add_column("Detail", style="dim")
@@ -840,8 +841,17 @@ def plan_show(ctx, days: int, upcoming: int):
                 time_str = f"{int(dur)}m" if dur else "—"
                 rpe = rpe_by_date.get(r["date"])
                 rpe_str = str(rpe) if rpe else "—"
+                # Zone adherence: show actual zone, colored by compliance
+                zone = actual["hr_zone"] or ""
+                if zone and wtype not in ("rest", "other"):
+                    from fit.plan import _zone_compatible
+                    ok = _zone_compatible(wtype, zone)
+                    zone_str = f"[green]{zone}[/]" if ok else f"[red]{zone}[/]"
+                else:
+                    zone_str = zone
             else:
                 act_dist = ""
+                zone_str = ""
                 time_str = ""
                 rpe_str = ""
 
@@ -851,7 +861,8 @@ def plan_show(ctx, days: int, upcoming: int):
                 date_str = f"[bold]{date_str}[/]"
 
             t.add_row(date_str, icon, f"[{color}]{wtype}[/]",
-                      plan_dist, act_dist, time_str, rpe_str, detail)
+                      plan_dist, act_dist, zone_str, time_str, rpe_str,
+                      detail)
 
         # Summary
         completed = sum(1 for r in rows if r["status"] == "completed")
