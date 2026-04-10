@@ -402,12 +402,14 @@
   <div class="chart-box"><canvas id="chart-efficiency" height="180"></canvas></div>
 
   <!-- 6. Split Analysis — Cardiac Drift -->
-  <div class="sec"><h2>Split Analysis — Cardiac Drift</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">Cardiac drift = HR rising while pace stays constant. Shows aerobic decoupling — your heart works harder to maintain the same speed as glycogen depletes and core temp rises. Drift onset before km 15 suggests your aerobic base needs work. Averaged over the last 2 weeks of runs with split data.</div><div class="line"></div></div>
+  <div class="sec"><h2>Split Analysis — Cardiac Drift</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.cardiac_drift }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-drift" height="200"></canvas></div>
   {% set drift_chart = charts | selectattr('id', 'equalto', 'chart-drift') | first %}
   {% if drift_chart and drift_chart.n_runs is defined %}
-  <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">Averaged over {{ drift_chart.n_runs }} run{{ 's' if drift_chart.n_runs != 1 else '' }} from last 14 days.{% if split_data and split_data.drift and split_data.drift.drift_onset_km %} Drift onset at km {{ split_data.drift.drift_onset_km }}.{% endif %}</div>
+  <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">Averaged over {{ drift_chart.n_runs }} run{{ 's' if drift_chart.n_runs != 1 else '' }} from last 4 weeks. Individual runs shown as thin lines.{% if split_data and split_data.drift and split_data.drift.drift_onset_km %} Drift onset at km {{ split_data.drift.drift_onset_km }}.{% endif %}</div>
   {% endif %}
+  <div class="chart-box"><canvas id="chart-drift-trend" height="160"></canvas></div>
+  <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">Drift onset = first km where HR exceeds first-half average + 5 bpm. Higher = better aerobic endurance. Green band = onset after km 15 (good base).</div>
 
   <!-- 7. Pace Consistency (CV%) -->
   <div class="sec"><h2>Pace Consistency (CV%)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.pacecv }}</div><div class="line"></div></div>
@@ -693,11 +695,11 @@ function resolveAnnotationCollisions(annotations) {
   }
   return annotations;
 }
-const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-stress','chart-efficiency','chart-cadence','chart-rpe','chart-acwr','chart-pacecv','chart-effort-gap','chart-vo2','chart-zones']);
+const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-stress','chart-efficiency','chart-cadence','chart-rpe','chart-acwr','chart-pacecv','chart-effort-gap','chart-vo2','chart-zones','chart-drift-trend']);
 // chart-weight has its own time scale config (set in charts.py) — not in this set to avoid double-applying
 
 // Phase bar data + plugin for Profile time-series charts
-const phaseBarCharts = new Set(['chart-vo2','chart-efficiency','chart-cadence','chart-pacecv','chart-effort-gap','chart-weight','chart-zones']);
+const phaseBarCharts = new Set(['chart-vo2','chart-efficiency','chart-cadence','chart-pacecv','chart-effort-gap','chart-weight','chart-zones','chart-drift-trend']);
 {% if training_phases_json %}
 const trainingPhases = {{ training_phases_json | safe }};
 {% else %}

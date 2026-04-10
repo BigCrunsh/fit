@@ -83,11 +83,11 @@ def _all_charts(conn):
                         "plugins": {"legend": {"display": False},
                                     "annotation": {"annotations": {
                             "good": {"type": "box", "yMin": 75, "yMax": 100,
-                                     "backgroundColor": SAFE + "08", "borderWidth": 0,
+                                     "backgroundColor": SAFE + "20", "borderWidth": 0,
                                      "label": {"content": "Ready >=75", "display": True, "position": "start", "font": {"size": 7}, "color": SAFE + "60"}},
                             "rest": {"type": "box", "yMin": 0, "yMax": 50,
-                                     "backgroundColor": DANGER + "06", "borderWidth": 0,
-                                     "label": {"content": "Rest <50", "display": True, "position": "start", "font": {"size": 7}, "color": DANGER + "40"}},
+                                     "backgroundColor": DANGER + "18", "borderWidth": 0,
+                                     "label": {"content": "Rest <50", "display": True, "position": "start", "font": {"size": 7}, "color": DANGER + "60"}},
                         }}},
                         "scales": {
                 "y": {"min": 0, "max": 100, "grid": {"color": "rgba(255,255,255,0.03)"}},
@@ -178,7 +178,7 @@ def _all_charts(conn):
             tv = weight_target["target_value"]
             weight_annots["target"] = {
                 "type": "box", "yMin": tv - 0.5, "yMax": tv + 0.5,
-                "backgroundColor": SAFE + "0f", "borderColor": SAFE + "26",
+                "backgroundColor": SAFE + "28", "borderColor": SAFE + "44",
                 "label": {"content": "Race weight", "display": True, "position": "start",
                           "color": SAFE, "font": {"size": 10}, "backgroundColor": "transparent"},
             }
@@ -418,50 +418,105 @@ def _all_charts(conn):
                                          "ticks": {"callback": "__PCT_CB__"}}}}
         }).replace('"__PCT_CB__"', 'function(v){return v+"%"}')})
 
-    # Cardiac Drift chart (Profile tab) — 2-week average across runs, dual-axis: pace (left, reversed) + HR (right)
-    # Get all runs from last 14 days with ≥5 splits
+    # Cardiac Drift charts (Profile tab)
+    # 1. Per-km chart: individual runs (thin) + 4-week average (thick), dual-axis pace + HR
+    # 2. Drift-over-time chart: drift % per run as time series
+    from collections import defaultdict
     drift_runs = conn.execute("""
-        SELECT a.id, a.date, COUNT(s.split_num) as n_splits
+        SELECT a.id, a.date, a.name, COUNT(s.split_num) as n_splits
         FROM activities a
         JOIN activity_splits s ON s.activity_id = a.id
         WHERE a.type IN ('running','track_running','trail_running')
-          AND a.date >= date('now', '-14 days')
+          AND a.date >= date('now', '-28 days')
         GROUP BY a.id HAVING n_splits >= 5
-        ORDER BY a.date DESC
+        ORDER BY a.date
     """).fetchall()
     if drift_runs:
-        # Collect per-km averages across all recent runs
-        from collections import defaultdict
+        # Collect per-run split data + per-km averages
         pace_by_km = defaultdict(list)
         hr_by_km = defaultdict(list)
         max_splits = 0
+        run_splits = []  # list of {date, name, pace: [...], hr: [...]}
+        drift_pcts = []  # for drift-over-time chart
+
         for run in drift_runs:
             splits = conn.execute(
                 "SELECT split_num, pace_sec_per_km, avg_hr FROM activity_splits WHERE activity_id = ? ORDER BY split_num",
                 (run["id"],)
             ).fetchall()
+            run_pace = {}
+            run_hr = {}
+            hr_vals = []
             for s in splits:
+                km = s["split_num"]
                 if s["pace_sec_per_km"]:
-                    pace_by_km[s["split_num"]].append(s["pace_sec_per_km"])
+                    pace_by_km[km].append(s["pace_sec_per_km"])
+                    run_pace[km] = round(s["pace_sec_per_km"] / 60, 2)
                 if s["avg_hr"]:
-                    hr_by_km[s["split_num"]].append(s["avg_hr"])
-                max_splits = max(max_splits, s["split_num"])
+                    hr_by_km[km].append(s["avg_hr"])
+                    run_hr[km] = round(s["avg_hr"], 0)
+                    hr_vals.append(s["avg_hr"])
+                max_splits = max(max_splits, km)
+            run_splits.append({"date": run["date"], "name": run["name"] or run["date"],
+                               "pace": run_pace, "hr": run_hr, "n": max(run_pace.keys()) if run_pace else 0})
+
+            # Compute drift % for this run: (second-half avg HR / first-half avg HR - 1) × 100
+            if len(hr_vals) >= 6:
+                mid = len(hr_vals) // 2
+                first_half = hr_vals[:mid]
+                second_half = hr_vals[mid:]
+                if first_half and second_half:
+                    first_avg = sum(first_half) / len(first_half)
+                    second_avg = sum(second_half) / len(second_half)
+                    if first_avg > 0:
+                        drift_pct = round((second_avg / first_avg - 1) * 100, 1)
+                        drift_pcts.append({"date": run["date"], "drift": drift_pct})
 
         if max_splits >= 5:
             split_labels = [f"{i}km" for i in range(1, max_splits + 1)]
-            pace_data = [round(sum(pace_by_km[i]) / len(pace_by_km[i]) / 60, 2) if pace_by_km.get(i) else None for i in range(1, max_splits + 1)]
-            hr_data = [round(sum(hr_by_km[i]) / len(hr_by_km[i]), 0) if hr_by_km.get(i) else None for i in range(1, max_splits + 1)]
 
-            # Detect drift onset (first split in second half where HR > first-half avg + 5)
+            # Average lines (thick)
+            avg_pace = [round(sum(pace_by_km[i]) / len(pace_by_km[i]) / 60, 2)
+                        if pace_by_km.get(i) else None for i in range(1, max_splits + 1)]
+            avg_hr = [round(sum(hr_by_km[i]) / len(hr_by_km[i]), 0)
+                      if hr_by_km.get(i) else None for i in range(1, max_splits + 1)]
+
+            # Individual run lines (thin, faint)
+            datasets = []
+            for idx, rs in enumerate(run_splits):
+                short_name = rs["date"][-5:]  # MM-DD
+                # Pace line for this run
+                pace_vals = [rs["pace"].get(i) for i in range(1, max_splits + 1)]
+                datasets.append({
+                    "label": f"Pace {short_name}", "data": pace_vals,
+                    "borderColor": Z2 + "30", "borderWidth": 1, "pointRadius": 0,
+                    "tension": 0.3, "yAxisID": "y", "fill": False, "spanGaps": True,
+                })
+                # HR line for this run
+                hr_vals_run = [rs["hr"].get(i) for i in range(1, max_splits + 1)]
+                datasets.append({
+                    "label": f"HR {short_name}", "data": hr_vals_run,
+                    "borderColor": DANGER + "25", "borderWidth": 1, "pointRadius": 0,
+                    "tension": 0.3, "yAxisID": "y1", "fill": False, "spanGaps": True,
+                })
+
+            # Average lines on top (thick, bold)
+            datasets.append({"label": "Avg Pace", "data": avg_pace,
+                             "borderColor": Z2 + "cc", "borderWidth": 2.5, "pointRadius": 2,
+                             "tension": 0.3, "yAxisID": "y", "fill": False})
+            datasets.append({"label": "Avg HR", "data": avg_hr,
+                             "borderColor": DANGER + "b3", "borderWidth": 2.5, "pointRadius": 2,
+                             "tension": 0.3, "yAxisID": "y1", "fill": False})
+
+            # Drift onset on the average
             drift_onset = None
-            valid_first_half = [h for h in hr_data[:max_splits // 2] if h is not None]
+            valid_first_half = [h for h in avg_hr[:max_splits // 2] if h is not None]
             if valid_first_half:
                 first_half_avg = sum(valid_first_half) / len(valid_first_half)
                 for i in range(max_splits // 2, max_splits):
-                    if hr_data[i] and hr_data[i] > first_half_avg + 5:
+                    if avg_hr[i] and avg_hr[i] > first_half_avg + 5:
                         drift_onset = i
                         break
-
             drift_annots = {}
             if drift_onset is not None:
                 drift_annots["drift"] = {
@@ -475,17 +530,11 @@ def _all_charts(conn):
             n_runs = len(drift_runs)
             charts.append({"id": "chart-drift", "config": json.dumps({
                 "type": "line",
-                "data": {"labels": split_labels,
-                         "datasets": [
-                             {"label": "Pace (min/km)", "data": pace_data,
-                              "borderColor": Z2 + "cc", "borderWidth": 2, "pointRadius": 2,
-                              "tension": 0.3, "yAxisID": "y", "fill": False},
-                             {"label": "Heart Rate", "data": hr_data,
-                              "borderColor": DANGER + "b3", "borderWidth": 2, "pointRadius": 2,
-                              "tension": 0.3, "yAxisID": "y1", "fill": False},
-                         ]},
+                "data": {"labels": split_labels, "datasets": datasets},
                 "options": {"responsive": True,
-                            "plugins": {"legend": {"labels": {"boxWidth": 10, "padding": 12}},
+                            "plugins": {"legend": {"display": True,
+                                                    "labels": {"boxWidth": 10, "padding": 12,
+                                                               "filter": "__DRIFT_LEGEND_FILTER__"}},
                                         "annotation": {"annotations": drift_annots}},
                             "scales": {
                                 "y": {"position": "left", "reverse": True,
@@ -495,7 +544,71 @@ def _all_charts(conn):
                                        "title": {"display": True, "text": "HR", "color": "#64748b", "font": {"size": 10}},
                                        "grid": {"display": False}},
                                 "x": {"grid": {"display": False}, "ticks": {"maxTicksLimit": 10}}}}
-            }), "n_runs": n_runs})
+            }).replace('"__DRIFT_LEGEND_FILTER__"',
+                       'function(item){return item.text.startsWith("Avg")}'),
+                "n_runs": n_runs})
+
+    # Cardiac Drift Over Time — drift onset km per run as time series
+    # Compute drift onset for each run with splits (re-query all history for full timeline)
+    def _compute_drift_onset(hr_vals):
+        """Return km index where drift onset occurs (first split in second half where HR > first-half avg + 5), or None."""
+        n = len(hr_vals)
+        if n < 6:
+            return None
+        mid = n // 2
+        first_half = [h for h in hr_vals[:mid] if h is not None]
+        if not first_half:
+            return None
+        first_avg = sum(first_half) / len(first_half)
+        for i in range(mid, n):
+            if hr_vals[i] is not None and hr_vals[i] > first_avg + 5:
+                return i + 1  # 1-indexed km
+        return n + 1  # No drift detected — onset beyond run distance (good)
+
+    drift_onset_data = []
+    all_drift_runs = conn.execute("""
+        SELECT a.id, a.date, a.distance_km FROM activities a
+        JOIN activity_splits s ON s.activity_id = a.id
+        WHERE a.type IN ('running','track_running','trail_running')
+        GROUP BY a.id HAVING COUNT(s.split_num) >= 6
+        ORDER BY a.date
+    """).fetchall()
+    for run in all_drift_runs:
+        hr_vals = [s["avg_hr"] for s in conn.execute(
+            "SELECT avg_hr FROM activity_splits WHERE activity_id = ? ORDER BY split_num",
+            (run["id"],)
+        ).fetchall()]
+        onset = _compute_drift_onset(hr_vals)
+        if onset is not None:
+            drift_onset_data.append({"date": run["date"], "onset_km": onset,
+                                     "dist": round(run["distance_km"] or 0, 1)})
+    if drift_onset_data:
+        max_onset = max(d["onset_km"] for d in drift_onset_data)
+        charts.append({"id": "chart-drift-trend", "config": json.dumps({
+            "type": "scatter",
+            "data": {"datasets": [{
+                "label": "Drift Onset (km)",
+                "data": [{"x": d["date"], "y": d["onset_km"]} for d in drift_onset_data],
+                "borderColor": DANGER + "b3", "backgroundColor": DANGER + "60",
+                "pointRadius": 5, "showLine": True, "borderWidth": 2, "tension": 0.3,
+            }]},
+            "options": {"responsive": True,
+                        "plugins": {"legend": {"display": False},
+                                    "tooltip": {"callbacks": {"__DRIFT_ONSET_TT__": True}},
+                                    "annotation": {"annotations": {
+                                        "good": {"type": "box", "yMin": 15, "yMax": max(max_onset + 2, 20),
+                                                 "backgroundColor": SAFE + "20", "borderWidth": 0,
+                                                 "label": {"content": "Good (>15km)", "display": True,
+                                                           "position": "start", "color": SAFE + "99",
+                                                           "font": {"size": 8}, "backgroundColor": "transparent"}},
+                                    }}},
+                        "scales": {"y": {"title": {"display": True, "text": "Drift onset (km)",
+                                                   "color": "#64748b", "font": {"size": 10}},
+                                         "min": 0,
+                                         "grid": {"color": "rgba(255,255,255,0.03)"}},
+                                   "x": {"type": "time", "grid": {"display": False}}}}
+        }).replace('"__DRIFT_ONSET_TT__": true',
+                   '"label": function(ctx){return "Drift onset: km "+ctx.parsed.y}')})
 
     # Pace Consistency (CV%) — line chart with purple fill (Profile tab)
     pace_cv = conn.execute(f"""
@@ -604,7 +717,7 @@ def _all_charts(conn):
         # Merge spike annotations (top 3 only) with safe zone/danger line
         acwr_annots = {
             "safe_zone": {"type": "box", "yMin": 0.8, "yMax": 1.3,
-                          "backgroundColor": SAFE + "10", "borderWidth": 0,
+                          "backgroundColor": SAFE + "20", "borderWidth": 0,
                           "label": {"content": "Safe zone 0.8-1.3", "display": True, "position": "end",
                                     "font": {"size": 8}, "color": SAFE + "60"}},
             "danger": {"type": "line", "yMin": 1.5, "yMax": 1.5, "borderColor": DANGER + "60", "borderDash": [6, 3],
@@ -675,7 +788,7 @@ def _all_charts(conn):
         cadence_annots = {
             "target_band": {
                 "type": "box", "yMin": 170, "yMax": 180,
-                "backgroundColor": SAFE + "08", "borderColor": SAFE + "1a",
+                "backgroundColor": SAFE + "20", "borderColor": SAFE + "40",
                 "label": {"content": "Target 170-180", "display": True, "position": "start",
                           "color": SAFE + "80", "font": {"size": 9}, "backgroundColor": "transparent"},
             }
