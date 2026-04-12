@@ -186,30 +186,152 @@ def checkin_update(target_date: str | None):
 @click.option("--days", default=30, help="Number of days to show (default 30).")
 def checkin_list(days: int):
     """List previous check-ins."""
+    from datetime import date as date_cls
+
+    from rich import box as rich_box
+    from rich.panel import Panel
+    from rich.table import Table
+
     conn = _conn()
     try:
         rows = conn.execute(
-            "SELECT date, rpe, sleep_quality, energy, legs, hydration, alcohol, notes "
-            "FROM checkins WHERE date >= date('now', ?) ORDER BY date DESC",
+            "SELECT c.date, c.rpe, c.sleep_quality, c.energy, c.legs, "
+            "c.hydration, c.eating, c.alcohol, c.alcohol_detail, "
+            "c.water_liters, c.notes, "
+            "a.distance_km AS run_km, "
+            "p.target_distance_km AS plan_km, "
+            "p.workout_type AS plan_type "
+            "FROM checkins c "
+            "LEFT JOIN ("
+            "  SELECT date, distance_km "
+            "  FROM activities "
+            "  WHERE type IN ('running','track_running','trail_running') "
+            "  GROUP BY date ORDER BY training_load DESC"
+            ") a ON a.date = c.date "
+            "LEFT JOIN ("
+            "  SELECT date, target_distance_km, workout_type "
+            "  FROM planned_workouts "
+            "  WHERE status = 'active' OR status = 'completed'"
+            "  GROUP BY date ORDER BY sequence_ordinal"
+            ") p ON p.date = c.date "
+            "WHERE c.date >= date('now', ?) ORDER BY c.date DESC",
             (f"-{days} days",),
         ).fetchall()
         if not rows:
-            click.echo(f"No check-ins in the last {days} days.")
+            console.print(f"[dim]No check-ins in the last {days} days.[/dim]")
             return
-        click.echo(f"{'Date':<12} {'RPE':>4} {'Sleep':<6} {'Energy':<8} "
-                    f"{'Legs':<6} {'Hydra':<6} {'Alc':>4}  Notes")
-        click.echo("─" * 80)
+
+        # Color helpers
+        _good = "#34d399"   # green
+        _ok = "#60a5fa"     # blue
+        _poor = "#f87171"   # red
+        _dim = "dim"
+
+        def _qual_color(val, good, poor):
+            """Color a quality value (Good/OK/Poor style)."""
+            if not val or val == "–":
+                return f"[{_dim}]–[/]"
+            if val in good:
+                return f"[{_good}]{val}[/]"
+            if val in poor:
+                return f"[{_poor}]{val}[/]"
+            return val
+
+        _alc_labels = {0: None, 1: "Light", 3: "Mod", 5: "Heavy"}
+        _alc_colors = {0: _dim, 1: _ok, 3: "#eab308", 5: _poor}
+
+        today = date_cls.today().isoformat()
+
+        t = Table(
+            box=rich_box.SIMPLE_HEAD, show_edge=False,
+            pad_edge=False, padding=(0, 1),
+        )
+        t.add_column("Date", no_wrap=True)
+        t.add_column("Day", justify="right", no_wrap=True)
+        t.add_column("RPE", justify="right", no_wrap=True)
+        t.add_column("Sleep", no_wrap=True)
+        t.add_column("Energy", no_wrap=True)
+        t.add_column("Legs", no_wrap=True)
+        t.add_column("Hydra", no_wrap=True)
+        t.add_column("Eat", no_wrap=True)
+        t.add_column("Alc", no_wrap=True)
+        t.add_column("Water", justify="right", no_wrap=True)
+        t.add_column("Notes", style="dim", ratio=1,
+                     overflow="ellipsis", no_wrap=True)
+
         for r in rows:
-            rpe = str(r["rpe"]) if r["rpe"] is not None else "–"
-            sleep = r["sleep_quality"] or "–"
-            energy = r["energy"] or "–"
-            legs = r["legs"] or "–"
-            hydra = r["hydration"] or "–"
-            alc = str(r["alcohol"]) if r["alcohol"] else "–"
-            notes = (r["notes"] or "")[:30]
-            click.echo(f"{r['date']:<12} {rpe:>4} {sleep:<6} {energy:<8} "
-                       f"{legs:<6} {hydra:<6} {alc:>4}  {notes}")
-        click.echo(f"\n{len(rows)} check-in{'s' if len(rows) != 1 else ''} shown.")
+            # Date — bold if today
+            date_str = r["date"][5:]  # MM-DD
+            if r["date"] == today:
+                date_str = f"[bold]{date_str}[/]"
+
+            # Day — actual run distance, or planned, or Rest
+            if r["run_km"]:
+                day = f"[bold]{r['run_km']:.0f}km[/]"
+            elif r["plan_km"]:
+                day = f"[{_dim}]({r['plan_km']:.0f}km)[/]"
+            elif r["plan_type"] and r["plan_type"] == "rest":
+                day = f"[{_dim}]Rest[/]"
+            else:
+                day = f"[{_dim}]Rest[/]"
+
+            # RPE — colored by intensity
+            if r["rpe"] is not None:
+                rpe_v = r["rpe"]
+                rpe_c = (
+                    _poor if rpe_v >= 8
+                    else "#eab308" if rpe_v >= 6
+                    else _good if rpe_v <= 4
+                    else _ok
+                )
+                rpe = f"[{rpe_c}]{rpe_v}[/]"
+            else:
+                rpe = f"[{_dim}]–[/]"
+
+            # Quality fields
+            sleep = _qual_color(
+                r["sleep_quality"], {"Good"}, {"Poor"})
+            energy = _qual_color(
+                r["energy"], {"Good"}, {"Low"})
+            legs = _qual_color(
+                r["legs"], {"Fresh"}, {"Heavy"})
+            hydra = _qual_color(
+                r["hydration"], {"Good"}, {"Low"})
+            eat = _qual_color(
+                r["eating"], {"Good"}, {"Poor"})
+
+            # Alcohol — categorical label with color
+            alc_val = r["alcohol"] if r["alcohol"] is not None else 0
+            alc_int = int(alc_val)
+            alc_label = _alc_labels.get(alc_int)
+            if alc_label:
+                alc_c = _alc_colors.get(alc_int, _dim)
+                alc = f"[{alc_c}]{alc_label}[/]"
+            else:
+                alc = f"[{_dim}]–[/]"
+
+            # Water
+            if r["water_liters"]:
+                water = f"{r['water_liters']:.1f}L"
+            else:
+                water = f"[{_dim}]–[/]"
+
+            notes = (r["notes"] or "")[:40]
+
+            t.add_row(
+                date_str, day, rpe, sleep, energy, legs,
+                hydra, eat, alc, water, notes,
+            )
+
+        title = f"[bold]Check-ins[/] [dim]last {days}d[/]"
+        footer = (
+            f"[dim]{len(rows)} "
+            f"check-in{'s' if len(rows) != 1 else ''}[/]"
+        )
+        console.print(Panel(
+            t, title=title, subtitle=footer,
+            border_style="blue", padding=(0, 1),
+        ))
     finally:
         conn.close()
 

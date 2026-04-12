@@ -8,6 +8,29 @@ A runner's day has natural check-in moments:
 All write to the same checkins row (ON CONFLICT UPDATE), so you can do
 one, two, or all three per day. `fit checkin` auto-selects based on
 time of day and whether you ran today.
+
+Alcohol Scale
+─────────────
+Categorical scale calibrated to ethanol dose and recovery impact for
+a ~78kg runner (based on athletic recovery research):
+
+  None     0g ethanol       —                           stored=0
+  Light    ≤20g (~1 std)    1 beer (0.5L), 1 wine       stored=1
+  Moderate 20–50g (2-3 std) 2-3 beers, 1L beer, 2-3     stored=3
+                            wines
+  Heavy    >50g (4+ std)    4+ beers, bottle wine        stored=5
+
+Pharmacology notes:
+- 0.5g/kg body weight (~39g for 78kg) is the threshold where sleep
+  architecture and HRV are measurably impaired.
+- Light (≤20g): ~3% HRV drop, negligible sleep impact. Train normally.
+- Moderate (20–50g): 5-15% HRV drop, reduced REM. Possible to train
+  but recovery is compromised — adjust intensity next day.
+- Heavy (>50g): 25%+ HRV drop, deep sleep disrupted. Rest day
+  recommended, skip quality sessions.
+
+Stored values (0/1/3/5) are backward-compatible: alerts fire at ≥2
+(catches moderate+heavy), correlations use numeric scale.
 """
 
 import logging
@@ -51,6 +74,22 @@ CATEGORY_FIELDS = {
         "keys": "[P]oor / [O]K / [G]ood",
     },
 }
+
+# Alcohol: categorical scale → numeric (see module docstring for calibration)
+ALCOHOL_SCALE = {
+    "n": (0, "None"),
+    "l": (1, "Light"),
+    "m": (3, "Moderate"),
+    "h": (5, "Heavy"),
+}
+ALCOHOL_KEYS = "[N]one / [L]ight / [M]oderate / [H]eavy"
+ALCOHOL_HINT = (
+    "  [dim]L=1 beer/1 wine  M=2-3 beers/1L beer  "
+    "H=4+ beers/bottle wine[/dim]"
+)
+
+# Reverse: numeric → key for pre-filling
+_ALCOHOL_REV = {0: "n", 1: "l", 3: "m", 5: "h"}
 
 # Which fields belong to which check-in moment
 MORNING_FIELDS = ["sleep_quality", "legs", "energy"]
@@ -254,16 +293,33 @@ def run_evening(conn, target_date=None):
     for field in EVENING_FIELDS:
         data[field] = _ask_category(field, existing)
 
-    # Alcohol
-    cur_alc = str(existing["alcohol"]) if existing and existing["alcohol"] else "0"
-    cur_detail = existing["alcohol_detail"] if existing else None
-    default_alc = cur_detail or cur_alc
-    hint = f" [dim]({default_alc})[/dim]" if existing and existing["alcohol"] else ""
-    alcohol_str = Prompt.ask(
-        f"  Alcohol (e.g., '0', '2 beers'){hint}",
-        default=default_alc if existing else "0",
-    ).strip()
-    data["alcohol"], data["alcohol_detail"] = _parse_alcohol(alcohol_str)
+    # Alcohol (categorical scale — see module docstring for calibration)
+    cur_alc = existing["alcohol"] if existing else None
+    default_key = _ALCOHOL_REV.get(cur_alc, "n") if cur_alc is not None else "n"
+    cur_label = ALCOHOL_SCALE.get(default_key, (0, "None"))[1]
+    hint = f" [dim]({cur_label})[/dim]" if cur_alc else ""
+    console.print(ALCOHOL_HINT)
+    key = Prompt.ask(
+        f"  Alcohol{hint} {ALCOHOL_KEYS}",
+        default=default_key,
+    ).strip().lower()
+    if key in ALCOHOL_SCALE:
+        data["alcohol"] = ALCOHOL_SCALE[key][0]
+        # Ask for optional detail (e.g., "2 beers", "1 glass wine") for later analysis
+        if ALCOHOL_SCALE[key][0] > 0:
+            cur_detail = existing["alcohol_detail"] if existing else None
+            detail_hint = (
+                f" [dim]({cur_detail})[/dim]" if cur_detail else ""
+            )
+            detail = Prompt.ask(
+                f"  What{detail_hint}", default=cur_detail or ""
+            ).strip()
+            data["alcohol_detail"] = detail or ALCOHOL_SCALE[key][1]
+        else:
+            data["alcohol_detail"] = None
+    else:
+        data["alcohol"] = cur_alc or 0
+        data["alcohol_detail"] = existing["alcohol_detail"] if existing else None
 
     # Water
     cur_water = (
