@@ -119,7 +119,7 @@ def splits(backfill: bool, activity_id: str):
 @main.group(invoke_without_command=True)
 @click.pass_context
 def checkin(ctx):
-    """Interactive daily check-in logger."""
+    """Daily check-in — auto-selects morning/run/evening based on time."""
     if ctx.invoked_subcommand is None:
         from fit.checkin import run_checkin
 
@@ -128,6 +128,58 @@ def checkin(ctx):
             run_checkin(conn)
         finally:
             conn.close()
+
+
+@checkin.command("morning")
+@click.argument("target_date", default=None, required=False)
+def checkin_morning(target_date: str | None):
+    """Pre-run readiness: sleep quality, legs, energy."""
+    from fit.checkin import run_morning
+
+    conn = _conn()
+    try:
+        run_morning(conn, target_date=target_date)
+    finally:
+        conn.close()
+
+
+@checkin.command("run")
+@click.argument("target_date", default=None, required=False)
+def checkin_run(target_date: str | None):
+    """Post-run: RPE + session notes (shows today's activity)."""
+    from fit.checkin import run_post_run
+
+    conn = _conn()
+    try:
+        run_post_run(conn, target_date=target_date)
+    finally:
+        conn.close()
+
+
+@checkin.command("evening")
+@click.argument("target_date", default=None, required=False)
+def checkin_evening(target_date: str | None):
+    """Recovery: hydration, eating, alcohol, water, weight."""
+    from fit.checkin import run_evening
+
+    conn = _conn()
+    try:
+        run_evening(conn, target_date=target_date)
+    finally:
+        conn.close()
+
+
+@checkin.command("update")
+@click.argument("target_date", default=None, required=False)
+def checkin_update(target_date: str | None):
+    """Update an existing check-in for any date."""
+    from fit.checkin import run_checkin
+
+    conn = _conn()
+    try:
+        run_checkin(conn, target_date=target_date, update=True)
+    finally:
+        conn.close()
 
 
 @checkin.command("list")
@@ -158,19 +210,6 @@ def checkin_list(days: int):
             click.echo(f"{r['date']:<12} {rpe:>4} {sleep:<6} {energy:<8} "
                        f"{legs:<6} {hydra:<6} {alc:>4}  {notes}")
         click.echo(f"\n{len(rows)} check-in{'s' if len(rows) != 1 else ''} shown.")
-    finally:
-        conn.close()
-
-
-@checkin.command("update")
-@click.argument("target_date", default=None, required=False)
-def checkin_update(target_date: str | None):
-    """Update or add a check-in for any date."""
-    from fit.checkin import run_checkin
-
-    conn = _conn()
-    try:
-        run_checkin(conn, target_date=target_date, update=True)
     finally:
         conn.close()
 

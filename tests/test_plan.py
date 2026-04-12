@@ -276,21 +276,22 @@ class TestPlanAdherence:
     def test_missed_and_unplanned(self, db):
         """Missing planned workout + extra activity should be detected."""
         today = date.today()
-        tomorrow = (today + timedelta(days=1)).isoformat()
-        today_str = today.isoformat()
+        # Use Monday of current week to avoid week-boundary issues
+        monday = today - timedelta(days=today.weekday())
+        tuesday = monday + timedelta(days=1)
         week_str = self._get_week_str()
 
-        # Planned workout tomorrow, but no activity
+        # Planned workout on Tuesday, but no activity
         db.execute("""
             INSERT INTO planned_workouts (date, workout_name, workout_type,
                 target_distance_km, plan_version, sequence_ordinal, status)
             VALUES (?, 'Tempo Run', 'tempo', 10.0, 1, 1, 'active')
-        """, (tomorrow,))
-        # Unplanned activity today
+        """, (tuesday.isoformat(),))
+        # Unplanned activity on Monday
         db.execute("""
             INSERT INTO activities (id, date, type, distance_km, duration_min)
             VALUES ('a1', ?, 'running', 5.0, 30)
-        """, (today_str,))
+        """, (monday.isoformat(),))
         db.commit()
 
         result = compute_plan_adherence(db, week_str)

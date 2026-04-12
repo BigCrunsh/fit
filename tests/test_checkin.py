@@ -1,11 +1,17 @@
-"""Tests for fit/checkin.py — alcohol parsing, run_checkin, CLI commands."""
+"""Tests for fit/checkin.py — alcohol parsing, morning/run/evening check-ins, CLI."""
 
 from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
 
-from fit.checkin import _parse_alcohol, run_checkin
+from fit.checkin import (
+    _parse_alcohol,
+    run_morning,
+    run_post_run,
+    run_evening,
+    run_checkin,
+)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -47,7 +53,6 @@ class TestParseAlcohol:
         assert detail is None
 
     def test_text_only_assumes_one(self):
-        """Text without leading number assumes 1 serving."""
         count, detail = _parse_alcohol("small glass wine")
         assert count == 1.0
         assert detail == "small glass wine"
@@ -63,7 +68,6 @@ class TestParseAlcohol:
         assert detail == "beer"
 
     def test_negative_number(self):
-        """Negative number: float('-1') works, so count=-1."""
         count, detail = _parse_alcohol("-1 drink")
         assert count == -1.0
         assert detail == "-1 drink"
@@ -74,7 +78,6 @@ class TestParseAlcohol:
         assert detail is None
 
     def test_zero_with_text(self):
-        """'0 beers' — leading 0 is parsed as number."""
         count, detail = _parse_alcohol("0 beers")
         assert count == 0.0
         assert detail == "0 beers"
@@ -85,27 +88,24 @@ class TestParseAlcohol:
         assert detail == "10 cocktails"
 
     def test_whitespace_only(self):
-        """Whitespace-only string: split(None, 1) returns [] → IndexError.
-        This is an edge case that would be caught by the caller stripping first.
-        The function itself raises IndexError on pure whitespace."""
         with pytest.raises(IndexError):
             _parse_alcohol("   ")
 
     def test_none_input(self):
-        """None input should return (0, None) per the 'not s' check."""
         count, detail = _parse_alcohol(None)
         assert count == 0
         assert detail is None
 
 
 # ════════════════════════════════════════════════════════════════
-# run_checkin
+# Helper
 # ════════════════════════════════════════════════════════════════
 
 
 def _prompt_side_effect(values):
     """Return a mock Prompt.ask that yields values in order."""
     it = iter(values)
+
     def _ask(prompt, **kwargs):
         try:
             return next(it)
@@ -114,69 +114,161 @@ def _prompt_side_effect(values):
     return _ask
 
 
-class TestRunCheckin:
-    """Test run_checkin saves to DB correctly."""
+# ════════════════════════════════════════════════════════════════
+# Morning check-in
+# ════════════════════════════════════════════════════════════════
 
-    def test_new_checkin(self, db):
-        """New check-in for a specific date saves all fields."""
-        answers = ["o", "o", "o", "n", "2", "0", "g", "5", "", "test note"]
+
+class TestMorning:
+    def test_new_morning(self, db):
+        """Morning check-in saves sleep, legs, energy, notes."""
+        # sleep=Good, legs=Fresh, energy=Good, notes="slept well"
+        answers = ["g", "f", "g", "slept well"]
         with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
-            run_checkin(db, target_date="2026-01-15")
+            run_morning(db, target_date="2026-01-15")
         row = db.execute("SELECT * FROM checkins WHERE date = '2026-01-15'").fetchone()
         assert row is not None
-        assert row["hydration"] == "OK"
-        assert row["legs"] == "OK"
-        assert row["eating"] == "OK"
-        assert row["energy"] == "Normal"
         assert row["sleep_quality"] == "Good"
-        assert row["rpe"] == 5
-        assert row["notes"] == "test note"
-
-    def test_update_prefills_existing(self, db):
-        """When a check-in exists, run_checkin auto-enters update mode and preserves values on enter."""
-        db.execute(
-            "INSERT INTO checkins (date, hydration, legs, eating, energy, alcohol, sleep_quality, rpe, notes) "
-            "VALUES ('2026-02-01', 'Good', 'Fresh', 'Good', 'Good', 0, 'Good', 7, 'original')"
-        )
-        db.commit()
-        # All empty answers → keep existing defaults
-        answers = ["g", "f", "g", "g", "", "0", "g", "7", "", "original"]
-        with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
-            run_checkin(db, target_date="2026-02-01")
-        row = db.execute("SELECT * FROM checkins WHERE date = '2026-02-01'").fetchone()
-        assert row["hydration"] == "Good"
         assert row["legs"] == "Fresh"
-        assert row["rpe"] == 7
-        assert row["notes"] == "original"
+        assert row["energy"] == "Good"
+        assert row["notes"] == "slept well"
 
-    def test_update_changes_field(self, db):
-        """Updating a check-in can change individual fields."""
+    def test_morning_preserves_evening(self, db):
+        """Morning check-in doesn't overwrite existing evening fields."""
         db.execute(
-            "INSERT INTO checkins (date, hydration, legs, eating, energy, alcohol, sleep_quality, rpe, notes) "
-            "VALUES ('2026-02-02', 'OK', 'OK', 'OK', 'Normal', 0, 'OK', 3, 'old')"
+            "INSERT INTO checkins (date, hydration, eating, alcohol) "
+            "VALUES ('2026-01-16', 'Good', 'Good', 2)"
         )
         db.commit()
-        # Change RPE from 3 to 8, rest keep defaults
-        answers = ["o", "o", "o", "n", "", "0", "o", "8", "", "old"]
+        answers = ["p", "h", "l", ""]
         with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
-            run_checkin(db, target_date="2026-02-02", update=True)
-        row = db.execute("SELECT * FROM checkins WHERE date = '2026-02-02'").fetchone()
-        assert row["rpe"] == 8
-
-    def test_past_date(self, db):
-        """Can create a check-in for a past date."""
-        answers = ["l", "h", "p", "l", "1.5", "2 beers", "p", "9", "75", "past note"]
-        with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
-            run_checkin(db, target_date="2025-06-15")
-        row = db.execute("SELECT * FROM checkins WHERE date = '2025-06-15'").fetchone()
-        assert row is not None
-        assert row["hydration"] == "Low"
+            run_morning(db, target_date="2026-01-16")
+        row = db.execute("SELECT * FROM checkins WHERE date = '2026-01-16'").fetchone()
+        assert row["sleep_quality"] == "Poor"
         assert row["legs"] == "Heavy"
-        assert row["alcohol"] == 2.0
+        # Evening fields preserved
+        assert row["hydration"] == "Good"
+        assert row["eating"] == "Good"
+        assert row["alcohol"] == 2
 
 
 # ════════════════════════════════════════════════════════════════
-# CLI commands: checkin list, checkin update
+# Post-run check-in
+# ════════════════════════════════════════════════════════════════
+
+
+class TestPostRun:
+    def test_post_run_saves_rpe(self, db):
+        """Post-run saves RPE and session notes."""
+        answers = ["7", "felt strong"]
+        with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
+            run_post_run(db, target_date="2026-01-15")
+        row = db.execute("SELECT * FROM checkins WHERE date = '2026-01-15'").fetchone()
+        assert row is not None
+        assert row["rpe"] == 7
+        assert row["notes"] == "felt strong"
+
+    def test_post_run_preserves_morning(self, db):
+        """Post-run doesn't overwrite morning fields."""
+        db.execute(
+            "INSERT INTO checkins (date, sleep_quality, legs, energy) "
+            "VALUES ('2026-01-17', 'Good', 'Fresh', 'Good')"
+        )
+        db.commit()
+        answers = ["8", "hard tempo"]
+        with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
+            run_post_run(db, target_date="2026-01-17")
+        row = db.execute("SELECT * FROM checkins WHERE date = '2026-01-17'").fetchone()
+        assert row["rpe"] == 8
+        assert row["sleep_quality"] == "Good"
+        assert row["legs"] == "Fresh"
+
+
+# ════════════════════════════════════════════════════════════════
+# Evening check-in
+# ════════════════════════════════════════════════════════════════
+
+
+class TestEvening:
+    def test_evening_saves_recovery(self, db):
+        """Evening saves hydration, eating, alcohol, water."""
+        # hydration=Good, eating=Good, alcohol="2 beers", water="2.5", weight=""
+        answers = ["g", "g", "2 beers", "2.5", ""]
+        with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
+            run_evening(db, target_date="2026-01-15")
+        row = db.execute("SELECT * FROM checkins WHERE date = '2026-01-15'").fetchone()
+        assert row is not None
+        assert row["hydration"] == "Good"
+        assert row["eating"] == "Good"
+        assert row["alcohol"] == 2.0
+        assert row["alcohol_detail"] == "2 beers"
+        assert row["water_liters"] == 2.5
+
+    def test_evening_with_weight(self, db):
+        """Evening can record weight, cross-written to body_comp."""
+        answers = ["o", "o", "0", "", "78.5"]
+        with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
+            run_evening(db, target_date="2026-01-18")
+        bc = db.execute(
+            "SELECT weight_kg FROM body_comp WHERE date = '2026-01-18'"
+        ).fetchone()
+        assert bc is not None
+        assert bc["weight_kg"] == 78.5
+
+    def test_evening_preserves_morning(self, db):
+        """Evening doesn't overwrite morning fields."""
+        db.execute(
+            "INSERT INTO checkins (date, sleep_quality, legs, energy, rpe) "
+            "VALUES ('2026-01-19', 'Good', 'Fresh', 'Good', 5)"
+        )
+        db.commit()
+        answers = ["g", "g", "0", "2", ""]
+        with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
+            run_evening(db, target_date="2026-01-19")
+        row = db.execute("SELECT * FROM checkins WHERE date = '2026-01-19'").fetchone()
+        assert row["hydration"] == "Good"
+        # Morning + run fields preserved
+        assert row["sleep_quality"] == "Good"
+        assert row["legs"] == "Fresh"
+        assert row["rpe"] == 5
+
+
+# ════════════════════════════════════════════════════════════════
+# Smart default (run_checkin)
+# ════════════════════════════════════════════════════════════════
+
+
+class TestSmartDefault:
+    def test_morning_before_noon(self, db):
+        """Before noon with no check-in → morning."""
+        answers = ["g", "f", "g", ""]
+        with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
+            with patch("fit.checkin.datetime") as mock_dt:
+                mock_dt.now.return_value.hour = 8
+                mock_dt.side_effect = lambda *a, **k: __import__("datetime").datetime(*a, **k)
+                run_checkin(db, target_date="2026-03-01")
+        row = db.execute("SELECT * FROM checkins WHERE date = '2026-03-01'").fetchone()
+        assert row["sleep_quality"] == "Good"
+        assert row["legs"] == "Fresh"
+
+    def test_all_done_shows_message(self, db):
+        """When all sections filled, shows 'all done' message."""
+        db.execute(
+            "INSERT INTO checkins (date, sleep_quality, legs, energy, "
+            "hydration, eating, rpe, alcohol) "
+            "VALUES ('2026-03-02', 'Good', 'Fresh', 'Good', "
+            "'OK', 'OK', 5, 0)"
+        )
+        db.commit()
+        with patch("fit.checkin.datetime") as mock_dt:
+            mock_dt.now.return_value.hour = 14
+            mock_dt.side_effect = lambda *a, **k: __import__("datetime").datetime(*a, **k)
+            run_checkin(db, target_date="2026-03-02")
+        # Should not crash — just prints "all done"
+
+
+# ════════════════════════════════════════════════════════════════
+# CLI commands
 # ════════════════════════════════════════════════════════════════
 
 
@@ -184,6 +276,7 @@ class _NoCloseConn:
     """Wrapper that prevents close() from closing the shared test DB."""
     def __init__(self, conn):
         self._conn = conn
+
     def __getattr__(self, name):
         if name == "close":
             return lambda: None
@@ -195,12 +288,10 @@ class TestCheckinCLI:
 
     @pytest.fixture(autouse=True)
     def _clear_checkins(self, db):
-        """Remove backfilled check-ins so each test starts clean."""
         db.execute("DELETE FROM checkins")
         db.commit()
 
     def test_list_empty(self, db):
-        """checkin list with no data shows empty message."""
         from fit.cli import main as cli_main
         runner = CliRunner()
         with patch("fit.cli._conn", return_value=_NoCloseConn(db)):
@@ -208,10 +299,11 @@ class TestCheckinCLI:
         assert "No check-ins" in result.output
 
     def test_list_shows_checkins(self, db):
-        """checkin list shows existing check-ins."""
         db.execute(
-            "INSERT INTO checkins (date, hydration, legs, eating, energy, alcohol, sleep_quality, rpe, notes) "
-            "VALUES ('2026-04-09', 'OK', 'OK', 'OK', 'Normal', 0, 'Good', 5, 'test run')"
+            "INSERT INTO checkins (date, hydration, legs, eating, energy, "
+            "alcohol, sleep_quality, rpe, notes) "
+            "VALUES ('2026-04-09', 'OK', 'OK', 'OK', 'Normal', 0, "
+            "'Good', 5, 'test run')"
         )
         db.commit()
         from fit.cli import main as cli_main
@@ -223,9 +315,9 @@ class TestCheckinCLI:
         assert "1 check-in shown" in result.output
 
     def test_list_days_filter(self, db):
-        """checkin list --days filters old check-ins."""
         db.execute(
-            "INSERT INTO checkins (date, hydration, legs, eating, energy, alcohol, sleep_quality) "
+            "INSERT INTO checkins (date, hydration, legs, eating, energy, "
+            "alcohol, sleep_quality) "
             "VALUES ('2020-01-01', 'OK', 'OK', 'OK', 'Normal', 0, 'OK')"
         )
         db.commit()
@@ -235,9 +327,20 @@ class TestCheckinCLI:
             result = runner.invoke(cli_main, ["checkin", "list", "--days", "30"])
         assert "No check-ins" in result.output
 
-    def test_update_accepts_date_argument(self):
-        """checkin update accepts a positional date argument."""
+    def test_morning_subcommand_help(self):
         from fit.cli import main as cli_main
         runner = CliRunner()
-        result = runner.invoke(cli_main, ["checkin", "update", "--help"])
-        assert "TARGET_DATE" in result.output
+        result = runner.invoke(cli_main, ["checkin", "morning", "--help"])
+        assert "Pre-run readiness" in result.output
+
+    def test_run_subcommand_help(self):
+        from fit.cli import main as cli_main
+        runner = CliRunner()
+        result = runner.invoke(cli_main, ["checkin", "run", "--help"])
+        assert "Post-run" in result.output
+
+    def test_evening_subcommand_help(self):
+        from fit.cli import main as cli_main
+        runner = CliRunner()
+        result = runner.invoke(cli_main, ["checkin", "evening", "--help"])
+        assert "Recovery" in result.output

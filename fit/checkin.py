@@ -1,8 +1,17 @@
-"""Interactive daily check-in CLI."""
+"""Interactive daily check-in CLI — morning / run / evening structure.
+
+A runner's day has natural check-in moments:
+  morning  — pre-run readiness: sleep quality, legs, energy
+  run      — post-run: RPE + session notes (with activity context)
+  evening  — recovery inputs: hydration, eating, alcohol, water, weight
+
+All write to the same checkins row (ON CONFLICT UPDATE), so you can do
+one, two, or all three per day. `fit checkin` auto-selects based on
+time of day and whether you ran today.
+"""
 
 import logging
-import sqlite3
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from rich.console import Console
 from rich.prompt import Prompt
@@ -12,143 +21,352 @@ from fit.analysis import RUNNING_TYPES_SQL
 logger = logging.getLogger(__name__)
 console = Console()
 
+
+# ── Field definitions ──
+
 CATEGORY_FIELDS = {
-    "hydration": {"prompt": "Hydration", "options": {"l": "Low", "o": "OK", "g": "Good"}, "keys": "[L]ow / [O]K / [G]ood"},
-    "legs": {"prompt": "Legs", "options": {"h": "Heavy", "o": "OK", "f": "Fresh"}, "keys": "[H]eavy / [O]K / [F]resh"},
-    "eating": {"prompt": "Eating", "options": {"p": "Poor", "o": "OK", "g": "Good"}, "keys": "[P]oor / [O]K / [G]ood"},
-    "energy": {"prompt": "Energy", "options": {"l": "Low", "n": "Normal", "g": "Good"}, "keys": "[L]ow / [N]ormal / [G]ood"},
+    "sleep_quality": {
+        "prompt": "Sleep quality",
+        "options": {"p": "Poor", "o": "OK", "g": "Good"},
+        "keys": "[P]oor / [O]K / [G]ood",
+    },
+    "legs": {
+        "prompt": "Legs",
+        "options": {"h": "Heavy", "o": "OK", "f": "Fresh"},
+        "keys": "[H]eavy / [O]K / [F]resh",
+    },
+    "energy": {
+        "prompt": "Energy",
+        "options": {"l": "Low", "n": "Normal", "g": "Good"},
+        "keys": "[L]ow / [N]ormal / [G]ood",
+    },
+    "hydration": {
+        "prompt": "Hydration",
+        "options": {"l": "Low", "o": "OK", "g": "Good"},
+        "keys": "[L]ow / [O]K / [G]ood",
+    },
+    "eating": {
+        "prompt": "Eating",
+        "options": {"p": "Poor", "o": "OK", "g": "Good"},
+        "keys": "[P]oor / [O]K / [G]ood",
+    },
 }
 
+# Which fields belong to which check-in moment
+MORNING_FIELDS = ["sleep_quality", "legs", "energy"]
+EVENING_FIELDS = ["hydration", "eating"]
 
-def run_checkin(conn: sqlite3.Connection, target_date: str | None = None, update: bool = False) -> None:
-    """Run interactive check-in and save to DB.
 
-    Args:
-        target_date: ISO date string (default: today).
-        update: If True, pre-fill from existing check-in for selective editing.
-    """
-    target = target_date or date.today().isoformat()
+def _rev(options, val):
+    """Reverse-lookup: value → key for category fields."""
+    for k, v in options.items():
+        if v == val:
+            return k
+    return ""
 
-    # Check for existing check-in — auto-enter update mode if one exists
-    existing = conn.execute("SELECT * FROM checkins WHERE date = ?", (target,)).fetchone()
-    if existing:
-        update = True
 
-    if existing:
-        console.print(f"\n[bold]Update check-in — {target}[/bold]")
-        console.print("[dim]Press enter to keep current value.[/dim]\n")
-    else:
-        console.print(f"\n[bold]Daily check-in — {target}[/bold]\n")
+def _ask_category(field, existing):
+    """Prompt for a categorical field, pre-filling from existing data."""
+    meta = CATEGORY_FIELDS[field]
+    cur = existing[field] if existing else None
+    hint = f" [dim]({cur})[/dim]" if cur else ""
+    default = _rev(meta["options"], cur) if cur else ""
+    key = Prompt.ask(
+        f"  {meta['prompt']}{hint} {meta['keys']}",
+        default=default,
+    ).strip().lower()
+    return meta["options"].get(key, cur or "OK")
 
-    data = {"date": target}
 
-    # Reverse-lookup: value → key for category fields
-    def _rev(options, val):
-        for k, v in options.items():
-            if v == val:
-                return k
-        return ""
+def _get_existing(conn, target):
+    """Get existing check-in for date, or None."""
+    return conn.execute(
+        "SELECT * FROM checkins WHERE date = ?", (target,)
+    ).fetchone()
 
-    # Categorical fields
-    for field, meta in CATEGORY_FIELDS.items():
-        cur = existing[field] if existing else None
-        hint = f" [dim]({cur})[/dim]" if update and cur else ""
-        key = Prompt.ask(f"  {meta['prompt']}{hint} {meta['keys']}", default=_rev(meta["options"], cur) if update and cur else "").strip().lower()
-        data[field] = meta["options"].get(key, cur if update and cur else "OK")
 
-    # Water
-    cur_water = str(existing["water_liters"]) if existing and existing["water_liters"] else ""
-    hint = f" [dim]({cur_water})[/dim]" if update and cur_water else ""
-    water = Prompt.ask(f"  Water (liters){hint}", default=cur_water if update else "").strip()
-    data["water_liters"] = float(water) if water else None
-
-    # Alcohol
-    cur_alc = str(existing["alcohol"]) if existing and existing["alcohol"] else "0"
-    cur_alc_detail = existing["alcohol_detail"] if existing else None
-    default_alc = cur_alc_detail or cur_alc if update else "0"
-    hint = f" [dim]({default_alc})[/dim]" if update and existing and existing["alcohol"] else ""
-    alcohol_str = Prompt.ask(f"  Alcohol (e.g., '0', '2 beers'){hint}", default=default_alc if update else "0").strip()
-    data["alcohol"], data["alcohol_detail"] = _parse_alcohol(alcohol_str)
-
-    # Sleep quality
-    sleep_opts = {"p": "Poor", "o": "OK", "g": "Good"}
-    cur_sleep = existing["sleep_quality"] if existing else None
-    hint = f" [dim]({cur_sleep})[/dim]" if update and cur_sleep else ""
-    sleep_key = Prompt.ask(f"  Sleep quality{hint} [P]oor / [O]K / [G]ood", default=_rev(sleep_opts, cur_sleep) if update and cur_sleep else "").strip().lower()
-    data["sleep_quality"] = sleep_opts.get(sleep_key, cur_sleep if update and cur_sleep else "OK")
-
-    # RPE (show activity for context)
-    activity = conn.execute(
-        f"SELECT name, avg_hr, hr_zone FROM activities WHERE date = ? AND type IN {RUNNING_TYPES_SQL} ORDER BY training_load DESC LIMIT 1",
+def _get_today_activity(conn, target):
+    """Get today's main running activity, or None."""
+    return conn.execute(
+        f"SELECT name, distance_km, avg_hr, hr_zone, aerobic_te "
+        f"FROM activities WHERE date = ? AND type IN {RUNNING_TYPES_SQL} "
+        f"ORDER BY training_load DESC LIMIT 1",
         (target,),
     ).fetchone()
-    if activity:
-        console.print(f"  [dim]Run: {activity['name']} (HR {activity['avg_hr']}, {activity['hr_zone']})[/dim]")
-    console.print("  [dim]RPE: 1-2=rest day, 3-4=easy, 5-6=moderate, 7-8=hard, 9-10=race effort[/dim]")
-    cur_rpe = str(existing["rpe"]) if existing and existing["rpe"] is not None else ""
-    hint = f" [dim]({cur_rpe})[/dim]" if update and cur_rpe else ""
-    rpe_str = Prompt.ask(f"  RPE 1-10{hint}", default=cur_rpe if update else "").strip()
-    data["rpe"] = int(rpe_str) if rpe_str and rpe_str.isdigit() and 1 <= int(rpe_str) <= 10 else None
 
-    # Weight (optional)
-    weight_str = Prompt.ask("  Weight kg (enter=skip)", default="").strip()
-    data["weight_kg"] = float(weight_str) if weight_str else None
 
-    # Notes
-    cur_notes = existing["notes"] if existing else None
-    hint = f" [dim]({cur_notes[:40]}...)[/dim]" if update and cur_notes and len(cur_notes) > 40 else (f" [dim]({cur_notes})[/dim]" if update and cur_notes else "")
-    data["notes"] = Prompt.ask(f"  Notes{hint}", default=cur_notes if update and cur_notes else "").strip() or None
+def _save_checkin(conn, data, existing):
+    """Merge data into checkins row (only update non-None fields)."""
+    target = data["date"]
 
-    # Save check-in
+    if existing:
+        # Merge: only overwrite fields that are explicitly set
+        merged = {col: existing[col] for col in existing.keys() if col != "created_at"}
+        for k, v in data.items():
+            if v is not None:
+                merged[k] = v
+        data = merged
+
     conn.execute("""
-        INSERT INTO checkins (date, hydration, alcohol, alcohol_detail, legs, eating, water_liters, energy, rpe, sleep_quality, notes)
-        VALUES (:date, :hydration, :alcohol, :alcohol_detail, :legs, :eating, :water_liters, :energy, :rpe, :sleep_quality, :notes)
+        INSERT INTO checkins (date, hydration, alcohol, alcohol_detail, legs,
+                              eating, water_liters, energy, rpe, sleep_quality, notes)
+        VALUES (:date, :hydration, :alcohol, :alcohol_detail, :legs,
+                :eating, :water_liters, :energy, :rpe, :sleep_quality, :notes)
         ON CONFLICT(date) DO UPDATE SET
             hydration = excluded.hydration, alcohol = excluded.alcohol,
             alcohol_detail = excluded.alcohol_detail, legs = excluded.legs,
             eating = excluded.eating, water_liters = excluded.water_liters,
             energy = excluded.energy, rpe = excluded.rpe,
             sleep_quality = excluded.sleep_quality, notes = excluded.notes
-    """, data)
+    """, {
+        "date": target,
+        "hydration": data.get("hydration"),
+        "alcohol": data.get("alcohol", 0),
+        "alcohol_detail": data.get("alcohol_detail"),
+        "legs": data.get("legs"),
+        "eating": data.get("eating"),
+        "water_liters": data.get("water_liters"),
+        "energy": data.get("energy"),
+        "rpe": data.get("rpe"),
+        "sleep_quality": data.get("sleep_quality"),
+        "notes": data.get("notes"),
+    })
 
     # Weight cross-write to body_comp
     if data.get("weight_kg"):
         conn.execute("""
             INSERT INTO body_comp (date, weight_kg, source)
             VALUES (?, ?, 'checkin')
-            ON CONFLICT(date) DO UPDATE SET weight_kg = excluded.weight_kg, source = 'checkin'
+            ON CONFLICT(date) DO UPDATE SET weight_kg = excluded.weight_kg,
+                                            source = 'checkin'
         """, (target, data["weight_kg"]))
 
     # RPE cross-write to activities
-    if data.get("rpe") and activity:
-        conn.execute(f"UPDATE activities SET rpe = ? WHERE date = ? AND type IN {RUNNING_TYPES_SQL}", (data["rpe"], target))
+    if data.get("rpe"):
+        conn.execute(
+            f"UPDATE activities SET rpe = ? "
+            f"WHERE date = ? AND type IN {RUNNING_TYPES_SQL}",
+            (data["rpe"], target),
+        )
 
     conn.commit()
 
-    # sRPE computation: if RPE was entered, compute sRPE for same-day activities
+    # sRPE computation
     if data.get("rpe"):
         try:
             from fit.analysis import compute_srpe
             srpe_count = compute_srpe(conn)
             if srpe_count:
-                console.print(f"  [dim]sRPE computed for {srpe_count} activity(ies)[/dim]")
+                console.print(
+                    f"  [dim]sRPE computed for {srpe_count} activity(ies)[/dim]"
+                )
         except Exception as e:
             logger.debug("sRPE computation after checkin failed: %s", e)
 
-    action = "Updated" if update and existing else "Saved"
-    console.print(f"\n[bold green]✓ {action}: {target}[/bold green]")
-    logger.info("Check-in %s for %s", action.lower(), target)
+
+# ── Check-in moments ──
 
 
-def _parse_alcohol(s: str) -> tuple[float, str | None]:
-    """Parse alcohol input: '0' → (0, None), '2 beers' → (2.0, '2 beers'), 'small glass wine' → (1.0, 'small glass wine')."""
+def run_morning(conn, target_date=None):
+    """Morning check-in: sleep quality, legs, energy, notes."""
+    target = target_date or date.today().isoformat()
+    existing = _get_existing(conn, target)
+
+    console.print(f"\n[bold]☀ Morning — {target}[/bold]")
+    if existing:
+        console.print("[dim]Press enter to keep current value.[/dim]")
+    console.print()
+
+    data = {"date": target}
+    for field in MORNING_FIELDS:
+        data[field] = _ask_category(field, existing)
+
+    cur_notes = existing["notes"] if existing else None
+    hint = f" [dim]({cur_notes[:40]})[/dim]" if cur_notes else ""
+    notes = Prompt.ask(f"  Notes{hint}", default=cur_notes or "").strip()
+    data["notes"] = notes or None
+
+    _save_checkin(conn, data, existing)
+    console.print("\n[bold green]✓ Morning check-in saved[/bold green]")
+
+
+def run_post_run(conn, target_date=None):
+    """Post-run check-in: RPE + session notes (with activity context)."""
+    target = target_date or date.today().isoformat()
+    existing = _get_existing(conn, target)
+    activity = _get_today_activity(conn, target)
+
+    console.print(f"\n[bold]🏃 Post-run — {target}[/bold]")
+    if existing:
+        console.print("[dim]Press enter to keep current value.[/dim]")
+
+    if activity:
+        parts = [activity["name"] or "Run"]
+        if activity["distance_km"]:
+            parts.append(f"{activity['distance_km']:.1f}km")
+        if activity["hr_zone"]:
+            parts.append(activity["hr_zone"])
+        if activity["aerobic_te"]:
+            parts.append(f"TE {activity['aerobic_te']:.1f}")
+        console.print(f"  [dim]{' · '.join(parts)}[/dim]")
+    else:
+        console.print(f"  [dim]No run found for {target}[/dim]")
+
+    console.print(
+        "  [dim]RPE: 1-2=rest, 3-4=easy, 5-6=moderate, "
+        "7-8=hard, 9-10=race[/dim]"
+    )
+
+    data = {"date": target}
+
+    cur_rpe = str(existing["rpe"]) if existing and existing["rpe"] else ""
+    hint = f" [dim]({cur_rpe})[/dim]" if cur_rpe else ""
+    rpe_str = Prompt.ask(f"  RPE 1-10{hint}", default=cur_rpe or "").strip()
+    data["rpe"] = (
+        int(rpe_str)
+        if rpe_str and rpe_str.isdigit() and 1 <= int(rpe_str) <= 10
+        else (existing["rpe"] if existing else None)
+    )
+
+    cur_notes = existing["notes"] if existing else None
+    hint = f" [dim]({cur_notes[:40]})[/dim]" if cur_notes else ""
+    notes = Prompt.ask(
+        f"  Session notes{hint}", default=cur_notes or ""
+    ).strip()
+    data["notes"] = notes or cur_notes
+
+    _save_checkin(conn, data, existing)
+    console.print("\n[bold green]✓ Post-run check-in saved[/bold green]")
+
+
+def run_evening(conn, target_date=None):
+    """Evening check-in: hydration, eating, alcohol, water, weight."""
+    target = target_date or date.today().isoformat()
+    existing = _get_existing(conn, target)
+
+    console.print(f"\n[bold]🌙 Evening — {target}[/bold]")
+    if existing:
+        console.print("[dim]Press enter to keep current value.[/dim]")
+    console.print()
+
+    data = {"date": target}
+
+    for field in EVENING_FIELDS:
+        data[field] = _ask_category(field, existing)
+
+    # Alcohol
+    cur_alc = str(existing["alcohol"]) if existing and existing["alcohol"] else "0"
+    cur_detail = existing["alcohol_detail"] if existing else None
+    default_alc = cur_detail or cur_alc
+    hint = f" [dim]({default_alc})[/dim]" if existing and existing["alcohol"] else ""
+    alcohol_str = Prompt.ask(
+        f"  Alcohol (e.g., '0', '2 beers'){hint}",
+        default=default_alc if existing else "0",
+    ).strip()
+    data["alcohol"], data["alcohol_detail"] = _parse_alcohol(alcohol_str)
+
+    # Water
+    cur_water = (
+        str(existing["water_liters"])
+        if existing and existing["water_liters"]
+        else ""
+    )
+    hint = f" [dim]({cur_water}L)[/dim]" if cur_water else ""
+    water = Prompt.ask(
+        f"  Water (liters){hint}", default=cur_water or ""
+    ).strip()
+    data["water_liters"] = float(water) if water else None
+
+    # Weight
+    weight_str = Prompt.ask("  Weight kg (enter=skip)", default="").strip()
+    data["weight_kg"] = float(weight_str) if weight_str else None
+
+    _save_checkin(conn, data, existing)
+    console.print("\n[bold green]✓ Evening check-in saved[/bold green]")
+
+
+# ── Smart default ──
+
+
+def run_checkin(conn, target_date=None, update=False):
+    """Smart auto-select based on time of day, today's activity, and yesterday's gaps.
+
+    Priority order:
+    1. Yesterday's evening if missing (morning is a natural time to fill it in)
+    2. Today's morning if not done
+    3. Post-run if ran today and no RPE yet
+    4. Evening if after 6pm and not done
+    5. Next unfilled section for today
+    """
+    target = target_date or date.today().isoformat()
+    today = date.today().isoformat()
+    existing = _get_existing(conn, target)
+    activity = _get_today_activity(conn, target)
+    hour = datetime.now().hour
+
+    # Determine what's already filled for target date
+    has_morning = (
+        existing
+        and existing["sleep_quality"]
+        and existing["legs"]
+        and existing["energy"]
+    )
+    has_rpe = existing and existing["rpe"] is not None
+    has_evening = (
+        existing
+        and existing["hydration"]
+        and existing["eating"]
+    )
+
+    if update:
+        # Explicit update: show the most relevant section
+        if has_evening:
+            run_evening(conn, target)
+        elif has_rpe:
+            run_post_run(conn, target)
+        else:
+            run_morning(conn, target)
+        return
+
+    # Check yesterday's gaps (only when checking in for today, before noon)
+    if target == today and hour < 12 and not target_date:
+        yesterday = (
+            date.fromisoformat(today) - timedelta(days=1)
+        ).isoformat()
+        yd = _get_existing(conn, yesterday)
+        if yd and not (yd["hydration"] and yd["eating"]):
+            console.print(
+                "[yellow]Yesterday's evening check-in is incomplete.[/yellow]"
+            )
+            run_evening(conn, yesterday)
+            console.print()  # spacing before today's check-in
+            # Continue to today's morning
+
+    # Smart default based on time + state
+    if not has_morning:
+        run_morning(conn, target)
+    elif activity and not has_rpe:
+        run_post_run(conn, target)
+    elif hour >= 18 and not has_evening:
+        run_evening(conn, target)
+    elif activity and not has_rpe:
+        run_post_run(conn, target)
+    elif not has_evening:
+        run_evening(conn, target)
+    else:
+        console.print(
+            f"\n[dim]All check-ins done for {target}. "
+            f"Use morning/run/evening to update specific fields.[/dim]"
+        )
+
+
+def _parse_alcohol(s):
+    """Parse alcohol input: '0' → (0, None), '2 beers' → (2.0, '2 beers')."""
     if not s or s == "0":
         return 0, None
-    # Try to extract leading number
     parts = s.split(None, 1)
     try:
         count = float(parts[0])
         return count, s
     except ValueError:
-        # No leading number — text describes a drink, assume 1 serving
         return 1.0, s
