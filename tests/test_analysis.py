@@ -3,6 +3,8 @@
 
 import pytest
 
+from datetime import date
+
 from fit.analysis import (
     compute_hr_zones,
     compute_effort_class,
@@ -11,6 +13,9 @@ from fit.analysis import (
     classify_run_type,
     predict_race_time,
     compute_weekly_agg,
+    compute_rolling_week,
+    compute_rolling_acwr,
+    _aggregate_date_range,
     enrich_activity,
     _classify_zone_lthr,
     _compute_acwr,
@@ -1002,3 +1007,144 @@ class TestSpO2Alert:
         alerts = run_alerts(db, config)
         spo2_alerts = [a for a in alerts if a["type"] == "spo2_low"]
         assert len(spo2_alerts) == 0
+
+
+# ════════════════════════════════════════════════════════════════
+# Rolling Window
+# ════════════════════════════════════════════════════════════════
+
+
+class TestAggregatedDateRange:
+    """Tests for _aggregate_date_range — shared core of weekly_agg + rolling."""
+
+    def _insert_run(self, conn, day, **kwargs):
+        defaults = {
+            "id": f"run-{day}", "date": day, "type": "running", "name": "Run",
+            "distance_km": 7, "duration_min": 45, "pace_sec_per_km": 386,
+            "avg_hr": 130, "avg_cadence": 172, "training_load": 100,
+            "hr_zone": "Z2", "run_type": "easy",
+        }
+        defaults.update(kwargs)
+        cols = ", ".join(defaults.keys())
+        placeholders = ", ".join(["?"] * len(defaults))
+        conn.execute(f"INSERT INTO activities ({cols}) VALUES ({placeholders})",
+                     list(defaults.values()))
+        conn.commit()
+
+    def test_matches_weekly_agg(self, db):
+        """_aggregate_date_range for Mon-Sun should match compute_weekly_agg."""
+        for i, day in enumerate(["2026-03-30", "2026-04-01", "2026-04-03"]):
+            self._insert_run(db, day, id=f"run-{i}")
+        weekly = compute_weekly_agg(db, "2026-W14")
+        direct = _aggregate_date_range(db, date(2026, 3, 30), date(2026, 4, 5))
+        # Core metrics should match
+        assert direct["run_count"] == weekly["run_count"]
+        assert direct["run_km"] == weekly["run_km"]
+        assert direct["total_load"] == weekly["total_load"]
+        assert direct["z12_pct"] == weekly["z12_pct"]
+        assert direct["longest_run_km"] == weekly["longest_run_km"]
+
+    def test_empty_range(self, db):
+        """Empty date range returns zeros/Nones."""
+        result = _aggregate_date_range(db, date(2026, 3, 30), date(2026, 4, 5))
+        assert result["run_count"] == 0
+        assert result["run_km"] == 0.0
+        assert result["z12_pct"] is None
+
+
+class TestRollingWeek:
+    """Tests for compute_rolling_week — rolling 7-day window."""
+
+    def _insert_run(self, conn, day, **kwargs):
+        defaults = {
+            "id": f"run-{day}", "date": day, "type": "running", "name": "Run",
+            "distance_km": 7, "duration_min": 45, "pace_sec_per_km": 386,
+            "avg_hr": 130, "avg_cadence": 172, "training_load": 100,
+            "hr_zone": "Z2", "run_type": "easy",
+        }
+        defaults.update(kwargs)
+        cols = ", ".join(defaults.keys())
+        placeholders = ", ".join(["?"] * len(defaults))
+        conn.execute(f"INSERT INTO activities ({cols}) VALUES ({placeholders})",
+                     list(defaults.values()))
+        conn.commit()
+
+    def test_mid_week_includes_prior_days(self, db):
+        """Wednesday query includes Thu-Wed window."""
+        # Wed Apr 8, window = Apr 2 (Thu) to Apr 8 (Wed)
+        self._insert_run(db, "2026-04-03", id="r1")  # Fri — in window
+        self._insert_run(db, "2026-04-06", id="r2")  # Mon — in window
+        self._insert_run(db, "2026-03-31", id="r3")  # Tue — outside window
+        result = compute_rolling_week(db, end_date=date(2026, 4, 8))
+        assert result["run_count"] == 2
+        assert result["run_km"] == 14.0
+
+    def test_monday_includes_weekend(self, db):
+        """Monday query includes prior Sat/Sun."""
+        self._insert_run(db, "2026-04-04", id="r1")  # Sat
+        self._insert_run(db, "2026-04-05", id="r2")  # Sun
+        result = compute_rolling_week(db, end_date=date(2026, 4, 6))  # Mon
+        assert result["run_count"] == 2
+
+    def test_empty_window(self, db):
+        """No runs in window returns zeros."""
+        result = compute_rolling_week(db, end_date=date(2026, 4, 8))
+        assert result["run_count"] == 0
+        assert result["run_km"] == 0.0
+        assert result["total_load"] == 0.0
+
+    def test_window_fields(self, db):
+        """Rolling week includes window_start and window_end."""
+        result = compute_rolling_week(db, end_date=date(2026, 4, 8))
+        assert result["window_start"] == "2026-04-02"
+        assert result["window_end"] == "2026-04-08"
+
+
+class TestRollingACWR:
+    """Tests for compute_rolling_acwr — rolling acute vs ISO chronic."""
+
+    def _insert_run(self, conn, day, **kwargs):
+        defaults = {
+            "id": f"run-{day}", "date": day, "type": "running", "name": "Run",
+            "distance_km": 7, "duration_min": 45, "training_load": 100,
+            "hr_zone": "Z2", "run_type": "easy",
+        }
+        defaults.update(kwargs)
+        cols = ", ".join(defaults.keys())
+        placeholders = ", ".join(["?"] * len(defaults))
+        conn.execute(f"INSERT INTO activities ({cols}) VALUES ({placeholders})",
+                     list(defaults.values()))
+        conn.commit()
+
+    def _insert_weekly_agg(self, conn, week, total_load):
+        conn.execute(
+            "INSERT INTO weekly_agg (week, total_load, run_count) VALUES (?, ?, ?)",
+            (week, total_load, 3))
+        conn.commit()
+
+    def test_rolling_acwr_with_history(self, db):
+        """Rolling ACWR: acute from rolling 7d, chronic from weekly_agg."""
+        # Chronic: 4 weeks at 200 load each
+        for wk in ["2026-W12", "2026-W13", "2026-W14", "2026-W15"]:
+            self._insert_weekly_agg(db, wk, 200)
+        # Acute: 3 runs in last 7 days = 300 load
+        for i, day in enumerate(["2026-04-20", "2026-04-22", "2026-04-24"]):
+            self._insert_run(db, day, id=f"r{i}")
+        result = compute_rolling_acwr(db, end_date=date(2026, 4, 25))
+        assert result == pytest.approx(1.5, abs=0.01)
+
+    def test_rolling_acwr_no_chronic(self, db):
+        """No chronic data → None."""
+        self._insert_run(db, "2026-04-20", id="r1")
+        result = compute_rolling_acwr(db, end_date=date(2026, 4, 25))
+        assert result is None
+
+    def test_rolling_acwr_spike_capped(self, db):
+        """Very high spike (>3.0) returns None."""
+        for wk in ["2026-W12", "2026-W13", "2026-W14", "2026-W15"]:
+            self._insert_weekly_agg(db, wk, 100)
+        # 5 runs = 500 load, chronic 100 → ACWR 5.0 → capped to None
+        for i in range(5):
+            self._insert_run(db, f"2026-04-{20+i}", id=f"r{i}", training_load=100)
+        result = compute_rolling_acwr(db, end_date=date(2026, 4, 25))
+        assert result is None

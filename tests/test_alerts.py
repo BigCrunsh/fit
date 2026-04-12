@@ -1,5 +1,7 @@
 """Tests for fit/alerts.py — threshold rules engine."""
 
+from datetime import date, timedelta
+
 from fit.alerts import run_alerts, get_recent_alerts
 
 
@@ -117,3 +119,75 @@ class TestGetRecentAlerts:
         db.commit()
         alerts = get_recent_alerts(db)
         assert len(alerts) == 1
+
+
+class TestACWRRollingAlert:
+    """ACWR alert uses rolling 7-day window — no day-of-week suppression."""
+
+    def test_undertraining_fires_any_day(self, db, config):
+        """ACWR undertraining alert fires when rolling ACWR < 0.6, regardless of day of week."""
+        today = date.today()
+        # Build 4 weeks of chronic history with decent total_load
+        for w in range(4):
+            monday = today - timedelta(days=today.weekday()) - timedelta(weeks=w + 1)
+            week_label = f"{monday.isocalendar()[0]}-W{monday.isocalendar()[1]:02d}"
+            db.execute(
+                "INSERT INTO weekly_agg (week, run_km, run_count, z12_pct, total_load) "
+                "VALUES (?, 40, 4, 80, 200)",
+                (week_label,),
+            )
+            # Insert activities for those weeks
+            for d in range(4):
+                run_date = (monday + timedelta(days=d)).isoformat()
+                db.execute(
+                    "INSERT INTO activities (id, date, type, distance_km, duration_min, avg_hr, training_load) "
+                    "VALUES (?, ?, 'running', 10, 60, 140, 50)",
+                    (f"act-{w}-{d}", run_date),
+                )
+
+        # Current rolling 7 days: only 1 short run → low acute load → ACWR < 0.6
+        recent_date = (today - timedelta(days=2)).isoformat()
+        db.execute(
+            "INSERT INTO activities (id, date, type, distance_km, duration_min, avg_hr, training_load) "
+            "VALUES ('act-recent', ?, 'running', 3, 20, 130, 15)",
+            (recent_date,),
+        )
+        db.commit()
+
+        alerts = run_alerts(db, config)
+        types = [a["type"] for a in alerts]
+        assert "undertraining" in types
+
+    def test_no_undertraining_when_acwr_ok(self, db, config):
+        """No undertraining alert when rolling ACWR is in safe range."""
+        today = date.today()
+        # Build 4 weeks of moderate chronic history
+        for w in range(4):
+            monday = today - timedelta(days=today.weekday()) - timedelta(weeks=w + 1)
+            week_label = f"{monday.isocalendar()[0]}-W{monday.isocalendar()[1]:02d}"
+            db.execute(
+                "INSERT INTO weekly_agg (week, run_km, run_count, z12_pct, total_load) "
+                "VALUES (?, 30, 3, 80, 150)",
+                (week_label,),
+            )
+            for d in range(3):
+                run_date = (monday + timedelta(days=d)).isoformat()
+                db.execute(
+                    "INSERT INTO activities (id, date, type, distance_km, duration_min, avg_hr, training_load) "
+                    "VALUES (?, ?, 'running', 10, 60, 140, 50)",
+                    (f"act-ok-{w}-{d}", run_date),
+                )
+
+        # Current 7 days: similar volume → ACWR ~1.0
+        for d in range(3):
+            run_date = (today - timedelta(days=d + 1)).isoformat()
+            db.execute(
+                "INSERT INTO activities (id, date, type, distance_km, duration_min, avg_hr, training_load) "
+                "VALUES (?, ?, 'running', 10, 60, 140, 50)",
+                (f"act-curr-{d}", run_date),
+            )
+        db.commit()
+
+        alerts = run_alerts(db, config)
+        types = [a["type"] for a in alerts]
+        assert "undertraining" not in types

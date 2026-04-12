@@ -460,73 +460,184 @@
 
 <!-- TRAINING -->
 <div id="tab-training" class="tab-content">
-  <div style="display:flex;gap:4px;margin-bottom:10px">
-    <span style="font-size:9px;color:var(--text-dim);padding:3px 0">Range:</span>
-    {% for r in ["3mo","6mo","1yr","all"] %}
-    <button class="tab-btn{% if r == 'all' %} active{% endif %}" style="font-size:9px;padding:2px 8px" onclick="setZoom('{{ r }}',this)">{{ r }}</button>
-    {% endfor %}
-  </div>
-  <div class="wow-card">
-    <div style="font-size:9px;font-weight:700;color:var(--z2);margin-bottom:4px">WEEK OVER WEEK</div>
-    {% if wow %}{{ wow }}{% else %}<span style="color:var(--text-dim)">Need 2+ weeks of data for comparison.</span>{% endif %}
-  </div>
 
-  <div class="sec"><h2>Weekly Volume</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.volume | safe }}</div><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-volume" height="160"></canvas></div>
-
-  <div class="sec"><h2>Training Load Per Run</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.training_load | safe }}</div><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-load" height="150"></canvas></div>
-
-  <div class="sec"><h2>Run Type Breakdown</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">Weekly run count by type. Blue=easy/recovery, amber=tempo, orange=intervals/race. A healthy base-building phase should be mostly blue.</div><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-runtypes" height="120"></canvas></div>
-
-  <!-- Plan adherence (if plan data exists) -->
-  <div class="sec"><h2>Plan Adherence</h2><div class="line"></div></div>
-  {% if plan_adherence is defined and plan_adherence and (plan_adherence.planned or plan_adherence.actuals) %}
-  <div class="chart-box"><canvas id="chart-plan-adherence" height="140"></canvas></div>
-  <!-- Compliance detail table -->
-  <div style="margin:-8px 0 16px">
-    {% for m in plan_adherence.matches %}
-    {% set p = m.planned %}
-    {% set a = m.actual %}
-    <div style="display:flex;align-items:center;gap:8px;padding:4px 10px;margin:2px 0;font-size:10px;border-radius:6px;background:{% if m.intensity_override %}rgba(239,68,68,0.06){% elif a and m.zone_match %}rgba(34,197,94,0.06){% elif a %}rgba(234,179,8,0.06){% else %}var(--surface){% endif %}">
-      <span style="color:var(--text-dim);width:50px;font-family:var(--mono)">{{ p.date[5:] }}</span>
-      <span style="width:65px;color:var(--text-muted)">{{ p.workout_type }}</span>
-      <span style="width:45px;font-family:var(--mono);color:var(--accent)">{{ p.target_distance_km }}km</span>
-      <span style="color:var(--text-dim)">→</span>
-      {% if a %}
-      <span style="width:45px;font-family:var(--mono);color:var(--text)">{{ '%.1f' % a.distance_km }}km</span>
-      <span style="width:55px;font-family:var(--mono);color:{% if m.zone_match %}var(--safe){% elif m.intensity_override %}var(--danger){% else %}var(--caution){% endif %}">{{ a.hr_zone }} {{ a.avg_hr }}</span>
-      <span style="font-size:9px;color:{% if m.zone_match %}var(--safe){% elif m.intensity_override %}var(--danger){% else %}var(--caution){% endif %}">{% if m.intensity_override %}overridden{% elif m.zone_match %}zone ✓{% else %}zone ✗{% endif %}</span>
-      {% else %}
-      <span style="color:var(--text-dim)">—</span>
+  <!-- 1. Hero Card: Last 7 Days -->
+  {% if hero_card %}
+  <div style="background:var(--surface);border-radius:12px;padding:16px;margin-bottom:16px;border:1px solid rgba(255,255,255,0.06)">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+      <div>
+        <div style="font-size:10px;font-weight:700;color:var(--z2);letter-spacing:0.5px;margin-bottom:4px">LAST 7 DAYS</div>
+        <div style="font-size:22px;font-weight:700;color:var(--text)">{{ '%.0f' % hero_card.volume_km }}km <span style="font-size:13px;color:var(--text-muted);font-weight:400">/ {{ hero_card.run_count }} runs</span></div>
+      </div>
+      {% if hero_card.compliance_pct is not none %}
+      <div style="text-align:center">
+        <div style="width:52px;height:52px;border-radius:50%;background:conic-gradient(var(--safe) {{ hero_card.compliance_pct * 3.6 }}deg, rgba(255,255,255,0.08) 0);display:flex;align-items:center;justify-content:center">
+          <div style="width:40px;height:40px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--text)">{{ hero_card.compliance_pct }}%</div>
+        </div>
+        <div style="font-size:8px;color:var(--text-dim);margin-top:2px">{{ hero_card.compliance_completed }}/{{ hero_card.compliance_total }} plan</div>
+      </div>
       {% endif %}
     </div>
-    {% endfor %}
-    {% if plan_adherence.weekly_compliance_pct is not none %}
-    <div style="font-size:9px;color:var(--text-dim);margin-top:4px;padding:0 10px">Weekly compliance: {{ plan_adherence.weekly_compliance_pct }}% · <span style="color:var(--safe)">green=zone ✓</span> <span style="color:var(--caution)">yellow=zone ✗</span> <span style="color:var(--danger)">red=intensity override</span> <span style="color:var(--text-dim)">gray=upcoming</span></div>
+    {% if hero_card.volume_target_km %}
+    <div style="background:rgba(255,255,255,0.06);border-radius:6px;height:8px;margin-bottom:8px;overflow:hidden">
+      <div style="height:100%;border-radius:6px;background:{% if hero_card.volume_pct > 110 %}var(--caution){% elif hero_card.volume_pct >= 90 %}var(--safe){% elif hero_card.volume_pct >= 60 %}var(--z2){% else %}var(--text-dim){% endif %};width:{{ [hero_card.volume_pct, 100] | min }}%"></div>
+    </div>
+    <div style="font-size:9px;color:var(--text-dim)">{{ '%.0f' % hero_card.volume_km }}/{{ '%.0f' % hero_card.volume_target_km }}km target ({{ hero_card.volume_pct }}%){% if hero_card.volume_pct > 110 %} — consider backing off{% endif %}</div>
+    {% endif %}
+    {% if hero_card.wow_sentence %}
+    <div style="font-size:11px;color:#94a3b8;line-height:1.5;margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04)">{{ hero_card.wow_sentence }}</div>
+    {% endif %}
+    {% if hero_card.next_workouts %}
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04)">
+      <div style="font-size:9px;color:var(--text-dim);margin-bottom:4px">NEXT UP</div>
+      {% for w in hero_card.next_workouts %}
+      <div style="display:flex;gap:8px;font-size:10px;padding:2px 0">
+        <span style="color:var(--text-muted);font-family:var(--mono);width:60px">{{ w.date_label }}</span>
+        <span style="color:var(--text)">{{ w.name }}</span>
+        {% if w.distance_km != '?' %}<span style="color:var(--text-dim);font-family:var(--mono)">{{ w.distance_km }}km</span>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
     {% endif %}
   </div>
-  {% else %}
-  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">No training plan loaded. Import your Runna plan: <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit plan import &lt;file&gt;</code> or sync from Garmin Calendar: <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit sync</code></div>
   {% endif %}
 
-  <div class="sec"><h2>Run Timeline</h2><div class="line"></div></div>
-  <div style="font-size:9px;color:var(--text-dim);margin-bottom:6px;display:flex;gap:12px">
-    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#38bdf8;vertical-align:middle"></span> Z1–Z2 (easy)</span>
-    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f59e0b;vertical-align:middle"></span> Z3 (moderate)</span>
-    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f97316;vertical-align:middle"></span> Z4–Z5 (hard)</span>
+  <!-- 2. Training Objectives (4 slots) -->
+  {% if training_objectives %}
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
+    {% for slot in training_objectives.slots %}
+    <div style="background:var(--surface);border-radius:10px;padding:10px;border:1px solid rgba(255,255,255,0.06);{% if slot.status == 'deactivated' %}opacity:0.6{% endif %}">
+      <div style="font-size:9px;font-weight:600;color:{% if slot.status == 'on_track' %}var(--safe){% elif slot.status == 'at_risk' %}var(--caution){% elif slot.status == 'off_track' %}var(--danger){% else %}var(--text-dim){% endif %};margin-bottom:4px">{{ slot.name }}</div>
+      <div style="font-size:16px;font-weight:700;color:var(--text)">{{ slot.current if slot.current is not none else '—' }}<span style="font-size:10px;color:var(--text-dim);font-weight:400"> {{ slot.unit }}</span></div>
+      {% if slot.target %}<div style="font-size:9px;color:var(--text-dim)">target: {{ slot.target }}</div>{% endif %}
+      {% if slot.streak_label %}<div style="font-size:8px;color:{% if 'secured' in slot.streak_label %}var(--safe){% else %}var(--caution){% endif %};margin-top:3px">{{ slot.streak_label }}</div>{% endif %}
+      {% if slot.status == 'deactivated' %}<div style="font-size:8px;color:var(--text-faint);margin-top:2px">no target</div>{% endif %}
+    </div>
+    {% endfor %}
   </div>
-  {% for run in run_timeline %}
-  {% if run.gap_days is defined and run.gap_days and run.gap_days > 14 %}
-  <div style="text-align:center;color:var(--text-faint);font-size:9px;margin:4px 0;font-family:var(--mono)">── {{ run.gap_days }}d gap ──</div>
+  {% if not training_objectives.active %}
+  <div style="text-align:center;color:var(--text-muted);font-size:11px;margin:-8px 0 16px">{{ training_objectives.prompt }}</div>
   {% endif %}
-  <div class="run-bar">
-    <span style="color:var(--text-muted);width:60px;font-family:var(--mono);font-size:9px">{{ run.date }}</span>
-    <div class="run-bar-fill" style="width:{{ run.width }}%;background:{{ run.color }};min-width:40px">{{ run.distance_km }}km</div>
-    <span style="color:var(--text-muted);font-size:9px">{{ run.run_type }} {{ run.zone }} {% if run.rpe %}RPE {{ run.rpe }}{% endif %}</span>
+  {% endif %}
+
+  <!-- 3. Last 7 Days — Run Detail Cards -->
+  {% if last_7_days_runs %}
+  <div class="sec"><h2>Last 7 Days</h2><div class="line"></div></div>
+  {% for run in last_7_days_runs %}
+  <div class="run-detail-card" style="background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:8px;border:1px solid rgba(255,255,255,0.06);cursor:pointer" onclick="var e=this.querySelector('.run-detail-expand');e.style.display=e.style.display==='block'?'none':'block'">
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--text-dim);flex-shrink:0">{{ run.date[5:] }}</span>
+        <span style="font-size:11px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:400px">{{ run.name }}</span>
+        <span style="font-size:9px;padding:1px 6px;border-radius:4px;background:rgba(255,255,255,0.06);color:var(--text-muted);flex-shrink:0">{{ run.run_type }}</span>
+      </div>
+      <div style="display:flex;gap:12px;font-family:var(--mono);font-size:10px;color:var(--text-muted)">
+        <span>{{ run.distance_km }}km</span>
+        <span>{{ run.pace }}/km</span>
+        <span>HR {{ run.avg_hr or '—' }}</span>
+        <span style="color:{% if run.hr_zone in ['Z1','Z2'] %}var(--z2){% elif run.hr_zone == 'Z3' %}var(--z3){% elif run.hr_zone in ['Z4','Z5'] %}var(--z4){% else %}var(--text-muted){% endif %}">{{ run.hr_zone }}</span>
+        {% if run.training_load %}<span>load {{ run.training_load }}</span>{% endif %}
+        {% if run.effort_class %}<span style="font-size:9px;color:var(--text-dim)">{{ run.effort_class }}</span>{% endif %}
+      </div>
+    </div>
+    {% if run.plan_comparison %}
+    <div style="font-size:9px;margin-top:4px;color:{% if run.plan_comparison.verdict == 'on target' %}var(--safe){% elif run.plan_comparison.verdict == 'too fast' %}var(--danger){% elif run.plan_comparison.verdict == 'unplanned' %}var(--text-dim){% else %}var(--caution){% endif %}">
+      {% if run.plan_comparison.verdict == 'unplanned' %}Unplanned run{% else %}Plan: {{ run.plan_comparison.planned_name }} ({{ run.plan_comparison.planned_type }}) — {{ run.plan_comparison.verdict }}{% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Expandable detail section — most recent run expanded by default -->
+    <div class="run-detail-expand" style="display:{% if loop.first %}block{% else %}none{% endif %};margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04)">
+
+      {% if run.weather %}
+      <div style="display:flex;gap:12px;font-size:9px;color:var(--text-dim);margin-bottom:8px">
+        {% if run.weather.conditions %}<span>{{ run.weather.conditions }}</span>{% endif %}
+        {% if run.weather.temp is not none %}<span>{{ '%.0f' % run.weather.temp }}°C</span>{% endif %}
+        {% if run.weather.humidity is not none %}<span>{{ '%.0f' % run.weather.humidity }}% humidity</span>{% endif %}
+        {% if run.weather.wind is not none %}<span>{{ '%.0f' % run.weather.wind }} km/h wind</span>{% endif %}
+        {% if run.weather.precipitation is not none and run.weather.precipitation > 0 %}<span>{{ '%.1f' % run.weather.precipitation }}mm rain</span>{% endif %}
+      </div>
+      {% endif %}
+
+      {% if run.splits %}
+      <div style="margin-bottom:2px;height:130px">
+        <canvas id="split-chart-{{ loop.index }}" style="width:100%;height:100%"></canvas>
+      </div>
+      <div style="height:50px;margin-bottom:2px">
+        <canvas id="split-elev-{{ loop.index }}" style="width:100%;height:100%"></canvas>
+      </div>
+      <div style="height:24px;margin-bottom:2px">
+        <canvas id="split-zones-{{ loop.index }}" style="width:100%;height:100%"></canvas>
+      </div>
+      <div id="split-legend-{{ loop.index }}" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-bottom:4px"></div>
+      {% if run.cardiac_drift %}
+      <div style="font-size:9px;margin-top:4px;color:{% if run.cardiac_drift.pct < 5 %}var(--safe){% elif run.cardiac_drift.pct < 10 %}var(--caution){% else %}var(--danger){% endif %}">
+        Cardiac drift: +{{ run.cardiac_drift.pct }}%{% if run.cardiac_drift.onset_km %} (onset km {{ run.cardiac_drift.onset_km }}){% endif %}
+      </div>
+      {% endif %}
+      {% else %}
+      <div style="font-size:9px;color:var(--text-dim);padding:4px 0">No split data — run <code style="background:rgba(255,255,255,0.05);padding:1px 4px;border-radius:3px;font-size:8px">fit sync</code> to fetch splits</div>
+      {% endif %}
+
+      {% if run.srpe and run.srpe.feel %}
+      <div style="font-size:9px;color:var(--text-dim);margin-top:6px">sRPE: {{ run.srpe.value }} — <span style="color:var(--caution)">{{ run.srpe.feel }}</span></div>
+      {% elif run.srpe %}
+      <div style="font-size:9px;color:var(--text-dim);margin-top:6px">sRPE: {{ run.srpe.value }}</div>
+      {% endif %}
+
+      {% if run.adaptation_signals %}
+      <div style="display:flex;gap:12px;font-size:9px;color:var(--text-dim);margin-top:4px">
+        {% if run.adaptation_signals.pace_vs_avg is defined %}
+        <span>Pace vs 4wk:
+          <span style="color:{% if run.adaptation_signals.pace_vs_avg < 0 %}var(--safe){% else %}var(--danger){% endif %}">
+            {% if run.adaptation_signals.pace_vs_avg < 0 %}&#x25BC;{% else %}&#x25B2;{% endif %} {{ '%+.0f' % run.adaptation_signals.pace_vs_avg }}s/km
+          </span>
+        </span>
+        {% endif %}
+        {% if run.adaptation_signals.spb_vs_avg is defined %}
+        <span>Efficiency vs 4wk:
+          <span style="color:{% if run.adaptation_signals.spb_vs_avg > 0 %}var(--safe){% else %}var(--danger){% endif %}">
+            {% if run.adaptation_signals.spb_vs_avg > 0 %}&#x25B2;{% else %}&#x25BC;{% endif %} {{ '%+.3f' % run.adaptation_signals.spb_vs_avg }}
+          </span>
+        </span>
+        {% endif %}
+      </div>
+      {% endif %}
+
+    </div>
   </div>
   {% endfor %}
+  {% else %}
+  <div class="sec"><h2>Last 7 Days</h2><div class="line"></div></div>
+  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">No runs in the last 7 days.</div>
+  {% endif %}
+
+  <!-- 4. Plan Adherence (multi-week) -->
+  {% if weekly_plan_adherence %}
+  <div class="sec"><h2>Plan Adherence</h2><div class="line"></div></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:6px;margin-bottom:16px">
+    {% for w in weekly_plan_adherence %}
+    <div style="background:var(--surface);border-radius:8px;padding:8px;text-align:center;border:1px solid rgba(255,255,255,0.06)">
+      <div style="font-size:9px;color:var(--text-dim);margin-bottom:4px">{{ w.week }}</div>
+      <div style="font-size:18px;font-weight:700;color:{% if w.color == 'green' %}var(--safe){% elif w.color == 'amber' %}var(--caution){% else %}var(--danger){% endif %}">{{ w.compliance_pct }}%</div>
+      <div style="font-size:8px;color:var(--text-dim)">{{ w.completed }}/{{ w.planned }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="sec"><h2>Plan Adherence</h2><div class="line"></div></div>
+  <div style="background:var(--surface);border-radius:8px;padding:16px;text-align:center;color:var(--text-dim);font-size:12px;margin-bottom:16px">
+    No plan data. Import a plan with <code>fit plan import</code> or sync Garmin Calendar.
+  </div>
+  {% endif %}
+
+  <!-- 5. Volume Trend -->
+  <div class="sec"><h2>Volume Trend</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-volume" height="160"></canvas></div>
+
+  <!-- 6. Run Type Mix -->
+  <div class="sec"><h2>Run Type Mix</h2><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-runtypes" height="120"></canvas></div>
 </div>
 
 <!-- BODY -->
@@ -620,8 +731,8 @@
     <div class="sec"><h2>Coaching Notes</h2><div class="line"></div></div>
     {% if coaching.stale %}
     <div style="background:rgba(234,179,8,0.08);border:1px solid rgba(234,179,8,0.2);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:11px">
-      <span style="color:var(--caution);font-weight:700">Coaching notes are outdated</span>
-      <span style="color:#94a3b8"> ({{ coaching.generated_at[:10] }}). Ask Claude for a fresh analysis — your data has changed since then.</span>
+      <span style="color:var(--caution);font-weight:700">Last coaching review was {{ coaching.generated_at[:10] }}</span>
+      <span style="color:#94a3b8">. Time for a weekly check-in — ask Claude to review your week.</span>
     </div>
     {% else %}
     <div style="font-size:10px;color:var(--text-muted);margin-bottom:12px">Generated: {{ coaching.generated_at }}</div>
@@ -892,6 +1003,160 @@ sparkline('{{ obj.spark_id }}', {{ obj.history | tojson }}, '{{ obj.color | repl
 {% for rd in readiness_summary %}
 {% if rd.history %}
 sparkline('{{ rd.spark_id }}', {{ rd.history | tojson }}, '{{ rd.color | replace("var(--safe)", "#34d399") | replace("var(--caution)", "#fbbf24") | replace("var(--danger)", "#f87171") | replace("var(--text-dim)", "#94a3b8") }}', 'rgba(148,163,184,0.06)');
+{% endif %}
+{% endfor %}
+{% endif %}
+
+// ─── Zone color helper — derives from CSS variables (--z1..--z5) ───
+function _zoneStyle(zone) {
+  var root = getComputedStyle(document.documentElement);
+  var cssVar = '--' + (zone || '').toLowerCase();
+  var hex = (root.getPropertyValue(cssVar) || '').trim();
+  if (!hex) return { bg:'rgba(148,163,184,0.15)', border:'rgba(148,163,184,0.3)', text:'rgba(148,163,184,0.6)' };
+  // Parse hex (#rrggbb) to rgba components for bg/border opacity variants
+  var r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  return { bg:'rgba('+r+','+g+','+b+',0.22)', border:'rgba('+r+','+g+','+b+',0.45)', text:hex };
+}
+
+// ─── SPLIT CHARTS (Training tab — per-run detail) ───
+{% if last_7_days_runs %}
+{% for run in last_7_days_runs %}
+{% if run.split_chart %}
+(function() {
+  var el = document.getElementById('split-chart-{{ loop.index }}');
+  if (!el) return;
+  var expand = el.closest('.run-detail-expand');
+  if (!expand) return;
+  function fmtPace(s) { if(s==null) return ''; return Math.floor(s/60)+':'+('0'+Math.round(s%60)).slice(-2); }
+  function initChart() {
+    if (el._chartDone) return;
+    el._chartDone = true;
+    var cfg = {{ run.split_chart | safe }};
+    var zoneSegs = cfg._zone_segments || [];
+    var phaseLegend = cfg._phase_legend || [];
+    delete cfg._zone_segments;
+    delete cfg._phase_legend;
+    // Pace formatting
+    cfg.options.plugins.tooltip = {callbacks:{label:function(ctx){
+      if(ctx.dataset.label==='Pace') return ctx.raw != null ? fmtPace(ctx.raw)+'/km' : '';
+      if(ctx.dataset.label==='HR') return ctx.raw != null ? ctx.raw+' bpm' : '';
+      return '';
+    }}};
+    cfg.options.scales.y.ticks.callback = function(v){return fmtPace(v);};
+    // Skip empty x-axis labels (proportional bin spacers)
+    if(cfg.options.scales.x.ticks && cfg.options.scales.x.ticks.__skip_empty){
+      delete cfg.options.scales.x.ticks.__skip_empty;
+      cfg.options.scales.x.ticks.callback = function(v,i){
+        var l=this.getLabelForValue(i); return l||null;
+      };
+    }
+    var mainChart = new Chart(el, cfg);
+    // Elevation chart (separate canvas)
+    {% if run.split_elev_chart %}
+    var elevEl = document.getElementById('split-elev-{{ loop.index }}');
+    if (elevEl) {
+      var elevCfg = {{ run.split_elev_chart | safe }};
+      elevCfg.options.plugins.tooltip = {callbacks:{label:function(ctx){
+        return ctx.raw + 'm';
+      }}};
+      new Chart(elevEl, elevCfg);
+    }
+    {% endif %}
+    // Zone strip — same structural element as genericPhaseBandPlugin
+    var zoneEl = document.getElementById('split-zones-{{ loop.index }}');
+    if (zoneEl && zoneSegs.length > 0) {
+      var zoneBandPlugin = {
+        id: 'zoneBand_{{ loop.index }}',
+        afterDraw: function(chart) {
+          var xScale = chart.scales.x;
+          var ctx = chart.ctx;
+          var bandH = 18;
+          var bandY = chart.height - (chart.options.layout?.padding?.bottom || 0) + 2;
+          var nLabels = chart.data.labels.length;
+          var halfBin = nLabels > 1 ? (xScale.right - xScale.left) / nLabels / 2 : (xScale.right - xScale.left) / 2;
+          var sans = getComputedStyle(document.body).getPropertyValue('--sans');
+          zoneSegs.forEach(function(seg) {
+            var x1 = xScale.getPixelForValue(seg.s) - halfBin;
+            var x2 = xScale.getPixelForValue(seg.e) + halfBin;
+            var w = x2 - x1;
+            if (w < 1) return;
+            var c = _zoneStyle(seg.zone);
+            ctx.save();
+            ctx.fillStyle = c.bg;
+            ctx.strokeStyle = c.border;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(x1, bandY, w, bandH, 3);
+            ctx.fill();
+            ctx.stroke();
+            if (seg.label) {
+              ctx.fillStyle = c.text;
+              ctx.font = '600 8px ' + sans;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              var lbl = seg.label;
+              if (ctx.measureText(lbl).width < w - 6) {
+                ctx.fillText(lbl, x1 + w / 2, bandY + bandH / 2);
+              } else if (seg.zone && ctx.measureText(seg.zone).width < w - 6) {
+                ctx.fillText(seg.zone, x1 + w / 2, bandY + bandH / 2);
+              }
+            }
+            ctx.restore();
+          });
+        }
+      };
+      new Chart(zoneEl, {
+        type: 'bar',
+        data: { labels: cfg.data.labels, datasets: [{ data: cfg.data.labels.map(function(){return 0;}), backgroundColor:'transparent' }] },
+        plugins: [zoneBandPlugin],
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          layout: { padding: { bottom: 22 } },
+          plugins: { legend: { display: false }, tooltip: { enabled: false } },
+          scales: {
+            x: { display: false },
+            y: { display: false, min: 0, max: 1 },
+            yLeft: { position: 'left', display: true,
+                     ticks: { display: true, font: { size: 8 }, color: 'transparent' },
+                     title: { display: true, text: ' ', font: { size: 8 }, color: 'transparent' },
+                     grid: { drawOnChartArea: false, drawTicks: false } },
+            yRight: { position: 'right', display: true,
+                      ticks: { display: true, font: { size: 8 }, color: 'transparent' },
+                      title: { display: true, text: ' ', font: { size: 8 }, color: 'transparent' },
+                      grid: { drawOnChartArea: false, drawTicks: false } },
+          }
+        }
+      });
+    }
+    // Render phase legend (colors from CSS variables)
+    var legendEl = document.getElementById('split-legend-{{ loop.index }}');
+    if (legendEl && phaseLegend.length > 0) {
+      phaseLegend.forEach(function(item) {
+        var span = document.createElement('span');
+        span.style.cssText = 'display:inline-flex;align-items:center;gap:3px;font-size:8px;color:rgba(255,255,255,0.5)';
+        var box = document.createElement('span');
+        var c = _zoneStyle(item.zone);
+        box.style.cssText = 'display:inline-block;width:8px;height:8px;border-radius:1px;background:' + c.border;
+        span.appendChild(box);
+        span.appendChild(document.createTextNode(item.label));
+        legendEl.appendChild(span);
+      });
+    }
+  }
+  // If already visible (most recent run), init immediately
+  if (expand.style.display === 'block') {
+    initChart();
+  } else {
+    // Lazy init: render chart on first expand
+    var observer = new MutationObserver(function() {
+      if (expand.style.display === 'block') {
+        initChart();
+        observer.disconnect();
+      }
+    });
+    observer.observe(expand, {attributes: true, attributeFilter: ['style']});
+  }
+})();
 {% endif %}
 {% endfor %}
 {% endif %}

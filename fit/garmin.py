@@ -267,6 +267,53 @@ def fetch_activities(api: Garmin, start: date, end: date) -> list[dict]:
     return results
 
 
+def fetch_activity_splits(api: Garmin, activity_id: str) -> list[dict]:
+    """Fetch per-km splits for an activity from the Garmin API.
+
+    Returns list of split dicts with fields matching activity_splits schema:
+        split_num, distance_km, time_sec, pace_sec_per_km, avg_hr, max_hr,
+        avg_cadence, elevation_gain_m, elevation_loss_m, avg_speed_m_s,
+        intensity_type, wkt_step_index.
+
+    Includes all laps (km splits + interval segments). Only skips tiny
+    trailing fragments (<50m) that Garmin sometimes appends.
+    """
+    data = _request_with_retry(
+        lambda: api.get_activity_splits(str(activity_id)),
+        description=f"Splits for {activity_id}",
+    )
+    if not data or "lapDTOs" not in data:
+        return []
+
+    splits = []
+    km = 0
+    for lap in data["lapDTOs"]:
+        dist = lap.get("distance", 0) or 0
+        dur = lap.get("duration", 0) or 0
+        if dist < 50 or dur <= 0:
+            continue
+        km += 1
+        speed = lap.get("averageSpeed", 0) or 0
+        pace = round(1000 / speed) if speed > 0 else None
+        splits.append({
+            "split_num": km,
+            "distance_km": round(dist / 1000, 2),
+            "time_sec": round(dur),
+            "pace_sec_per_km": pace,
+            "avg_hr": round(lap["averageHR"]) if lap.get("averageHR") else None,
+            "max_hr": round(lap["maxHR"]) if lap.get("maxHR") else None,
+            "avg_cadence": round(lap["averageRunCadence"]) if lap.get("averageRunCadence") else None,
+            "elevation_gain_m": lap.get("elevationGain"),
+            "elevation_loss_m": lap.get("elevationLoss"),
+            "avg_speed_m_s": round(speed, 3) if speed else None,
+            "intensity_type": lap.get("intensityType"),
+            "wkt_step_index": lap.get("wktStepIndex"),
+        })
+
+    logger.info("Fetched %d splits for activity %s", len(splits), activity_id)
+    return splits
+
+
 def fetch_spo2(api: Garmin, start: date, end: date) -> dict[str, float | None]:
     """Fetch SpO2 data for a date range.
 

@@ -101,18 +101,14 @@ def run_alerts(conn: sqlite3.Connection, config: dict) -> list[dict]:
                            {"monotony": mono_row["monotony"]}))
 
     # Rule: ACWR <0.6 — undertraining / detraining risk
-    acwr_row = conn.execute(
-        "SELECT acwr, week FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1"
-    ).fetchone()
-    if acwr_row and acwr_row["acwr"] is not None and acwr_row["acwr"] < 0.6:
-        # Don't fire on partial current week (Mon-Wed)
-        iso = date.today().isocalendar()
-        current_week = f"{iso.year}-W{iso.week:02d}"
-        if acwr_row["week"] != current_week or iso.weekday >= 5:
-            fired.append(_fire(conn, today, "undertraining",
-                               f"ACWR is {acwr_row['acwr']:.2f} — significantly below optimal (0.8-1.3). "
-                               f"You may be losing fitness. Gradually increase training load.",
-                               {"acwr": acwr_row["acwr"]}))
+    # Uses rolling 7-day window — no partial-week suppression needed
+    from fit.analysis import compute_rolling_acwr
+    rolling_acwr = compute_rolling_acwr(conn)
+    if rolling_acwr is not None and rolling_acwr < 0.6:
+        fired.append(_fire(conn, today, "undertraining",
+                           f"ACWR is {rolling_acwr:.2f} — significantly below optimal (0.8-1.3). "
+                           f"You may be losing fitness. Gradually increase training load.",
+                           {"acwr": rolling_acwr}))
 
     # Rule: Deload overdue — no deload week in 4+ consecutive build weeks (task 4.9)
     deload_alert = _check_deload_overdue(conn, today)

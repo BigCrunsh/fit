@@ -559,35 +559,43 @@ def generate_z2_remediation(conn: sqlite3.Connection, config: dict) -> dict | No
 # ── Data Storytelling Generators ──
 
 
-def generate_wow_sentence(conn: sqlite3.Connection) -> str | None:
+def generate_wow_sentence(
+    conn: sqlite3.Connection,
+    current: dict | None = None,
+    previous: dict | None = None,
+) -> str | None:
     """Generate a one-sentence WoW narrative instead of raw numbers.
 
     E.g. "Volume down 58% (8km from 19km) but zone compliance flipped 0%→100%
     — the first truly easy week."
-    """
-    weeks = conn.execute(
-        "SELECT * FROM weekly_agg ORDER BY week DESC LIMIT 2"
-    ).fetchall()
-    if len(weeks) < 2:
-        return None
 
-    this = weeks[0]
-    last = weeks[1]
+    Accepts optional rolling 7d dicts (from compute_rolling_week / _aggregate_date_range).
+    If not provided, falls back to the latest 2 ISO weeks from weekly_agg.
+    """
+    if current is None or previous is None:
+        weeks = conn.execute(
+            "SELECT * FROM weekly_agg ORDER BY week DESC LIMIT 2"
+        ).fetchall()
+        if len(weeks) < 2:
+            return None
+        current = current or dict(weeks[0])
+        previous = previous or dict(weeks[1])
+
     parts = []
 
     # Volume change
-    this_km = this["run_km"] or 0
-    last_km = last["run_km"] or 0
+    this_km = current.get("run_km") or 0
+    last_km = previous.get("run_km") or 0
     if last_km > 0:
         vol_pct = ((this_km - last_km) / last_km) * 100
         direction = "up" if vol_pct > 0 else "down"
         parts.append(f"Volume {direction} {abs(vol_pct):.0f}% ({this_km:.0f}km from {last_km:.0f}km)")
     else:
-        parts.append(f"Volume: {this_km:.0f}km (no runs last week)")
+        parts.append(f"Volume: {this_km:.0f}km (no runs last period)")
 
     # Zone compliance change
-    this_z12 = this["z12_pct"]
-    last_z12 = last["z12_pct"]
+    this_z12 = current.get("z12_pct")
+    last_z12 = previous.get("z12_pct")
     if this_z12 is not None and last_z12 is not None:
         if this_z12 > 80 and last_z12 < 50:
             parts.append(f"zone compliance flipped {last_z12:.0f}%→{this_z12:.0f}% — first truly easy week")
@@ -597,20 +605,16 @@ def generate_wow_sentence(conn: sqlite3.Connection) -> str | None:
             parts.append(f"zone compliance dropped {last_z12:.0f}%→{this_z12:.0f}%")
 
     # Run count
-    this_runs = this["run_count"] or 0
-    last_runs = last["run_count"] or 0
+    this_runs = current.get("run_count") or 0
+    last_runs = previous.get("run_count") or 0
     if this_runs != last_runs:
         parts.append(f"{this_runs} runs ({'↑' if this_runs > last_runs else '↓'}{abs(this_runs - last_runs)})")
 
-    # ACWR context
-    acwr = this["acwr"]
-    if acwr is not None:
-        # Flag if partial week
-        from datetime import date as _d
-        iso = _d.today().isocalendar()
-        current_week = f"{iso.year}-W{iso.week:02d}"
-        partial = " (week in progress)" if this["week"] == current_week and iso.weekday < 5 else ""
-        parts.append(f"ACWR {acwr:.2f}{partial}")
+    # ACWR context — use rolling ACWR if available
+    from fit.analysis import compute_rolling_acwr
+    rolling_acwr = compute_rolling_acwr(conn)
+    if rolling_acwr is not None:
+        parts.append(f"ACWR {rolling_acwr:.2f}")
 
     return " · ".join(parts) if parts else None
 

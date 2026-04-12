@@ -37,15 +37,6 @@ class TestCLICommands:
         assert result.exit_code == 0
         assert "Races" in result.output
 
-    def test_goal_list(self):
-        result = CliRunner().invoke(main, ["goal", "list"])
-        assert result.exit_code == 0
-
-    def test_goal_help(self):
-        result = CliRunner().invoke(main, ["goal", "--help"])
-        assert result.exit_code == 0
-        assert "Manage training goals" in result.output
-
     def test_sync_help(self):
         result = CliRunner().invoke(main, ["sync", "--help"])
         assert result.exit_code == 0

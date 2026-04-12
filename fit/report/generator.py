@@ -61,6 +61,10 @@ from fit.report.sections.cards import (  # noqa: E402
     _todays_capability,
     _fitness_gap_analysis,
     _body_comp_data,
+    _last_7_days_hero,
+    _training_objectives,
+    _last_7_days_runs,
+    _weekly_plan_adherence,
 )
 from fit.report.sections.charts import _all_charts  # noqa: E402
 from fit.report.sections.predictions import _prediction_summary, _race_prediction  # noqa: E402
@@ -143,6 +147,10 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "fitness_gaps": _fitness_gap_analysis(conn),
         "body_comp": _body_comp_data(conn),
         "training_phases_json": _training_phases_json(conn),
+        "hero_card": _last_7_days_hero(conn),
+        "training_objectives": _training_objectives(conn),
+        "last_7_days_runs": _last_7_days_runs(conn),
+        "weekly_plan_adherence": _weekly_plan_adherence(conn),
     }
 
     html = template.render(**context)

@@ -15,16 +15,13 @@ fit sync --splits             # sync with .fit file download for per-km splits
 fit checkin                   # daily: interactive check-in (after training) + sRPE computation
 fit report                    # generate dashboard → ~/.fit/reports/dashboard.html
 fit report --daily            # snapshot: reports/YYYY-MM-DD.html
-fit status                    # quick overview: race countdown, objectives, phase, ACWR, goals
+fit status                    # quick overview: race countdown, objectives, phase, ACWR, last 7 days
 fit doctor                    # validate pipeline: schema, tables, freshness, calibration, data sources
 fit correlate                 # compute cross-domain Spearman correlations (6 pairs + rolling 8-week)
 fit calibrate max_hr          # after a race: update max HR
 fit calibrate lthr            # after a 30-min time trial: update LTHR
 fit recompute                 # after config changes: re-enrich all activities
 fit races                     # show race calendar with match status
-fit goal add                  # add a goal interactively (race/metric/habit)
-fit goal list                 # show active goals with progress (linked to target race)
-fit goal complete <id>        # mark a goal as achieved
 fit plan                      # show next 7 days of planned workouts (from Runna/Garmin)
 fit plan import <file>        # import planned workouts from CSV
 fit plan validate <file>      # dry-run validate CSV format
@@ -35,15 +32,15 @@ fit splits --backfill         # batch download + parse .fit files (rate-limited)
 
 ```
 fit/                 # Python package (pip install -e .)
-  cli.py             # Click group: sync, checkin, report, status, doctor, correlate, recompute, calibrate, races, goal, plan, splits
+  cli.py             # Click group: sync, checkin, report, status, doctor, correlate, recompute, calibrate, races, target, plan, splits
   config.py          # Three-layer: config.yaml → config.local.yaml → env vars
   db.py              # SQLite + transaction-safe migration runner (FK disabled during Python migrations for table rebuilds)
   garmin.py          # Garmin Connect API via garminconnect + garth + retry/backoff
   weather.py         # Open-Meteo daily + hourly weather with retry/backoff
   sync.py            # Composable pipeline: fetch → enrich → store → weather → sRPE → aggregate → correlate → alert → plan_sync
-  analysis.py        # Zones, speed_per_bpm, run types, ACWR (year-boundary safe), Daniels VDOT, monotony/strain, return-to-run
+  analysis.py        # Zones, speed_per_bpm, run types, ACWR, rolling 7d window, Daniels VDOT, monotony/strain, return-to-run
   checkin.py         # Interactive check-in with RPE, sleep quality + sRPE trigger
-  goals.py           # Training phases, phase compliance, goal log, CRUD + get_target_race()
+  goals.py           # Training phases, phase compliance, goal log, target race lifecycle
   calibration.py     # Max HR, LTHR staleness tracking + auto-extraction from races
   data_health.py     # Data source health check (what Garmin settings are missing)
   correlations.py    # Spearman rank correlation engine (6 pairs, rolling 8-week windows, effect size filter)
@@ -60,7 +57,7 @@ fit/                 # Python package (pip install -e .)
     headline.py      # Race-anchored headline engine
     sections/        # Decomposed dashboard generator
       engine.py      # Main generate_dashboard() + template loading
-      cards.py       # Status cards, milestone cards, alert cards
+      cards.py       # Training tab cards: hero, objectives, run details, plan adherence, coaching
       charts.py      # All chart data generation
       predictions.py # Race prediction + pacing strategy section
     templates/       # dashboard.html Jinja2 template
@@ -76,7 +73,7 @@ migrations/          # Numbered .sql/.py migrations (001-009)
   007_phase2a_schema.py        # Python: goals.race_id FK, race_calendar FK rebuild, srpe, monotony/strain, cycling
   008_activity_splits.py       # Python: activity_splits table, fit_file_path/splits_status on activities
   009_planned_workouts.py      # Python: planned_workouts table for Runna integration
-tests/               # pytest suite (500+ tests)
+tests/               # pytest suite (748 tests)
 ```
 
 ## Key Design Decisions
@@ -87,13 +84,14 @@ tests/               # pytest suite (500+ tests)
 - **5-level effort class**: Recovery / Easy / Moderate / Hard / Very Hard (not 3-level)
 - **speed_per_bpm** (higher = better), not cardiac_efficiency (lower = better) — intuitive direction
 - **Zone distribution by TIME** (duration_min per activity), not by run count
+- **Rolling 7-day window, not ISO weeks** — dashboard, CLI, alerts, and MCP all use `compute_rolling_week()` (today-6 → today) instead of ISO Mon-Sun boundaries. Eliminates partial-week artifacts mid-week. ACWR is hybrid: rolling 7d acute + ISO-week chronic from `weekly_agg`. Streaks stay ISO-week (rolling would cause counterintuitive drops).
 - **Phase-specific targets**: dashboard compares actual zone distribution to the active training phase's targets, not a fixed 80/20
 - **3 coaching MCP tools** (not 1 monolithic): check_dashboard_freshness → get_coaching_context → save_coaching_notes
 - **coaching context includes zone boundaries** — Claude must never default to "HR 150 for easy" when Z2 ceiling is 134
 - **Spearman correlations zero-dependency** — no scipy; custom rank + Pearson implementation in `correlations.py`
 - **Alerts deduplicated** by date + type — same alert won't fire twice on the same day
 - **Race calendar separate from activities** — `race_calendar` stores official results/organizer, linked to Garmin activities via `activity_id`
-- **Goal CLI is a Click group** — `fit goal add/list/complete` subcommands
+- **Objectives are auto-derived only** — from target race via `derive_objectives()`. No manual goal CRUD CLI. Use `fit target set/clear` to manage.
 - **Dashboard uses 3 vendored JS files** — Chart.js + annotation plugin + date-fns adapter, all inlined into the HTML
 - **Race as organizing anchor** — dashboard orients around target race countdown, objectives linked via race_id FK
 - **Goals = "objectives" in UI** — DB table stays `goals`, user-facing text says "objectives"
@@ -120,6 +118,8 @@ tests/               # pytest suite (500+ tests)
 - **Checkpoints = fitness calibration** — pre-target races with derived target times (Riegel back-calculation). VDOT from results updates projection.
 - **Target race via goals.race_id** — `fit target set <id>` updates all active goals. No is_target flag needed.
 - **Coaching notes body validation** — `save_coaching_notes` rejects insights with missing/short body text (<20 chars)
+- **Coaching staleness = 7-day cadence** — not sync-reactive. Stale banner appears when coaching notes are >7 days old, regardless of sync timing
+- **Training tab = 6 sections** — hero card (compliance ring + volume bar + WoW + next workout), objectives row (4 canonical slots), last 7 days run details (click-to-expand with splits/plan/signals), plan adherence (4-week grid), volume trend (12w + rolling bar + phase band), run type mix
 
 ## Design Principles
 

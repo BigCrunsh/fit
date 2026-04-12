@@ -190,46 +190,42 @@ def enrich_activity(activity: dict, config: dict, lthr: int | None = None,
 # ── Weekly Aggregation ──
 
 
-def compute_weekly_agg(conn: sqlite3.Connection, week_str: str,
-                       config: dict | None = None) -> dict:
-    """Compute weekly aggregation for a given ISO week (e.g., '2026-W14').
+def _aggregate_date_range(conn: sqlite3.Connection, start_date: date,
+                          end_date: date, config: dict | None = None) -> dict:
+    """Aggregate training metrics for an arbitrary date range.
 
-    Args:
-        conn: Database connection.
-        week_str: ISO week string (e.g., '2026-W14').
-        config: Optional config dict for cycling load weight.
+    Shared core used by both compute_weekly_agg() (ISO week) and
+    compute_rolling_week() (rolling 7-day window).
 
-    Returns dict with all weekly_agg fields.
+    Returns dict with the same structure as a weekly_agg row (minus 'week',
+    'acwr', and 'consecutive_weeks_3plus' which are caller-specific).
     """
-    # Parse week to get date range
-    year = int(week_str[:4])
-    week_num = int(week_str.split("W")[1])
-    monday = date.fromisocalendar(year, week_num, 1)
-    sunday = monday + timedelta(days=6)
+    start_iso = start_date.isoformat()
+    end_iso = end_date.isoformat()
 
     runs = conn.execute(f"""
         SELECT distance_km, duration_min, pace_sec_per_km, avg_hr, avg_cadence,
                training_load, hr_zone, run_type
         FROM activities
         WHERE type IN {RUNNING_TYPES_SQL} AND date BETWEEN ? AND ?
-    """, (monday.isoformat(), sunday.isoformat())).fetchall()
+    """, (start_iso, end_iso)).fetchall()
 
     cross = conn.execute(f"""
         SELECT duration_min, training_load
         FROM activities
         WHERE type NOT IN {RUNNING_TYPES_SQL} AND date BETWEEN ? AND ?
-    """, (monday.isoformat(), sunday.isoformat())).fetchall()
+    """, (start_iso, end_iso)).fetchall()
 
     health = conn.execute("""
         SELECT training_readiness, sleep_duration_hours, resting_heart_rate, hrv_last_night
         FROM daily_health
         WHERE date BETWEEN ? AND ?
-    """, (monday.isoformat(), sunday.isoformat())).fetchall()
+    """, (start_iso, end_iso)).fetchall()
 
     weight = conn.execute("""
         SELECT AVG(weight_kg) as avg_weight FROM body_comp
         WHERE date BETWEEN ? AND ?
-    """, (monday.isoformat(), sunday.isoformat())).fetchone()
+    """, (start_iso, end_iso)).fetchone()
 
     # Running metrics
     run_km = sum(r["distance_km"] or 0 for r in runs)
@@ -252,11 +248,11 @@ def compute_weekly_agg(conn: sqlite3.Connection, week_str: str,
     z12_pct = ((zone_mins["Z1"] + zone_mins["Z2"]) / total_zone_time * 100) if total_zone_time > 0 else None
     z45_pct = ((zone_mins["Z4"] + zone_mins["Z5"]) / total_zone_time * 100) if total_zone_time > 0 else None
 
-    # Cycling volume (task 4.5)
+    # Cycling volume
     cycling = conn.execute("""
         SELECT SUM(distance_km) as km, SUM(duration_min) as min
         FROM activities WHERE type = 'cycling' AND date BETWEEN ? AND ?
-    """, (monday.isoformat(), sunday.isoformat())).fetchone()
+    """, (start_iso, end_iso)).fetchone()
     cycling_km = round(cycling["km"], 1) if cycling and cycling["km"] else 0.0
     cycling_min = round(cycling["min"], 1) if cycling and cycling["min"] else 0.0
 
@@ -268,15 +264,15 @@ def compute_weekly_agg(conn: sqlite3.Connection, week_str: str,
     all_loads = [r["training_load"] or 0 for r in runs] + [c["training_load"] or 0 for c in cross]
     total_load = sum(all_loads)
 
-    # Training monotony and strain (task 4.4 + 4.11)
+    # Training monotony and strain
     cycling_load_weight = 1.0
     if config:
         cycling_load_weight = config.get("analysis", {}).get("cycling_load_weight", 0.3)
 
-    # Build daily loads for each day of the week (7 days, 0 for rest days)
+    num_days = (end_date - start_date).days + 1
     daily_loads = []
-    for day_offset in range(7):
-        d = (monday + timedelta(days=day_offset)).isoformat()
+    for day_offset in range(num_days):
+        d = (start_date + timedelta(days=day_offset)).isoformat()
         day_activities = conn.execute("""
             SELECT training_load, duration_min, type FROM activities
             WHERE date = ?
@@ -293,8 +289,8 @@ def compute_weekly_agg(conn: sqlite3.Connection, week_str: str,
     n_days = len(daily_loads)
     mean_load = sum(daily_loads) / n_days if n_days > 0 else 0
     if n_days > 1:
-        variance = sum((x - mean_load) ** 2 for x in daily_loads) / (n_days - 1)
         import math
+        variance = sum((x - mean_load) ** 2 for x in daily_loads) / (n_days - 1)
         stdev_load = math.sqrt(variance) if variance > 0 else 0
     else:
         stdev_load = 0
@@ -306,17 +302,11 @@ def compute_weekly_agg(conn: sqlite3.Connection, week_str: str,
         monotony = None
         strain = None
 
-    # ACWR (this week / avg of previous 4 weeks)
-    acwr = _compute_acwr(conn, week_str, total_load)
-
     # Training days
     activity_dates = conn.execute("""
         SELECT DISTINCT date FROM activities WHERE date BETWEEN ? AND ?
-    """, (monday.isoformat(), sunday.isoformat())).fetchall()
+    """, (start_iso, end_iso)).fetchall()
     training_days = len(activity_dates)
-
-    # Consistency streak
-    streak = _compute_streak(conn, week_str, run_count)
 
     # Recovery
     readiness_vals = [h["training_readiness"] for h in health if h["training_readiness"]]
@@ -325,7 +315,6 @@ def compute_weekly_agg(conn: sqlite3.Connection, week_str: str,
     hrv_vals = [h["hrv_last_night"] for h in health if h["hrv_last_night"]]
 
     return {
-        "week": week_str,
         "run_count": run_count,
         "run_km": round(run_km, 1),
         "run_avg_pace": round(sum(paces) / len(paces)) if paces else None,
@@ -338,7 +327,6 @@ def compute_weekly_agg(conn: sqlite3.Connection, week_str: str,
         "cross_train_min": round(cross_min, 1),
         "total_load": round(total_load, 1),
         "total_activities": run_count + cross_count,
-        "acwr": acwr,
         "avg_readiness": round(sum(readiness_vals) / len(readiness_vals), 1) if readiness_vals else None,
         "avg_sleep": round(sum(sleep_vals) / len(sleep_vals), 1) if sleep_vals else None,
         "avg_rhr": round(sum(rhr_vals) / len(rhr_vals), 1) if rhr_vals else None,
@@ -352,12 +340,108 @@ def compute_weekly_agg(conn: sqlite3.Connection, week_str: str,
         "z12_pct": round(z12_pct, 1) if z12_pct is not None else None,
         "z45_pct": round(z45_pct, 1) if z45_pct is not None else None,
         "training_days": training_days,
-        "consecutive_weeks_3plus": streak,
         "monotony": monotony,
         "strain": strain,
         "cycling_km": cycling_km,
         "cycling_min": cycling_min,
     }
+
+
+def compute_weekly_agg(conn: sqlite3.Connection, week_str: str,
+                       config: dict | None = None) -> dict:
+    """Compute weekly aggregation for a given ISO week (e.g., '2026-W14').
+
+    Args:
+        conn: Database connection.
+        week_str: ISO week string (e.g., '2026-W14').
+        config: Optional config dict for cycling load weight.
+
+    Returns dict with all weekly_agg fields.
+    """
+    year = int(week_str[:4])
+    week_num = int(week_str.split("W")[1])
+    monday = date.fromisocalendar(year, week_num, 1)
+    sunday = monday + timedelta(days=6)
+
+    result = _aggregate_date_range(conn, monday, sunday, config)
+
+    # Add ISO-week-specific fields
+    result["week"] = week_str
+    result["acwr"] = _compute_acwr(conn, week_str, result["total_load"])
+    result["consecutive_weeks_3plus"] = _compute_streak(conn, week_str, result["run_count"])
+
+    return result
+
+
+def compute_rolling_week(conn: sqlite3.Connection, end_date: date | None = None,
+                         window_days: int = 7, config: dict | None = None) -> dict:
+    """Compute training metrics for a rolling date window.
+
+    Unlike compute_weekly_agg() which uses ISO week boundaries, this
+    queries raw activities for any arbitrary window. Used for "last 7 days"
+    dashboard hero card, objectives, CLI status, and alert evaluation.
+
+    Args:
+        conn: Database connection.
+        end_date: Last day of window (default: today).
+        window_days: Window size in days (default: 7).
+        config: Optional config dict for cycling load weight.
+
+    Returns dict with same structure as weekly_agg (minus week-specific fields).
+    """
+    if end_date is None:
+        end_date = date.today()
+    start_date = end_date - timedelta(days=window_days - 1)
+
+    result = _aggregate_date_range(conn, start_date, end_date, config)
+
+    # No ISO week, ACWR, or streak — callers use compute_rolling_acwr() and
+    # _compute_streak() separately when needed.
+    result["window_start"] = start_date.isoformat()
+    result["window_end"] = end_date.isoformat()
+
+    return result
+
+
+def compute_rolling_acwr(conn: sqlite3.Connection, end_date: date | None = None,
+                         config: dict | None = None) -> float | None:
+    """Compute ACWR using rolling 7-day acute load vs ISO-week chronic baseline.
+
+    Acute load: from compute_rolling_week() (last 7 days).
+    Chronic load: average of prior 4 ISO weeks from weekly_agg.
+    """
+    if end_date is None:
+        end_date = date.today()
+
+    rolling = compute_rolling_week(conn, end_date, config=config)
+    acute_load = rolling["total_load"]
+
+    # Chronic: prior 4 ISO weeks from weekly_agg
+    # Step back from end_date to find the 4 prior complete ISO weeks
+    prev_loads = []
+    ref_date = end_date - timedelta(days=7)
+    for i in range(4):
+        ref_iso = ref_date.isocalendar()
+        pw_str = f"{ref_iso[0]}-W{ref_iso[1]:02d}"
+        row = conn.execute(
+            "SELECT total_load FROM weekly_agg WHERE week = ?", (pw_str,)
+        ).fetchone()
+        if row and row["total_load"] is not None:
+            prev_loads.append(row["total_load"])
+        ref_date -= timedelta(weeks=1)
+
+    if len(prev_loads) < 3:
+        return None
+
+    chronic = sum(prev_loads) / len(prev_loads)
+    if chronic <= 0:
+        return None
+
+    acwr = round(acute_load / chronic, 2)
+    if acwr > 3.0:
+        return None
+
+    return acwr
 
 
 # ── Daniels VDOT Lookup Table ──

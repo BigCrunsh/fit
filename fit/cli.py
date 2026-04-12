@@ -801,109 +801,6 @@ def target_clear():
         conn.close()
 
 
-@main.group()
-def goal():
-    """Manage training goals."""
-    pass
-
-
-@goal.command("add")
-def goal_add():
-    """Add a new goal interactively."""
-    from rich.prompt import Prompt
-
-    from fit.goals import create_goal
-
-    conn = _conn()
-    try:
-        name = Prompt.ask("  Goal name")
-        goal_type = Prompt.ask("  Type", choices=["race", "metric", "habit"])
-        target_value = None
-        target_unit = None
-        target_time = None
-        target_date = None
-
-        if goal_type == "race":
-            target_time = Prompt.ask("  Target time (e.g., 3:59:59)", default="")
-            target_date = Prompt.ask("  Race date (YYYY-MM-DD)", default="")
-        elif goal_type == "metric":
-            target_value = float(Prompt.ask("  Target value"))
-            target_unit = Prompt.ask("  Unit (e.g., ml/kg/min, kg, weeks)")
-            target_date = Prompt.ask("  Target date (YYYY-MM-DD, enter=none)", default="") or None
-        elif goal_type == "habit":
-            target_value = float(Prompt.ask("  Target (e.g., 8 for 8 consecutive weeks)"))
-            target_unit = Prompt.ask("  Unit (e.g., consecutive_weeks)")
-
-        gid = create_goal(conn, name, goal_type, target_value=target_value, target_unit=target_unit,
-                          target_time=target_time or None, target_date=target_date or None)
-        console.print(f"  [green]✓ Goal created: {name} (id={gid})[/green]")
-    finally:
-        conn.close()
-
-
-@goal.command("list")
-def goal_list():
-    """Show all active goals with progress."""
-    conn = _conn()
-    try:
-        from rich import box as rich_box
-        from rich.panel import Panel
-        from rich.table import Table
-
-        goals = conn.execute("SELECT * FROM goals WHERE active = 1 ORDER BY id").fetchall()
-        if not goals:
-            console.print("  No active goals. Add one: [bold]fit goal add[/]")
-            return
-
-        t = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False, padding=(0, 1))
-        t.add_column("#", style="dim", justify="right")
-        t.add_column("Name")
-        t.add_column("Type", style="dim")
-        t.add_column("Current", justify="right")
-        t.add_column("Target", justify="right")
-        t.add_column("Source", style="dim")
-
-        for g in goals:
-            current = "—"
-            target_str = g["target_time"] or (f"{g['target_value']} {g['target_unit'] or ''}" if g["target_value"] else "—")
-            src = g["derivation_source"] or "manual"
-            if g["type"] == "metric" and g["target_value"]:
-                if "vo2" in g["name"].lower():
-                    cur = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
-                    current = f"{cur['vo2max']}" if cur else "—"
-                elif "weight" in g["name"].lower():
-                    cur = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
-                    current = f"{cur['weight_kg']:.1f}" if cur else "—"
-            elif g["type"] == "habit" and g["target_value"]:
-                streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
-                current = f"{streak[0] or 0}" if streak else "0"
-            t.add_row(str(g["id"]), g["name"], g["type"], current, target_str, src)
-
-        console.print(Panel(t, title="[bold]Goals[/]", border_style="blue", padding=(0, 1)))
-    finally:
-        conn.close()
-
-
-@goal.command("complete")
-@click.argument("goal_id", type=int)
-def goal_complete(goal_id: int):
-    """Mark a goal as achieved."""
-    from fit.goals import log_goal_event
-
-    conn = _conn()
-    try:
-        existing = conn.execute("SELECT id, name FROM goals WHERE id = ? AND active = 1", (goal_id,)).fetchone()
-        if not existing:
-            console.print(f"  [red]Goal {goal_id} not found or already completed.[/red]")
-            return
-        conn.execute("UPDATE goals SET active = 0 WHERE id = ?", (goal_id,))
-        log_goal_event(conn, goal_id, None, "goal_completed", "Goal marked as achieved")
-        conn.commit()
-        console.print(f"  [green]✓ Goal {goal_id} ({existing['name']}) completed[/green]")
-    finally:
-        conn.close()
-
-
 @main.group(invoke_without_command=True)
 @click.pass_context
 def plan(ctx):
@@ -1067,6 +964,27 @@ def plan_show(ctx, days: int, upcoming: int):
         conn.close()
 
 
+@plan.command("sync")
+def plan_sync_cmd():
+    """Sync planned workouts from Garmin Calendar (Runna)."""
+    from fit.garmin import connect
+    from fit.plan import sync_planned_workouts, update_plan_statuses
+
+    from fit.config import get_config
+    config = get_config()
+    conn = _conn()
+    try:
+        api = connect(config["sync"]["garmin_token_dir"])
+        count = sync_planned_workouts(api, conn)
+        update_plan_statuses(conn)
+        if count:
+            console.print(f"  [green]✓ Synced {count} workouts from Garmin Calendar[/green]")
+        else:
+            console.print("  [dim]No new workouts found in Garmin Calendar[/dim]")
+    finally:
+        conn.close()
+
+
 @plan.command("import")
 @click.argument("file", type=click.Path(exists=True))
 def plan_import(file):
@@ -1188,6 +1106,27 @@ def doctor():
             t.add_row("[green]✓[/]", "Correlations", f"{corr_count} computed")
         except Exception:
             t.add_row("[dim]—[/]", "Correlations", "not yet computed")
+
+        # Splits coverage
+        try:
+            total_runs = conn.execute(
+                "SELECT COUNT(*) FROM activities WHERE type IN ('running','trail_running','treadmill_running')"
+            ).fetchone()[0]
+            with_splits = conn.execute(
+                "SELECT COUNT(*) FROM activities WHERE type IN ('running','trail_running','treadmill_running') AND splits_status = 'done'"
+            ).fetchone()[0]
+            if total_runs == 0:
+                t.add_row("[dim]—[/]", "Splits", "no running activities")
+            elif with_splits == total_runs:
+                t.add_row("[green]✓[/]", "Splits", f"{with_splits}/{total_runs} runs")
+            elif with_splits == 0:
+                t.add_row("[yellow]⚠[/]", "Splits", f"0/{total_runs} runs — run fit sync to fetch")
+                issues += 1
+            else:
+                t.add_row("[yellow]⚠[/]", "Splits", f"{with_splits}/{total_runs} runs — run fit sync --full for backfill")
+                issues += 1
+        except Exception:
+            t.add_row("[dim]—[/]", "Splits", "table missing")
 
         status_str = "[green]healthy[/]" if issues == 0 else f"[yellow]{issues} issue(s)[/]"
         console.print(Panel(t, title=f"[bold]Doctor[/] {status_str}", border_style="blue" if issues == 0 else "yellow", padding=(0, 1)))
@@ -1355,16 +1294,18 @@ def status():
             t.add_row("HRV", f"{h['hrv_last_night'] or '—'} ms", "")
             t.add_row("Sleep", f"{h['sleep_duration_hours']:.1f}h" if h["sleep_duration_hours"] else "—", "")
 
-        # ACWR + monotony
-        agg_row = conn.execute("SELECT acwr, monotony, strain FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
-        if agg_row and agg_row["acwr"]:
-            v = agg_row["acwr"]
-            safety = "[green]safe[/]" if 0.8 <= v <= 1.3 else "[yellow]caution[/]" if v <= 1.5 else "[red]DANGER[/]"
-            t.add_row("ACWR", f"{v:.2f}", safety)
-        if agg_row and agg_row["monotony"]:
-            m = agg_row["monotony"]
+        # ACWR + monotony — rolling 7-day window
+        from fit.analysis import compute_rolling_acwr, compute_rolling_week
+        rolling = compute_rolling_week(conn)
+        rolling_acwr = compute_rolling_acwr(conn)
+        if rolling_acwr is not None:
+            safety = "[green]safe[/]" if 0.8 <= rolling_acwr <= 1.3 else "[yellow]caution[/]" if rolling_acwr <= 1.5 else "[red]DANGER[/]"
+            t.add_row("ACWR", f"{rolling_acwr:.2f}", safety)
+        if rolling and rolling["monotony"]:
+            m = rolling["monotony"]
             m_status = "[red]high[/]" if m > 2.0 else "[yellow]moderate[/]" if m > 1.5 else ""
             t.add_row("Monotony", f"{m:.1f}", m_status)
+        t.add_row("Last 7 days", f"{rolling['run_km']}km / {rolling['run_count']} runs", "")
 
         # Streak
         streak_row = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()

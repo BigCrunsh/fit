@@ -12,6 +12,7 @@ from fit.narratives import (
     generate_trend_badges,
     generate_why_connectors,
     generate_wow_context,
+    generate_wow_sentence,
     generate_z2_remediation,
 )
 
@@ -296,6 +297,69 @@ class TestWoWContext:
         result = generate_wow_context(db)
         assert result is not None
         assert result["phase_warning"] is None
+
+
+# ── WoW Sentence (Rolling) ──
+
+
+class TestWoWSentence:
+    def test_rolling_input_produces_deltas(self, db):
+        """Rolling 7d dicts passed directly produce correct volume delta."""
+        current = {"run_km": 30, "run_count": 4, "z12_pct": 85}
+        previous = {"run_km": 20, "run_count": 3, "z12_pct": 80}
+        result = generate_wow_sentence(db, current=current, previous=previous)
+        assert result is not None
+        assert "Volume up 50%" in result
+        assert "30km from 20km" in result
+        assert "4 runs" in result
+
+    def test_rolling_input_volume_down(self, db):
+        """Volume decrease is reported correctly."""
+        current = {"run_km": 10, "run_count": 2, "z12_pct": 90}
+        previous = {"run_km": 25, "run_count": 4, "z12_pct": 85}
+        result = generate_wow_sentence(db, current=current, previous=previous)
+        assert "Volume down 60%" in result
+        assert "10km from 25km" in result
+
+    def test_rolling_input_zone_compliance_flip(self, db):
+        """Zone compliance flipping from low to high produces special message."""
+        current = {"run_km": 20, "run_count": 3, "z12_pct": 85}
+        previous = {"run_km": 20, "run_count": 3, "z12_pct": 40}
+        result = generate_wow_sentence(db, current=current, previous=previous)
+        assert "first truly easy week" in result
+
+    def test_no_previous_runs(self, db):
+        """Zero previous volume is handled gracefully."""
+        current = {"run_km": 15, "run_count": 2, "z12_pct": 80}
+        previous = {"run_km": 0, "run_count": 0, "z12_pct": None}
+        result = generate_wow_sentence(db, current=current, previous=previous)
+        assert "15km" in result
+        assert "no runs last period" in result
+
+    def test_fallback_to_weekly_agg(self, db):
+        """Without rolling input, falls back to weekly_agg."""
+        result = generate_wow_sentence(db)
+        assert result is None  # no weekly_agg data
+
+    def test_fallback_with_weekly_data(self, db):
+        """Falls back to weekly_agg when no rolling dicts provided."""
+        today = date.today()
+        iso_this = today.isocalendar()
+        iso_last = (today - timedelta(weeks=1)).isocalendar()
+        db.execute(
+            "INSERT INTO weekly_agg (week, run_count, run_km, z12_pct, acwr) "
+            "VALUES (?, 4, 30, 85, 1.1)",
+            (f"{iso_this.year}-W{iso_this.week:02d}",),
+        )
+        db.execute(
+            "INSERT INTO weekly_agg (week, run_count, run_km, z12_pct, acwr) "
+            "VALUES (?, 3, 25, 80, 1.0)",
+            (f"{iso_last.year}-W{iso_last.week:02d}",),
+        )
+        db.commit()
+        result = generate_wow_sentence(db)
+        assert result is not None
+        assert "Volume up" in result
 
 
 # ── Race Countdown ──

@@ -187,7 +187,7 @@ def get_table_details(table_name: str) -> str:
 
 @mcp.tool()
 def check_dashboard_freshness() -> str:
-    """Check if the dashboard and coaching notes are up to date with the latest sync."""
+    """Check if the dashboard and coaching notes are up to date. Coaching uses 7-day cadence."""
     conn = _get_conn()
     try:
         last_sync = conn.execute("SELECT MAX(date) FROM daily_health").fetchone()[0]
@@ -204,19 +204,34 @@ def check_dashboard_freshness() -> str:
             from datetime import datetime
             report_date = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
 
-        # Check coaching file
+        # Check coaching file — 7-day staleness, not sync-based
         coaching_date = None
+        coaching_stale = False
         if coaching_path.exists():
             import json as _json
+            from datetime import date as _date
             data = _json.loads(coaching_path.read_text())
-            coaching_date = data.get("generated_at", "unknown")
+            coaching_date = data.get("report_date", data.get("generated_at", "unknown"))
+            try:
+                coaching_dt = _date.fromisoformat(coaching_date[:10])
+                coaching_age_days = (_date.today() - coaching_dt).days
+                coaching_stale = coaching_age_days > 7
+            except (ValueError, TypeError):
+                coaching_stale = True
+                coaching_age_days = None
+
+        stale_msg = ""
+        if coaching_stale and coaching_date:
+            stale_msg = f" (STALE — {coaching_age_days}d old, weekly review recommended)"
+        elif coaching_date:
+            stale_msg = f" (fresh — {coaching_age_days}d old)"
 
         return (
             f"Dashboard Freshness:\n"
             f"  Last health sync: {last_sync or 'never'}\n"
             f"  Last activity sync: {last_activity or 'never'}\n"
             f"  Dashboard report: {report_date or 'not generated'}\n"
-            f"  Coaching notes: {coaching_date or 'not generated'}"
+            f"  Coaching notes: {coaching_date or 'not generated'}{stale_msg}"
         )
     finally:
         conn.close()
@@ -251,7 +266,6 @@ def _ctx_health(conn) -> list[str]:
     """Recent health metrics, ACWR, today's activity."""
     s = []
     # Today's completed activity (so coaching knows what was already done)
-    from datetime import date as _date
     today_runs = conn.execute(f"""
         SELECT name, distance_km, duration_min, avg_hr, hr_zone, run_type, pace_sec_per_km
         FROM activities
@@ -264,24 +278,17 @@ def _ctx_health(conn) -> list[str]:
     else:
         s.append("No run today (yet)")
 
+    # Rolling 7-day ACWR — no partial-week issues
+    from fit.analysis import compute_rolling_acwr, compute_rolling_week
     acwr_safe = config.get("analysis", {}).get("acwr_safe_range", [0.8, 1.3])
     acwr_danger = config.get("analysis", {}).get("acwr_danger_threshold", 1.5)
-    acwr_row = conn.execute("SELECT week, acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
-    if acwr_row:
-        acwr = acwr_row["acwr"]
-        safety = "SAFE" if acwr_safe[0] <= acwr <= acwr_safe[1] else "CAUTION" if acwr <= acwr_danger else "DANGER"
-        # Flag if current week is partial (ACWR is misleadingly low early in the week)
-        from datetime import date as _date
-        iso = _date.today().isocalendar()
-        current_week = f"{iso.year}-W{iso.week:02d}"
-        if acwr_row["week"] == current_week and iso.weekday < 5:
-            s.append(f"ACWR: {acwr} ({safety}) — NOTE: week is only {iso.weekday}/7 days old, ACWR will rise as more runs are added")
-        else:
-            s.append(f"ACWR: {acwr} ({safety})")
-    # Also show last completed week's ACWR for reference
-    acwr_prev = conn.execute("SELECT week, acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1 OFFSET 1").fetchone()
-    if acwr_prev:
-        s.append(f"ACWR last completed week ({acwr_prev['week']}): {acwr_prev['acwr']}")
+    rolling_acwr = compute_rolling_acwr(conn)
+    if rolling_acwr is not None:
+        safety = "SAFE" if acwr_safe[0] <= rolling_acwr <= acwr_safe[1] else "CAUTION" if rolling_acwr <= acwr_danger else "DANGER"
+        s.append(f"ACWR: {rolling_acwr:.2f} ({safety}) [rolling 7-day]")
+    rolling = compute_rolling_week(conn)
+    if rolling:
+        s.append(f"Last 7 days: {rolling['run_km']:.0f}km / {rolling['run_count']} runs")
     health = conn.execute("""
         SELECT ROUND(AVG(resting_heart_rate), 1) as rhr, ROUND(AVG(sleep_duration_hours), 1) as sleep,
                ROUND(AVG(hrv_last_night), 1) as hrv, ROUND(AVG(training_readiness), 0) as readiness

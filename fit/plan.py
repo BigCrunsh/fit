@@ -21,6 +21,15 @@ RUNNA_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Lenient pattern for activity titles (truncated, city-prefixed):
+# "Berlin - W 1 So. Tempo - Fortlaufende 400"
+# Doesn't require the "(X km)" suffix.
+RUNNA_ACTIVITY_PATTERN = re.compile(
+    r"W\s*(\d+)\s+(Mo|Di|Mi|Do|Fr|Sa|So)\.\s*"
+    r"(Dauerlauf|Tempo|Intervalle|Langer Lauf|Erholung|Steigerungslauf)",
+    re.IGNORECASE,
+)
+
 WORKOUT_TYPE_MAP = {
     "dauerlauf": "easy",
     "tempo": "tempo",
@@ -57,9 +66,10 @@ def sync_planned_workouts(api, conn, months=2):
         for month_offset in range(-1, months):
             target = _month_offset(today, month_offset)
             try:
+                # Garmin Calendar API uses 0-indexed months (0=Jan, 3=Apr)
                 items = api.garth.connectapi(
                     f"/calendar-service/year/{target.year}"
-                    f"/month/{target.month}"
+                    f"/month/{target.month - 1}"
                 )
             except Exception as e:
                 logger.debug(
@@ -78,6 +88,14 @@ def sync_planned_workouts(api, conn, months=2):
             for item in items:
                 if item.get("itemType") == "workout":
                     workout = _parse_calendar_item(item)
+                    if workout:
+                        all_workouts.append(workout)
+                elif item.get("itemType") == "activity":
+                    # Completed planned workouts flip from "workout" to
+                    # "activity" in Garmin. Titles are truncated and may
+                    # have a city prefix ("Berlin - W 1 ..."). Try to
+                    # extract the Runna plan info.
+                    workout = _parse_activity_as_plan(item)
                     if workout:
                         all_workouts.append(workout)
 
@@ -199,6 +217,38 @@ def _parse_calendar_item(item):
         workout["workout_type"] = _guess_workout_type(name)
 
     return workout
+
+
+def _parse_activity_as_plan(item):
+    """Extract plan info from a completed activity calendar item.
+
+    Activity titles are truncated and city-prefixed:
+    "Berlin - W 1 So. Tempo - Fortlaufende 400"
+    Uses RUNNA_ACTIVITY_PATTERN (search, not match) to find the plan info
+    within the title. Distance comes from the activity, not the title.
+    """
+    title = item.get("title") or ""
+    match = RUNNA_ACTIVITY_PATTERN.search(title)
+    if not match:
+        return None
+
+    workout_type = WORKOUT_TYPE_MAP.get(match.group(3).lower(), "other")
+
+    # Try to extract distance from title suffix "(X km)" if present
+    dist_match = re.search(r"\((\d+[.,]?\d*)\s*km\)", title)
+    target_km = float(dist_match.group(1).replace(",", ".")) if dist_match else None
+
+    return {
+        "date": (item.get("date") or "")[:10],
+        "workout_name": title,
+        "garmin_workout_id": str(
+            item.get("workoutId") or item.get("id") or ""
+        ),
+        "plan_week": int(match.group(1)),
+        "plan_day": match.group(2),
+        "workout_type": workout_type,
+        "target_distance_km": target_km,
+    }
 
 
 def _guess_workout_type(name):

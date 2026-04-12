@@ -245,34 +245,50 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     except Exception as e:
         logger.debug("Alerts skipped: %s", e)
 
-    # 9. Download .fit files and compute splits (if enabled)
-    should_download_splits = download_splits or config.get("sync", {}).get("download_fit_files", False)
-    if should_download_splits:
-        try:
-            import time as _time
-            from fit.fit_file import process_splits_for_activity
+    # 9. Fetch per-km splits from Garmin API for running activities
+    try:
+        running_ids = [a["id"] for a in activities
+                       if a.get("type") in ("running", "track_running", "trail_running", "treadmill_running")]
+        to_process = []
+        for aid in running_ids:
+            row = conn.execute(
+                "SELECT splits_status FROM activities WHERE id = ?", (aid,)
+            ).fetchone()
+            if not row or row["splits_status"] != "done":
+                to_process.append(aid)
 
-            max_downloads = config.get("sync", {}).get("max_fit_downloads", 20)
-            running_ids = [a["id"] for a in activities if a.get("type") == "running"]
-            # Only process activities without splits yet
-            to_process = []
-            for aid in running_ids:
-                row = conn.execute(
-                    "SELECT splits_status FROM activities WHERE id = ?", (aid,)
-                ).fetchone()
-                if not row or row["splits_status"] != "done":
-                    to_process.append(aid)
-            to_process = to_process[:max_downloads]
-
-            splits_count = 0
-            for i, aid in enumerate(to_process):
-                n = process_splits_for_activity(conn, api, aid, config)
-                splits_count += (1 if n > 0 else 0)
-                if i < len(to_process) - 1:
-                    _time.sleep(2)  # Rate control
+        splits_count = 0
+        for aid in to_process:
+            splits = garmin.fetch_activity_splits(api, aid)
+            if splits:
+                _upsert_splits(conn, aid, splits)
+                splits_count += 1
+        if splits_count:
             counts["splits"] = splits_count
+    except Exception as e:
+        logger.debug("Splits fetch skipped: %s", e)
+
+    # 9b. Backfill splits for older activities (if --splits or config enabled)
+    should_backfill = download_splits or config.get("sync", {}).get("download_fit_files", False)
+    if should_backfill:
+        try:
+            max_backfill = config.get("sync", {}).get("max_fit_downloads", 20)
+            all_running = conn.execute(f"""
+                SELECT id FROM activities
+                WHERE type IN {RUNNING_TYPES_SQL}
+                  AND (splits_status IS NULL OR splits_status != 'done')
+                ORDER BY date DESC LIMIT ?
+            """, (max_backfill,)).fetchall()
+            backfill_count = 0
+            for row in all_running:
+                splits = garmin.fetch_activity_splits(api, row["id"])
+                if splits:
+                    _upsert_splits(conn, row["id"], splits)
+                    backfill_count += 1
+            if backfill_count:
+                counts["splits_backfill"] = backfill_count
         except Exception as e:
-            logger.debug("Splits processing skipped: %s", e)
+            logger.debug("Splits backfill skipped: %s", e)
 
     if warnings:
         counts["warnings"] = warnings
@@ -606,6 +622,36 @@ def _get_affected_weeks(activities: list[dict], start: date, end: date) -> set[s
         weeks.add(f"{iso.year}-W{iso.week:02d}")
         current += timedelta(days=1)
     return weeks
+
+
+def _upsert_splits(conn: sqlite3.Connection, activity_id: str, splits: list[dict]) -> None:
+    """Upsert per-km splits from the Garmin API and mark the activity as done."""
+    for s in splits:
+        conn.execute("""
+            INSERT INTO activity_splits
+                (activity_id, split_num, distance_km, time_sec, pace_sec_per_km,
+                 avg_hr, max_hr, avg_cadence, elevation_gain_m, elevation_loss_m,
+                 avg_speed_m_s, intensity_type, wkt_step_index)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(activity_id, split_num) DO UPDATE SET
+                pace_sec_per_km = excluded.pace_sec_per_km,
+                avg_hr = excluded.avg_hr,
+                max_hr = excluded.max_hr,
+                avg_cadence = excluded.avg_cadence,
+                elevation_gain_m = excluded.elevation_gain_m,
+                elevation_loss_m = excluded.elevation_loss_m,
+                avg_speed_m_s = excluded.avg_speed_m_s,
+                intensity_type = excluded.intensity_type,
+                wkt_step_index = excluded.wkt_step_index
+        """, (activity_id, s["split_num"], s["distance_km"], s["time_sec"],
+              s["pace_sec_per_km"], s.get("avg_hr"), s.get("max_hr"),
+              s.get("avg_cadence"), s.get("elevation_gain_m"),
+              s.get("elevation_loss_m"), s.get("avg_speed_m_s"),
+              s.get("intensity_type"), s.get("wkt_step_index")))
+    conn.execute(
+        "UPDATE activities SET splits_status = 'done' WHERE id = ?", (activity_id,)
+    )
+    conn.commit()
 
 
 def _upsert_weather(conn: sqlite3.Connection, w: dict) -> None:

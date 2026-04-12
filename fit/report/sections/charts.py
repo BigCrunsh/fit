@@ -15,48 +15,78 @@ logger = logging.getLogger(__name__)
 def _all_charts(conn):
     charts = []
 
-    # Volume (Training tab)
+    # Volume (Training tab) — 12 weeks default, phase target as shaded band, rolling current bar
+    from fit.analysis import compute_rolling_week
     weeks = conn.execute("SELECT week, run_km, longest_run_km FROM weekly_agg WHERE run_km > 0 ORDER BY week").fetchall()
+    # Limit to last 12 weeks
+    if len(weeks) > 12:
+        weeks = weeks[-12:]
     if weeks:
-        # Get phase volume target for annotation
+        def _week_end_label(w):
+            try:
+                from datetime import datetime
+                return datetime.strptime(
+                    w + "-7", "%G-W%V-%u"
+                ).strftime("%b %-d")
+            except Exception:
+                return w
+        labels = [_week_end_label(w["week"]) for w in weeks]
+        data = [w["run_km"] for w in weeks]
+        bg_colors = ["rgba(56,189,248,0.5)"] * len(weeks)
+
+        # Add rolling 7-day bar as "current" if current ISO week isn't in the data
+        rolling = compute_rolling_week(conn)
+        today = date.today()
+        iso = today.isocalendar()
+        current_week = f"{iso[0]}-W{iso[1]:02d}"
+        if current_week not in labels and rolling["run_km"] > 0:
+            labels.append("Last 7d")
+            data.append(rolling["run_km"])
+            bg_colors.append("rgba(56,189,248,0.8)")  # brighter for rolling
+
+        # Phase target as shaded band (box annotation, 40+ hex opacity)
         phase_vol = conn.execute("SELECT weekly_km_min, weekly_km_max FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
         vol_annots = {}
         if phase_vol and phase_vol["weekly_km_min"]:
-            vol_annots["target_lo"] = {"type": "line", "yMin": phase_vol["weekly_km_min"], "yMax": phase_vol["weekly_km_min"],
-                                       "borderColor": SAFE + "30", "borderDash": [4, 4], "borderWidth": 1}
-            vol_annots["target_hi"] = {"type": "line", "yMin": phase_vol["weekly_km_max"], "yMax": phase_vol["weekly_km_max"],
-                                       "borderColor": SAFE + "30", "borderDash": [4, 4], "borderWidth": 1,
-                                       "label": {"content": f"target {phase_vol['weekly_km_min']}-{phase_vol['weekly_km_max']}km",
-                                                 "display": True, "position": "end", "font": {"size": 7}, "color": SAFE + "60"}}
+            vol_annots["target_band"] = {
+                "type": "box",
+                "yMin": phase_vol["weekly_km_min"],
+                "yMax": phase_vol["weekly_km_max"],
+                "backgroundColor": SAFE + "40",
+                "borderWidth": 0,
+                "label": {
+                    "content": f"target {phase_vol['weekly_km_min']:.0f}-{phase_vol['weekly_km_max']:.0f}km",
+                    "display": True, "position": {"x": "end", "y": "start"},
+                    "font": {"size": 8}, "color": SAFE + "90",
+                },
+            }
+
+        # Gap annotations: shaded regions for training breaks >14 days
+        from fit.narratives import generate_volume_story
+        vol_story = generate_volume_story(conn)
+        if vol_story and vol_story.get("gaps"):
+            for i, gap in enumerate(vol_story["gaps"]):
+                # Find labels that bracket this gap
+                vol_annots[f"gap_{i}"] = {
+                    "type": "box",
+                    "xMin": gap["start"][:10],
+                    "xMax": gap["end"][:10],
+                    "backgroundColor": "rgba(255,255,255,0.05)",
+                    "borderWidth": 0,
+                    "label": {
+                        "content": f"{gap['days']}d break",
+                        "display": True, "position": "center",
+                        "font": {"size": 7}, "color": "rgba(255,255,255,0.3)",
+                    },
+                }
+
         charts.append({"id": "chart-volume", "config": json.dumps({
             "type": "bar",
-            "data": {"labels": [w["week"] for w in weeks],
-                     "datasets": [{"label": "km/week", "data": [w["run_km"] for w in weeks],
-                                   "backgroundColor": "rgba(56,189,248,0.5)", "borderRadius": 4}]},
+            "data": {"labels": labels,
+                     "datasets": [{"label": "km/week", "data": data,
+                                   "backgroundColor": bg_colors, "borderRadius": 4}]},
             "options": {"responsive": True, "plugins": {"legend": {"display": False},
                                                          "annotation": {"annotations": vol_annots} if vol_annots else {}},
-                        "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
-                                   "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
-        })})
-
-    # Load (Training tab)
-    runs = conn.execute(f"SELECT date, training_load FROM activities WHERE type IN {RUNNING_TYPES_SQL} AND training_load IS NOT NULL ORDER BY date").fetchall()
-    if runs:
-        colors = [Z2 + "99" if (r["training_load"] or 0) < 150 else Z3 + "99" if r["training_load"] < 250 else Z4 + "99" if r["training_load"] < 350 else DANGER + "99" for r in runs]
-        charts.append({"id": "chart-load", "config": json.dumps({
-            "type": "bar",
-            "data": {"labels": [r["date"] for r in runs],
-                     "datasets": [{"label": "Load", "data": [r["training_load"] for r in runs],
-                                   "backgroundColor": colors, "borderRadius": 3}]},
-            "options": {"responsive": True, "plugins": {"legend": {"display": False},
-                        "annotation": {"annotations": {
-                            "easy": {"type": "line", "yMin": 150, "yMax": 150,
-                                     "borderColor": SAFE + "25", "borderDash": [4, 4], "borderWidth": 1,
-                                     "label": {"content": "easy <150", "display": True, "position": "start", "font": {"size": 7}, "color": SAFE + "50"}},
-                            "hard": {"type": "line", "yMin": 350, "yMax": 350,
-                                     "borderColor": DANGER + "25", "borderDash": [4, 4], "borderWidth": 1,
-                                     "label": {"content": "overload >350", "display": True, "position": "end", "font": {"size": 7}, "color": DANGER + "50"}},
-                        }}},
                         "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
@@ -744,12 +774,12 @@ def _all_charts(conn):
         # Distinct colors: blue family for easy, warm for hard, purple for race
         # Long runs are aerobic base — same blue family as easy/recovery
         type_colors = {
-            "easy": "#60a5fa",         # blue-400
-            "recovery": "#93c5fd80",   # blue-300 faded
-            "long": "#3b82f6",         # blue-500 (darker blue — distinct but same family)
-            "tempo": "#fbbf24",        # amber
-            "intervals": "#f97316",    # orange
-            "race": "#c084fc",         # purple
+            "easy": Z2,               # blue-400
+            "recovery": Z1 + "80",    # blue-300 faded
+            "long": "#3b82f6",        # blue-500 (darker — distinct but same family)
+            "tempo": Z3,              # warm yellow
+            "intervals": Z4,          # orange
+            "race": ACCENT,           # purple
         }
         datasets = []
         for t in type_names:

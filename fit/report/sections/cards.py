@@ -343,9 +343,18 @@ def _coaching(conn):
     if not coaching_path.exists():
         return None
 
+    from datetime import timedelta
     data = json.loads(coaching_path.read_text())
-    last_sync = conn.execute("SELECT MAX(date) FROM daily_health").fetchone()[0]
-    stale = data.get("report_date", "") < last_sync if last_sync else False
+    # Stale = coaching notes older than 7 days (weekly cadence, not sync-based)
+    report_date_str = data.get("report_date", "")
+    if report_date_str:
+        try:
+            report_dt = date.fromisoformat(report_date_str)
+            stale = report_dt < (date.today() - timedelta(days=7))
+        except ValueError:
+            stale = True
+    else:
+        stale = True
 
     styles = {
         "critical": {"bg": "rgba(239,68,68,0.06)", "border": "rgba(239,68,68,0.15)", "color": DANGER, "icon": "🚨"},
@@ -1003,16 +1012,16 @@ def _next_workouts(conn):
             date_label = d.strftime("%a %b %-d")
             # Clean up workout name (strip "W N Day. " prefix)
             name = r["workout_name"] or r["workout_type"] or "Run"
-            for prefix in ["W ", "Wo "]:
-                if name.startswith(prefix):
-                    # Strip "W 1 Fr. " style prefix
-                    parts = name.split(". ", 1)
-                    if len(parts) > 1:
-                        name = parts[1]
-                    break
-            # Truncate long names
+            # Strip Garmin/Runna prefixes like "Berlin - W 1 So. " or "W 1 Fr. "
+            import re
+            prefix_match = re.match(r'^(?:.*?W\s*\d+\s*\w+\.\s*)', name)
+            if prefix_match:
+                name = name[prefix_match.end():]
+            # Also strip redundant distance suffix if present e.g. "(7,5 km)"
+            name = re.sub(r'\s*\(\d+[,.]?\d*\s*km\)\s*$', '', name)
+            # Truncate long names at word boundary
             if len(name) > 40:
-                name = name[:37] + "..."
+                name = name[:37].rsplit(' ', 1)[0] + "..."
             result.append({
                 "name": name,
                 "type": r["workout_type"] or "easy",
@@ -1718,6 +1727,844 @@ def _body_comp_data(conn):
     except Exception as e:
         logger.debug("body_comp_data failed: %s", e)
         return None
+
+
+def _weekly_plan_adherence(conn):
+    """Plan adherence for last 4 ISO weeks.
+
+    Returns list of week dicts, each with:
+        week: ISO week string
+        compliance_pct: matched / total_planned * 100
+        completed: number matched
+        planned: total planned
+        missed: count of missed workouts
+        color: green/amber/red based on thresholds
+    """
+    from datetime import timedelta
+    from fit.plan import compute_plan_adherence
+
+    today = date.today()
+    result = []
+
+    for offset in range(4):
+        ref = today - timedelta(weeks=offset)
+        ref_iso = ref.isocalendar()
+        week_str = f"{ref_iso[0]}-W{ref_iso[1]:02d}"
+        is_current = (offset == 0)
+        try:
+            adherence = compute_plan_adherence(conn, week_str=week_str)
+            if not adherence or not adherence.get("planned"):
+                continue
+            pct = adherence.get("weekly_compliance_pct", 0) or 0
+            planned_count = len(adherence["planned"])
+            matched_count = len(adherence.get("matches", []))
+            missed_count = len(adherence.get("missed", []))
+
+            if pct >= 70:
+                color = "green"
+            elif pct >= 50:
+                color = "amber"
+            else:
+                color = "red"
+
+            label = "Current" if is_current else week_str
+            result.append({
+                "week": label,
+                "compliance_pct": round(pct),
+                "completed": matched_count,
+                "planned": planned_count,
+                "missed": missed_count,
+                "color": color,
+            })
+        except Exception:
+            continue
+
+    return result
+
+
+def _last_7_days_runs(conn):
+    """Per-run detail cards for the last 7 days.
+
+    Returns list of run dicts, each with:
+        date, name, run_type, distance_km, duration_min, pace, avg_hr, hr_zone,
+        effort_class, training_load, plan_comparison, splits, adaptation_signals, srpe
+    """
+    from datetime import timedelta
+    from fit.analysis import compute_hr_zones
+    from fit.calibration import get_active_calibration
+    from fit.config import get_config
+
+    today = date.today()
+    window_start = (today - timedelta(days=6)).isoformat()
+
+    config = get_config()
+    lthr_cal = get_active_calibration(conn, "lthr")
+    lthr = int(lthr_cal["value"]) if lthr_cal else None
+
+    runs = conn.execute(f"""
+        SELECT id, date, name, run_type, distance_km, duration_min,
+               pace_sec_per_km, avg_hr, hr_zone, effort_class, training_load,
+               srpe, splits_status
+        FROM activities
+        WHERE type IN {RUNNING_TYPES_SQL} AND date BETWEEN ? AND ?
+        ORDER BY date DESC
+    """, (window_start, today.isoformat())).fetchall()
+
+    result = []
+    for r in runs:
+        run = {
+            "date": r["date"],
+            "name": _clean_run_name(r["name"]) if r["name"] else "Run",
+            "run_type": r["run_type"] or "",
+            "distance_km": round(r["distance_km"], 1) if r["distance_km"] else 0,
+            "duration_min": round(r["duration_min"], 1) if r["duration_min"] else 0,
+            "pace": _format_pace(r["pace_sec_per_km"]),
+            "avg_hr": r["avg_hr"],
+            "hr_zone": r["hr_zone"] or "",
+            "effort_class": r["effort_class"] or "",
+            "training_load": round(r["training_load"]) if r["training_load"] else None,
+            "plan_comparison": None,
+            "splits": [],
+            "adaptation_signals": None,
+            "srpe": None,
+        }
+
+        # Plan comparison (task 5.2)
+        planned = conn.execute("""
+            SELECT workout_name, workout_type, target_distance_km
+            FROM planned_workouts WHERE date = ? AND status != 'skipped'
+            LIMIT 1
+        """, (r["date"],)).fetchone()
+        if planned:
+            plan_type = planned["workout_type"] or ""
+            # Pacing verdict: if plan says easy but HR is Z3+, flag "too fast"
+            verdict = "on target"
+            if plan_type in ("easy", "recovery") and r["hr_zone"] in ("Z3", "Z4", "Z5"):
+                verdict = "too fast"
+            elif plan_type in ("tempo", "intervals") and r["hr_zone"] in ("Z1", "Z2"):
+                verdict = "too slow"
+            run["plan_comparison"] = {
+                "planned_name": planned["workout_name"],
+                "planned_type": plan_type,
+                "target_km": planned["target_distance_km"],
+                "verdict": verdict,
+            }
+        else:
+            # Check if any plan exists at all to distinguish "unplanned" from "no plan loaded"
+            has_any_plan = conn.execute(
+                "SELECT 1 FROM planned_workouts LIMIT 1"
+            ).fetchone()
+            if has_any_plan:
+                run["plan_comparison"] = {
+                    "planned_name": "Unplanned run",
+                    "planned_type": "",
+                    "target_km": None,
+                    "verdict": "unplanned",
+                }
+
+        # Splits (task 5.3)
+        if r["splits_status"] == "done":
+            splits = conn.execute("""
+                SELECT split_num, distance_km, time_sec, pace_sec_per_km,
+                       avg_hr, avg_cadence, elevation_gain_m,
+                       intensity_type, wkt_step_index
+                FROM activity_splits WHERE activity_id = ? ORDER BY split_num
+            """, (r["id"],)).fetchall()
+            run["splits"] = [
+                {
+                    "km": s["split_num"],
+                    "distance_km": s["distance_km"],
+                    "time_sec": s["time_sec"],
+                    "pace": _format_pace(s["pace_sec_per_km"]),
+                    "pace_secs": s["pace_sec_per_km"],
+                    "hr": s["avg_hr"],
+                    "cadence": s["avg_cadence"],
+                    "elevation": s["elevation_gain_m"],
+                    "zone": compute_hr_zones(
+                        int(s["avg_hr"]) if s["avg_hr"] else None,
+                        config, lthr=lthr,
+                    )["hr_zone"] or "",
+                    "intensity_type": s["intensity_type"],
+                    "wkt_step_index": s["wkt_step_index"],
+                }
+                for s in splits
+            ]
+
+            # Cardiac drift from splits
+            try:
+                from fit.fit_file import compute_cardiac_drift
+                split_dicts = [dict(s) for s in splits]
+                drift = compute_cardiac_drift(split_dicts)
+                if drift and drift["status"] == "detected":
+                    run["cardiac_drift"] = {
+                        "pct": round(drift["drift_pct"], 1),
+                        "onset_km": drift["drift_onset_km"],
+                    }
+            except Exception:
+                pass
+
+        # sRPE context (task 5.6)
+        if r["srpe"]:
+            # Compare sRPE to training_load
+            if r["training_load"] and r["training_load"] > 0:
+                ratio = r["srpe"] / r["training_load"]
+                if ratio > 1.3:
+                    feel = "felt harder than HR suggests"
+                elif ratio < 0.7:
+                    feel = "felt easier than HR suggests"
+                else:
+                    feel = None
+            else:
+                feel = None
+            run["srpe"] = {"value": round(r["srpe"], 1), "feel": feel}
+
+        result.append(run)
+
+    # Adaptation signals (task 5.5): 4-week rolling avg pace by run_type
+    for run in result:
+        if not run["run_type"]:
+            continue
+        try:
+            avg_row = conn.execute(f"""
+                SELECT AVG(pace_sec_per_km) as avg_pace, AVG(speed_per_bpm) as avg_spb,
+                       COUNT(*) as n
+                FROM activities
+                WHERE type IN {RUNNING_TYPES_SQL} AND run_type = ?
+                AND date BETWEEN date(?, '-28 days') AND date(?, '-1 day')
+            """, (run["run_type"], run["date"], run["date"])).fetchone()
+            if avg_row and avg_row["n"] and avg_row["n"] >= 2:
+                signals = {}
+                raw = conn.execute(
+                    "SELECT pace_sec_per_km, speed_per_bpm FROM activities WHERE date = ? AND type IN {types} LIMIT 1".format(types=RUNNING_TYPES_SQL),
+                    (run["date"],),
+                ).fetchone()
+                if avg_row["avg_pace"] and raw and raw["pace_sec_per_km"]:
+                    pace_diff = raw["pace_sec_per_km"] - avg_row["avg_pace"]
+                    if abs(pace_diff) >= 5:
+                        signals["pace_vs_avg"] = round(pace_diff, 0)
+                if avg_row["avg_spb"] and raw and raw["speed_per_bpm"]:
+                    spb_diff = raw["speed_per_bpm"] - avg_row["avg_spb"]
+                    if abs(spb_diff) >= 0.005:
+                        signals["spb_vs_avg"] = round(spb_diff, 3)
+                if signals:
+                    run["adaptation_signals"] = signals
+        except Exception:
+            pass
+
+    # Weather context per run
+    for run in result:
+        run["weather"] = None
+        try:
+            w = conn.execute("""
+                SELECT temp_c as temp, humidity_pct as humidity,
+                       wind_speed_kmh as wind, precipitation_mm as precipitation,
+                       conditions
+                FROM weather WHERE date = ?
+            """, (run["date"],)).fetchone()
+            if w:
+                run["weather"] = {
+                    "temp": w["temp"],
+                    "humidity": w["humidity"],
+                    "wind": w["wind"],
+                    "precipitation": w["precipitation"],
+                    "conditions": w["conditions"],
+                }
+        except Exception:
+            pass
+
+    # sRPE noise suppression: if all runs have the same feel direction, suppress
+    feels = [r["srpe"]["feel"] for r in result if r.get("srpe") and r["srpe"].get("feel")]
+    if len(feels) >= 2 and len(set(feels)) == 1:
+        for run in result:
+            if run.get("srpe"):
+                run["srpe"]["feel"] = None
+
+    # Build split chart configs for per-run Chart.js rendering
+    import json
+    for i, run in enumerate(result):
+        run["split_chart"] = None
+        if run["splits"] and len(run["splits"]) >= 2:
+            zone_color_map = {"Z1": Z1, "Z2": Z2, "Z3": Z3, "Z4": Z4, "Z5": Z5}
+            # Detect structured workout: multiple distinct wkt_step_index values
+            step_indices = {s.get("wkt_step_index") for s in run["splits"]
+                           if s.get("wkt_step_index") is not None}
+            has_structure = len(step_indices) > 1
+
+            if has_structure:
+                # Group laps by (intensity_type, wkt_step_index) runs
+                segments = _group_splits_by_step(run["splits"])
+                # Expand segments into distance-proportional bins
+                # so warmup 2.4km is 6× wider than a 400m interval
+                grey = "rgba(148,163,184,0.5)"
+                dists = [seg["distance_km"] for seg in segments]
+                min_dist = min(d for d in dists if d > 0.05) if dists else 0.4
+                bin_size = min_dist  # smallest segment = 1 bin
+
+                split_labels = []
+                pace_data = []
+                hr_data = []
+                elev_data = []
+                bar_colors = []
+                seg_ranges = []  # [{start, end, color, label}] for plugin
+                phase_legend = {}  # label -> color for legend
+                bin_idx = 0
+                for seg in segments:
+                    n_bins = max(1, round(seg["distance_km"] / bin_size))
+                    color = zone_color_map.get(seg["zone"], grey) + "cc"
+                    # Track unique phase types for legend
+                    phase_key = seg["label"]
+                    if phase_key not in phase_legend:
+                        phase_legend[phase_key] = color
+                    seg_ranges.append({
+                        "s": bin_idx, "e": bin_idx + n_bins - 1,
+                        "c": color, "v": seg["avg_pace"],
+                    })
+                    elev_per_bin = (seg["total_elev"] or 0) / n_bins
+                    mid = n_bins // 2  # center the label
+                    for b in range(n_bins):
+                        # No x-axis labels for structured — zone strip
+                        # provides the labels inside the colored bands
+                        split_labels.append("")
+                        # Pace + HR: single dot at segment midpoint only
+                        pace_data.append(seg["avg_pace"] if b == mid else None)
+                        hr_data.append(seg["avg_hr"] if b == mid else None)
+                        elev_data.append(round(elev_per_bin, 1))
+                        bar_colors.append(color)
+                    bin_idx += n_bins
+            else:
+                # Per-km view (long runs, unstructured)
+                grey = "rgba(148,163,184,0.5)"
+                split_labels = [str(s["km"]) for s in run["splits"]]
+                pace_data = [s["pace_secs"] for s in run["splits"]]
+                hr_data = [s["hr"] for s in run["splits"]]
+                elev_data = [s.get("elevation") or 0 for s in run["splits"]]
+                bar_colors = [
+                    zone_color_map.get(s["zone"], grey) + "cc"
+                    for s in run["splits"]
+                ]
+                # One segment per km for the custom plugin
+                seg_ranges = [
+                    {"s": idx, "e": idx,
+                     "c": zone_color_map.get(s["zone"], grey) + "cc",
+                     "v": s["pace_secs"]}
+                    for idx, s in enumerate(run["splits"])
+                ]
+
+            # Y-axis range: exclude REST/walking segments (huge pace outliers)
+            if has_structure:
+                active_paces = [
+                    seg["avg_pace"] for seg in segments
+                    if seg["avg_pace"] and seg.get("intensity") != "REST"
+                ]
+            else:
+                active_paces = [p for p in pace_data if p]
+            if not active_paces:
+                active_paces = [p for p in pace_data if p]
+            pace_range = max(active_paces) - min(active_paces) if active_paces else 0
+            padding = max(30, pace_range * 0.5)
+            y_min = min(active_paces) - padding if active_paces else None
+            y_max = max(active_paces) + padding if active_paces else None
+            # Cap REST bars to y_max so they don't blow up the scale
+            if y_max:
+                pace_data = [min(p, y_max) if p else p for p in pace_data]
+                for sr in seg_ranges:
+                    sr["v"] = min(sr["v"], y_max) if sr["v"] else sr["v"]
+
+            # Build phase legend entries (deduplicated)
+            # Colors resolved in JS from CSS variables (--z1..--z5)
+            phase_legend_items = []
+            seen_labels = set()
+            if has_structure:
+                legend_names = {
+                    "WARMUP": "WU = Warm-up", "COOLDOWN": "CD = Cool-down",
+                    "REST": "Rest", "RECOVERY": "J = Jog recovery",
+                    "ACTIVE": "R = Rep",
+                }
+                for seg in segments:
+                    lbl = legend_names.get(seg["intensity"], seg["intensity"])
+                    if lbl not in seen_labels:
+                        seen_labels.add(lbl)
+                        phase_legend_items.append({
+                            "zone": seg["zone"], "label": lbl,
+                        })
+            else:
+                zone_names = {
+                    "Z1": "Z1 Recovery", "Z2": "Z2 Easy",
+                    "Z3": "Z3 Moderate", "Z4": "Z4 Hard",
+                    "Z5": "Z5 Very Hard",
+                }
+                for s in run["splits"]:
+                    z = s.get("zone", "")
+                    if z and z not in seen_labels:
+                        seen_labels.add(z)
+                        phase_legend_items.append({
+                            "zone": z, "label": zone_names.get(z, z),
+                        })
+
+            # Compute HR range with padding
+            hr_vals = [h for h in hr_data if h]
+            hr_min = min(hr_vals) - 5 if hr_vals else 100
+            hr_max = max(hr_vals) + 5 if hr_vals else 200
+
+            # Compute elevation range
+            elev_vals = [e for e in elev_data if e]
+            elev_max = max(elev_vals) * 1.3 if elev_vals else 10
+
+            # Zone strip segments: [{s, e, zone, label}] for plugin
+            zone_segments = []
+            if has_structure:
+                # One band per workout segment (preserve segment boundaries)
+                bin_idx = 0
+                for seg in segments:
+                    n_bins = max(1, round(seg["distance_km"] / bin_size))
+                    zone_segments.append({
+                        "s": bin_idx, "e": bin_idx + n_bins - 1,
+                        "zone": seg["zone"],
+                        "label": seg["short_label"],
+                    })
+                    bin_idx += n_bins
+            else:
+                # Per-km: merge consecutive same-zone km into one band
+                for idx, s in enumerate(run["splits"]):
+                    z = s.get("zone", "")
+                    if (zone_segments and
+                            zone_segments[-1]["zone"] == z):
+                        zone_segments[-1]["e"] = idx
+                    else:
+                        zone_segments.append({
+                            "s": idx, "e": idx,
+                            "zone": z, "label": z,
+                        })
+
+            run["split_chart"] = json.dumps({
+                "type": "line",
+                "data": {
+                    "labels": split_labels,
+                    "datasets": [
+                        {
+                            "label": "Pace",
+                            "data": pace_data,
+                            "borderColor": "#818cf8",
+                            "backgroundColor": "#818cf8",
+                            "borderWidth": 2,
+                            "pointRadius": 3 if has_structure else 2,
+                            "pointBackgroundColor": "#818cf8",
+                            "spanGaps": True,
+                            "fill": False,
+                            "yAxisID": "y",
+                            "order": 1,
+                        },
+                        {
+                            "label": "HR",
+                            "data": hr_data,
+                            "borderColor": "#f87171",
+                            "backgroundColor": "#f87171",
+                            "borderWidth": 2,
+                            "pointRadius": 3 if has_structure else 2,
+                            "pointBackgroundColor": "#f87171",
+                            "spanGaps": True,
+                            "fill": False,
+                            "yAxisID": "y1",
+                            "order": 2,
+                        },
+                    ],
+                },
+                "_zone_segments": zone_segments,
+                "_phase_legend": phase_legend_items,
+                "options": {
+                    "responsive": True,
+                    "maintainAspectRatio": False,
+                    "layout": {},
+                    "plugins": {
+                        "legend": {"display": False},
+                        "tooltip": {},
+                    },
+                    "scales": {
+                        "x": {"grid": {"display": False},
+                               "ticks": {"display": not has_structure,
+                                         "font": {"size": 7},
+                                         "color": "rgba(255,255,255,0.4)",
+                                         "maxRotation": 0, "autoSkip": False,
+                                         "__skip_empty": True}},
+                        "y": {"position": "left",
+                               "grid": {"color": "rgba(255,255,255,0.05)"},
+                               "ticks": {"font": {"size": 8}, "color": "#818cf880"},
+                               "title": {"display": True, "text": "Pace (min/km)",
+                                          "font": {"size": 8},
+                                          "color": "#818cf880"},
+                               "min": y_min, "max": y_max},
+                        "y1": {"position": "right",
+                                "grid": {"drawOnChartArea": False},
+                                "ticks": {"font": {"size": 8}, "color": "#f8717180"},
+                                "title": {"display": True, "text": "HR (bpm)",
+                                           "font": {"size": 8},
+                                           "color": "#f8717180"},
+                                "min": hr_min, "max": hr_max},
+                    },
+                },
+            })
+
+            # Separate elevation chart
+            run["split_elev_chart"] = json.dumps({
+                "type": "line",
+                "data": {
+                    "labels": split_labels,
+                    "datasets": [{
+                        "label": "Elevation",
+                        "data": elev_data,
+                        "borderColor": "rgba(148,163,184,0.5)",
+                        "backgroundColor": "rgba(148,163,184,0.15)",
+                        "borderWidth": 1.5,
+                        "pointRadius": 0,
+                        "fill": True,
+                        "tension": 0.3,
+                    }],
+                },
+                "options": {
+                    "responsive": True,
+                    "maintainAspectRatio": False,
+                    "plugins": {"legend": {"display": False},
+                                "tooltip": {"callbacks": {}}},
+                    "scales": {
+                        "x": {"display": False},
+                        "y": {"position": "left",
+                               "grid": {"color": "rgba(255,255,255,0.03)"},
+                               "ticks": {"font": {"size": 7},
+                                         "color": "rgba(148,163,184,0.4)"},
+                               "title": {"display": True, "text": "m",
+                                          "font": {"size": 7},
+                                          "color": "rgba(148,163,184,0.4)"},
+                               "min": 0,
+                               "max": elev_max},
+                        # Dummy right axis to match main chart width
+                        "y1": {"position": "right",
+                                "grid": {"drawOnChartArea": False},
+                                "ticks": {"display": True,
+                                          "font": {"size": 8},
+                                          "color": "transparent"},
+                                "title": {"display": True, "text": " ",
+                                           "font": {"size": 8},
+                                           "color": "transparent"}},
+                    },
+                },
+            })
+
+    return result
+
+
+def _group_splits_by_step(splits):
+    """Group per-lap splits into workout segments by (intensity_type, wkt_step_index).
+
+    Consecutive laps with the same step are merged. Returns list of segment dicts:
+        label, avg_pace, avg_hr, total_elev, intensity, distance_km
+
+    For interval workouts (alternating step indices), each lap stays separate
+    with rep numbering (R1, R2... for work, J1, J2... for jog recovery).
+    """
+    intensity_labels = {
+        "WARMUP": "WU", "COOLDOWN": "CD", "REST": "Rest", "ACTIVE": "",
+    }
+    segments = []
+    current = None
+    for s in splits:
+        key = (s.get("intensity_type"), s.get("wkt_step_index"))
+        if current and current["key"] == key:
+            current["laps"].append(s)
+        else:
+            if current:
+                segments.append(current)
+            current = {"key": key, "laps": [s]}
+    if current:
+        segments.append(current)
+
+    # Detect interval pattern: alternating ACTIVE step indices
+    active_segs = [seg for seg in segments if seg["key"][0] == "ACTIVE"]
+    active_steps = [seg["key"][1] for seg in active_segs]
+    is_interval = (
+        len(active_steps) >= 4
+        and len(set(active_steps)) == 2
+        and active_steps[0] != active_steps[1]
+    )
+    if is_interval:
+        # Identify which step is work (faster avg pace) vs recovery
+        step_a, step_b = sorted(set(active_steps))
+        paces_a = [lap.get("pace_secs") or 999 for seg in active_segs
+                    if seg["key"][1] == step_a for lap in seg["laps"]]
+        paces_b = [lap.get("pace_secs") or 999 for seg in active_segs
+                    if seg["key"][1] == step_b for lap in seg["laps"]]
+        avg_a = sum(paces_a) / len(paces_a) if paces_a else 999
+        avg_b = sum(paces_b) / len(paces_b) if paces_b else 999
+        work_step = step_a if avg_a < avg_b else step_b
+        work_n, jog_n = 0, 0
+
+    result = []
+    for seg in segments:
+        laps = seg["laps"]
+        intensity = laps[0].get("intensity_type") or "ACTIVE"
+        step_idx = seg["key"][1]
+        total_dist = sum((lap.get("distance_km") or 1.0) for lap in laps)
+        total_time = sum((lap.get("time_sec") or 0) for lap in laps)
+        hrs = [lap["hr"] for lap in laps if lap.get("hr")]
+        zones = [lap.get("zone") for lap in laps if lap.get("zone")]
+
+        # Labels: full (tooltip) and short (x-axis)
+        prefix = intensity_labels.get(intensity, "")
+        d_str = (f"{total_dist:.1f}km" if total_dist >= 1
+                 else f"{int(total_dist * 1000)}m")
+        if intensity in ("WARMUP", "COOLDOWN", "REST"):
+            label = f"{prefix} {d_str}"
+            short_label = prefix
+        elif is_interval and intensity == "ACTIVE":
+            if step_idx == work_step:
+                work_n += 1
+                label = f"R{work_n} {d_str}"
+                short_label = f"R{work_n}"
+            else:
+                jog_n += 1
+                label = f"J{jog_n} {d_str}"
+                short_label = f"J{jog_n}"
+        else:
+            lap_dists = [lap.get("distance_km") or 1.0 for lap in laps]
+            if len(laps) > 1 and max(lap_dists) - min(lap_dists) < 0.05:
+                d = lap_dists[0]
+                d_s = f"{d:.1f}km" if d >= 1 else f"{int(d * 1000)}m"
+                label = f"{len(laps)}×{d_s}"
+            else:
+                label = d_str
+            short_label = label
+
+        avg_pace = round(total_time / total_dist) if total_dist > 0 else None
+
+        # For intervals, distinguish work vs jog intensity
+        seg_intensity = intensity
+        if is_interval and intensity == "ACTIVE" and step_idx != work_step:
+            seg_intensity = "RECOVERY"
+
+        # Most common zone in the segment
+        zone = max(set(zones), key=zones.count) if zones else ""
+
+        result.append({
+            "label": label,
+            "short_label": short_label,
+            "avg_pace": avg_pace,
+            "avg_hr": round(sum(hrs) / len(hrs)) if hrs else None,
+            "total_elev": sum(lap.get("elevation") or 0 for lap in laps),
+            "intensity": seg_intensity,
+            "zone": zone,
+            "distance_km": round(total_dist, 2),
+        })
+    return result
+
+
+def _format_pace(pace_sec_per_km):
+    """Format pace as M:SS/km."""
+    if not pace_sec_per_km:
+        return "--:--"
+    mins = int(pace_sec_per_km // 60)
+    secs = int(pace_sec_per_km % 60)
+    return f"{mins}:{secs:02d}"
+
+
+
+def _clean_run_name(name):
+    """Strip Garmin/Runna prefixes and redundant suffixes from run names."""
+    if not name:
+        return "Run"
+    import re
+    # Strip prefixes like "Berlin - W 1 So. " or "W 1 Fr. "
+    cleaned = re.sub(r'^(?:.*?W\s*\d+\s*\w+\.\s*)', '', name)
+    if not cleaned or len(cleaned) < 5:
+        cleaned = name  # fallback if regex ate everything or left too little
+    return cleaned
+
+
+def _training_objectives(conn):
+    """4 canonical objective slots for the Training tab.
+
+    Slots: Volume, Long Run, Z2 Compliance, Consistency.
+    All active when a target race exists (auto-derived from derive_objectives).
+    All deactivated when no target race — shows prompt to set one.
+
+    Returns dict with:
+        active: bool — whether objectives are live
+        slots: list of 4 dicts, each with name, target, current, unit, status (on_track/at_risk/off_track), streak_label
+        prompt: str — shown when deactivated
+    """
+    from fit.goals import get_target_race
+    from fit.analysis import compute_rolling_week
+
+    race = get_target_race(conn)
+    rolling = compute_rolling_week(conn)
+
+    # 4 canonical slot definitions with prefix-match to derive_objectives names
+    slot_defs = [
+        {"key": "volume", "label": "Volume", "prefix": "Peak volume", "unit": "km/wk"},
+        {"key": "long_run", "label": "Long Run", "prefix": "Long run", "unit": "km"},
+        {"key": "z2", "label": "Z2 Compliance", "prefix": "Z2 compliance", "unit": "%"},
+        {"key": "consistency", "label": "Consistency", "prefix": "Consistency", "unit": "weeks"},
+    ]
+
+    if not race:
+        # Show current measured values even when deactivated
+        weekly = conn.execute("SELECT * FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
+        deactivated_slots = []
+        for sd in slot_defs:
+            current = None
+            if sd["key"] == "volume":
+                current = round(rolling["run_km"], 1) if rolling["run_km"] else 0
+            elif sd["key"] == "long_run":
+                current = round(rolling["longest_run_km"], 1) if rolling.get("longest_run_km") else 0
+            elif sd["key"] == "z2":
+                current = round(rolling["z12_pct"], 1) if rolling.get("z12_pct") is not None else None
+            elif sd["key"] == "consistency":
+                current = weekly["consecutive_weeks_3plus"] if weekly else 0
+            deactivated_slots.append({
+                "name": sd["label"], "target": None, "current": current,
+                "unit": sd["unit"], "status": "deactivated", "streak_label": None,
+            })
+        return {
+            "active": False,
+            "slots": deactivated_slots,
+            "prompt": "Set a target race with `fit target set`",
+        }
+
+    # Get derived objectives from goals table (populated by set_target_race)
+    goals = conn.execute("SELECT * FROM goals WHERE active = 1").fetchall()
+    goal_map = {}
+    for g in goals:
+        name = g["name"] or ""
+        for sd in slot_defs:
+            if name.startswith(sd["prefix"]):
+                goal_map[sd["key"]] = dict(g)
+                break
+
+    # Current values
+    weekly = conn.execute("SELECT * FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
+
+    slots = []
+    for sd in slot_defs:
+        goal = goal_map.get(sd["key"])
+        target = goal["target_value"] if goal else None
+        current = None
+        status = "deactivated"
+        streak_label = None
+
+        if sd["key"] == "volume":
+            current = round(rolling["run_km"], 1) if rolling["run_km"] else 0
+        elif sd["key"] == "long_run":
+            current = round(rolling["longest_run_km"], 1) if rolling.get("longest_run_km") else 0
+        elif sd["key"] == "z2":
+            current = round(rolling["z12_pct"], 1) if rolling.get("z12_pct") is not None else None
+        elif sd["key"] == "consistency":
+            current = weekly["consecutive_weeks_3plus"] if weekly else 0
+            # Streak sub-label: show in-week progress
+            today = date.today()
+            iso = today.isocalendar()
+            runs_this_week = conn.execute("""
+                SELECT COUNT(*) as n FROM activities
+                WHERE type IN {types} AND date >= date(?, 'weekday 0', '-7 days')
+            """.format(types=RUNNING_TYPES_SQL), (today.isoformat(),)).fetchone()
+            n = runs_this_week["n"] if runs_this_week else 0
+            if n >= 3:
+                streak_label = "streak secured, updates Monday"
+            elif iso.weekday >= 5 and n < 3:
+                remaining = 3 - n
+                streak_label = f"{n}/3 runs this week — {remaining} more to keep streak"
+            elif n > 0:
+                remaining = 3 - n
+                streak_label = f"{n}/3 runs this week — {remaining} more to keep streak"
+
+        if target is not None and current is not None:
+            if sd["key"] == "z2":
+                status = "on_track" if current >= target * 0.9 else "at_risk" if current >= target * 0.7 else "off_track"
+            elif sd["key"] == "consistency":
+                status = "on_track" if current >= target else "at_risk" if current >= target * 0.5 else "off_track"
+            else:
+                status = "on_track" if current >= target else "at_risk" if current >= target * 0.7 else "off_track"
+
+        slots.append({
+            "name": sd["label"],
+            "target": target,
+            "current": current,
+            "unit": sd["unit"],
+            "status": status,
+            "streak_label": streak_label,
+        })
+
+    return {
+        "active": True,
+        "slots": slots,
+        "prompt": None,
+    }
+
+
+def _last_7_days_hero(conn, config=None):
+    """Last 7 Days hero card for the Training tab.
+
+    Returns dict with:
+        compliance_pct: planned vs completed workouts in 7d window (0-100, None if no plan)
+        compliance_completed: number of completed planned workouts
+        compliance_total: total planned workouts in window
+        volume_km: rolling 7d volume
+        volume_target_km: phase target weekly volume (midpoint), or None
+        volume_pct: % of target (0-100+), or None
+        wow_sentence: WoW narrative string, or None
+        next_workouts: list of upcoming planned workouts
+        run_count: number of runs in last 7 days
+    """
+    from datetime import timedelta
+    from fit.analysis import compute_rolling_week
+
+    rolling = compute_rolling_week(conn, config=config)
+
+    result = {
+        "compliance_pct": None,
+        "compliance_completed": 0,
+        "compliance_total": 0,
+        "volume_km": rolling["run_km"],
+        "volume_target_km": None,
+        "volume_pct": None,
+        "wow_sentence": None,
+        "next_workouts": _next_workouts(conn),
+        "run_count": rolling["run_count"],
+    }
+
+    # Compliance ring: planned vs completed in last 7 days
+    today = date.today()
+    window_start = (today - timedelta(days=6)).isoformat()
+    try:
+        planned = conn.execute("""
+            SELECT COUNT(*) as total FROM planned_workouts
+            WHERE date BETWEEN ? AND ? AND status != 'skipped'
+        """, (window_start, today.isoformat())).fetchone()
+        completed = conn.execute("""
+            SELECT COUNT(DISTINCT pw.date) as n FROM planned_workouts pw
+            INNER JOIN activities a ON a.date = pw.date AND a.type IN {types}
+            WHERE pw.date BETWEEN ? AND ?
+        """.format(types=RUNNING_TYPES_SQL), (window_start, today.isoformat())).fetchone()
+        if planned and planned["total"] > 0:
+            result["compliance_total"] = planned["total"]
+            result["compliance_completed"] = min(completed["n"], planned["total"]) if completed else 0
+            result["compliance_pct"] = round(result["compliance_completed"] / planned["total"] * 100)
+    except Exception:
+        pass
+
+    # Volume progress bar: rolling vs phase target
+    phase = conn.execute("SELECT * FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
+    if phase and phase["weekly_km_min"] and phase["weekly_km_max"]:
+        target_mid = (phase["weekly_km_min"] + phase["weekly_km_max"]) / 2
+        result["volume_target_km"] = target_mid
+        if target_mid > 0:
+            result["volume_pct"] = round(rolling["run_km"] / target_mid * 100)
+
+    # WoW sentence
+    # Get previous 7-day window for comparison
+    prev_end = today - timedelta(days=7)
+    from fit.analysis import compute_rolling_week as _crw
+    prev_rolling = _crw(conn, end_date=prev_end, config=config)
+    result["wow_sentence"] = generate_wow_sentence(conn, current=rolling, previous=prev_rolling)
+
+    return result
 
 
 def _training_phases_json(conn):
