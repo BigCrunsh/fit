@@ -319,20 +319,51 @@ class TestHeatAcclimatization:
 
 
 class TestPacingStrategy:
-    def test_sub4_pacing(self):
+    def test_sub4_marathon_pacing(self):
         # 3:52 marathon = 13920 seconds
         result = generate_pacing_strategy(13920, {"profile": {"max_hr": 192}})
         assert result is not None
+        assert result["target_km"] == 42.195
         assert len(result["segments"]) == 9  # 8 x 5km + 1 x 2.195km
         assert result["target_pace_display"] in ("5:29", "5:30")  # ~330 sec/km
-        assert result["hr_ceilings"]["0-15km"] < result["hr_ceilings"]["30-42km"]
+        # 3 HR ceiling phases for marathon
+        assert len(result["hr_ceilings"]) == 3
+        ceilings = list(result["hr_ceilings"].values())
+        assert ceilings[0] < ceilings[-1]  # progressive intensity
         assert len(result["fueling"]) >= 4
 
-    def test_sub5_pacing(self):
+    def test_sub5_marathon_pacing(self):
         # 4:45 marathon = 17100 seconds
         result = generate_pacing_strategy(17100, {"profile": {"max_hr": 180}})
         assert result is not None
         assert len(result["segments"]) == 9
+
+    def test_half_marathon_pacing(self):
+        # 1:47 HM = 6420 seconds
+        cfg = {"profile": {"max_hr": 192}}
+        result = generate_pacing_strategy(6420, cfg, target_km=21.0975)
+        assert result is not None
+        assert result["target_km"] == 21.0975
+        # 4 x 5km + ~1.1km remainder = 5 segments
+        assert len(result["segments"]) == 5
+        assert result["segments"][-1]["end_km"] == 21.1
+        # 2 HR ceiling phases for HM
+        assert len(result["hr_ceilings"]) == 2
+        # Fueling: ~1:47 race, should have 2 gels (at 45min and 75min)
+        assert len(result["fueling"]) == 2
+
+    def test_10k_pacing(self):
+        # 45:00 10K = 2700 seconds
+        cfg = {"profile": {"max_hr": 192}}
+        result = generate_pacing_strategy(2700, cfg, target_km=10.0)
+        assert result is not None
+        assert result["target_km"] == 10.0
+        # 2 x 5km = 2 segments
+        assert len(result["segments"]) == 2
+        # 2 HR ceiling phases for 10K
+        assert len(result["hr_ceilings"]) == 2
+        # No fueling for sub-60min race
+        assert len(result["fueling"]) == 0
 
     def test_negative_split_strategy(self):
         result = generate_pacing_strategy(14400, {"profile": {"max_hr": 192}})
@@ -340,6 +371,19 @@ class TestPacingStrategy:
         first_segment = result["segments"][0]
         last_full_segment = result["segments"][-2]  # last 5km segment
         assert first_segment["pace_sec_km"] > last_full_segment["pace_sec_km"]
+
+    def test_hm_negative_split(self):
+        cfg = {"profile": {"max_hr": 192}}
+        result = generate_pacing_strategy(6420, cfg, target_km=21.0975)
+        first = result["segments"][0]
+        last_full = result["segments"][-2]
+        assert first["pace_sec_km"] > last_full["pace_sec_km"]
+
+    def test_backward_compat_defaults_to_marathon(self):
+        """Calling without target_km still produces marathon pacing."""
+        result = generate_pacing_strategy(14400, {"profile": {"max_hr": 192}})
+        assert len(result["segments"]) == 9
+        assert result["target_km"] == 42.195
 
 
 # ── Helper Tests ──

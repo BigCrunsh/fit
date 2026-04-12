@@ -2,17 +2,9 @@
 
 import logging
 
-logger = logging.getLogger(__name__)
+from fit.report.sections import SAFE, CAUTION, DANGER, Z1, Z2, Z3, Z4, Z5, ACCENT  # noqa: F401
 
-SAFE = "#34d399"
-CAUTION = "#fbbf24"
-DANGER = "#f87171"
-Z1 = "#93c5fd"
-Z2 = "#60a5fa"
-Z3 = "#fbbf24"
-Z4 = "#f97316"
-Z5 = "#ef4444"
-ACCENT = "#818cf8"
+logger = logging.getLogger(__name__)
 
 
 def _prediction_summary(conn):

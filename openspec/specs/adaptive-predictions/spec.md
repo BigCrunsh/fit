@@ -1,5 +1,8 @@
-## MODIFIED Requirements
+# adaptive-predictions Specification
 
+## Purpose
+TBD - created by archiving change target-race-model. Update Purpose after archive.
+## Requirements
 ### Requirement: Prediction charts adapt to target distance
 The Prediction Trend chart and Race Prediction table SHALL extrapolate to the target race distance (from `race_calendar WHERE is_target = 1`), not hardcoded 42.195km. Riegel formula uses target_km. VDOT scales from marathon equivalent.
 
@@ -35,3 +38,4 @@ The function SHALL be renamed and accept `target_km` parameter. Default remains 
 #### Scenario: Backward compatibility
 - **WHEN** called without target_km
 - **THEN** predicts marathon time (42.195km) as before
+

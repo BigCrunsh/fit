@@ -245,6 +245,62 @@ class TestDiscoverMigrations:
 # ════════════════════════════════════════════════════════════════
 
 
+class TestMigration010:
+    """Migration 010: objective derivation columns on goals."""
+
+    def test_goals_have_derivation_columns(self):
+        """Migration 010 should add derivation_source, auto_value, is_override."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = {"sync": {"db_path": f"{tmpdir}/test.db"}}
+            conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(goals)").fetchall()}
+            assert "derivation_source" in cols
+            assert "auto_value" in cols
+            assert "is_override" in cols
+            conn.close()
+
+    def test_existing_goals_preserved_with_manual_source(self):
+        """Pre-existing goals should get derivation_source='manual' after migration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = {"sync": {"db_path": f"{tmpdir}/test.db"}}
+            conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+            # Insert a goal (simulating pre-migration data)
+            conn.execute(
+                "INSERT INTO goals (name, type, target_value, active) "
+                "VALUES ('Sub-4 Marathon', 'marathon', 4.0, 1)"
+            )
+            conn.commit()
+
+            # Re-run migration 010 backfill logic (idempotent)
+            conn.execute(
+                "UPDATE goals SET derivation_source = 'manual' "
+                "WHERE derivation_source IS NULL"
+            )
+
+            row = conn.execute("SELECT * FROM goals WHERE name = 'Sub-4 Marathon'").fetchone()
+            assert row["derivation_source"] == "manual"
+            assert row["is_override"] == 0
+            assert row["auto_value"] is None
+            # Original data untouched
+            assert row["target_value"] == 4.0
+            assert row["active"] == 1
+            conn.close()
+
+    def test_defaults_correct(self):
+        """New goals should get correct default values."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = {"sync": {"db_path": f"{tmpdir}/test.db"}}
+            conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+            conn.execute(
+                "INSERT INTO goals (name, type, active) VALUES ('Test', 'metric', 1)"
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM goals WHERE name = 'Test'").fetchone()
+            assert row["derivation_source"] == "manual"
+            assert row["is_override"] == 0
+            conn.close()
+
+
 class TestSchemaValidation:
     def test_views_created(self):
         """Schema should create expected views."""

@@ -1,16 +1,19 @@
-"""Tests for fit/goals.py — phase lifecycle, compliance, goal logging."""
+"""Tests for fit/goals.py — phase lifecycle, compliance, goal logging, target race."""
 
 import json
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
 from fit.goals import (
+    clear_target_race,
     complete_phase,
     get_active_phase,
     get_phase_compliance,
+    get_target_race,
     log_goal_event,
     revise_phase,
+    set_target_race,
 )
 
 
@@ -408,3 +411,272 @@ class TestPhaseCompliance:
         result = get_phase_compliance(db, 1)
         acwr = [d for d in result["dimensions"] if "ACWR" in d["name"]]
         assert acwr[0]["on_track"] is False
+
+
+# ════════════════════════════════════════════════════════════════
+# Target Race Lifecycle
+# ════════════════════════════════════════════════════════════════
+
+
+def _insert_race(db, race_id, name, distance, distance_km, race_date,
+                 target_time=None, status="registered"):
+    """Insert a race into race_calendar."""
+    db.execute(
+        "INSERT INTO race_calendar (id, date, name, distance, distance_km, "
+        "target_time, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (race_id, race_date, name, distance, distance_km, target_time, status),
+    )
+
+
+def _insert_goal(db, goal_id, name, target_value=None, target_unit=None,
+                 race_id=None, derivation_source="manual", is_override=0):
+    """Insert a goal."""
+    db.execute(
+        "INSERT INTO goals (id, name, type, target_value, target_unit, "
+        "race_id, active, derivation_source, is_override) "
+        "VALUES (?, ?, 'marathon', ?, ?, ?, 1, ?, ?)",
+        (goal_id, name, target_value, target_unit, race_id,
+         derivation_source, is_override),
+    )
+
+
+class TestSetTargetRace:
+    def test_set_target_updates_goals(self, db):
+        """Setting a target race updates all active goals' race_id."""
+        future = (date.today() + timedelta(days=120)).isoformat()
+        _insert_race(db, 1, "Berlin Marathon", "Marathon", 42.195, future,
+                     target_time="3:55:00")
+        _insert_goal(db, 1, "Sub-4 Marathon")
+        _insert_goal(db, 2, "Volume target")
+        db.commit()
+
+        result = set_target_race(db, 1)
+        assert result["name"] == "Berlin Marathon"
+
+        g1 = db.execute("SELECT race_id FROM goals WHERE id = 1").fetchone()
+        g2 = db.execute("SELECT race_id FROM goals WHERE id = 2").fetchone()
+        assert g1["race_id"] == 1
+        assert g2["race_id"] == 1
+
+    def test_set_target_nonexistent_race(self, db):
+        """Setting a nonexistent race raises ValueError."""
+        with pytest.raises(ValueError, match="not found"):
+            set_target_race(db, 999)
+
+    def test_switch_target(self, db):
+        """Switching target race re-links all goals."""
+        future1 = (date.today() + timedelta(days=90)).isoformat()
+        future2 = (date.today() + timedelta(days=180)).isoformat()
+        _insert_race(db, 1, "HM Race", "Half Marathon", 21.0975, future1,
+                     target_time="1:47:00")
+        _insert_race(db, 2, "Marathon", "Marathon", 42.195, future2,
+                     target_time="3:55:00")
+        _insert_goal(db, 1, "Race Goal")
+        db.commit()
+
+        set_target_race(db, 1)
+        g = db.execute("SELECT race_id FROM goals WHERE id = 1").fetchone()
+        assert g["race_id"] == 1
+
+        set_target_race(db, 2)
+        g = db.execute("SELECT race_id FROM goals WHERE id = 1").fetchone()
+        assert g["race_id"] == 2
+
+
+class TestClearTargetRace:
+    def test_clear_removes_race_id(self, db):
+        """Clearing target race nullifies all goals' race_id."""
+        future = (date.today() + timedelta(days=120)).isoformat()
+        _insert_race(db, 1, "Marathon", "Marathon", 42.195, future)
+        _insert_goal(db, 1, "Goal A", race_id=1)
+        _insert_goal(db, 2, "Goal B", race_id=1)
+        db.commit()
+
+        clear_target_race(db)
+
+        g1 = db.execute("SELECT race_id FROM goals WHERE id = 1").fetchone()
+        g2 = db.execute("SELECT race_id FROM goals WHERE id = 2").fetchone()
+        assert g1["race_id"] is None
+        assert g2["race_id"] is None
+
+
+class TestOverridePreservation:
+    def test_auto_derived_updated_on_switch(self, db):
+        """Non-overridden goals get target_value updated on target switch."""
+        future = (date.today() + timedelta(days=120)).isoformat()
+        _insert_race(db, 1, "Marathon", "Marathon", 42.195, future,
+                     target_time="3:55:00")
+        # Use a name that matches derive_objectives output: "Peak volume ..."
+        _insert_goal(db, 1, "Peak volume 50-65km/wk", target_value=40,
+                     target_unit="km/week",
+                     derivation_source="auto_distance", is_override=0)
+        db.commit()
+
+        set_target_race(db, 1)
+        g = db.execute("SELECT target_value, auto_value FROM goals WHERE id = 1").fetchone()
+        # auto_value should be set (derive_objectives produces 65 for marathon)
+        assert g["auto_value"] is not None
+        assert g["auto_value"] == 65
+
+    def test_user_override_preserved_on_switch(self, db):
+        """Overridden goals keep target_value, only auto_value changes."""
+        future = (date.today() + timedelta(days=120)).isoformat()
+        _insert_race(db, 1, "Marathon", "Marathon", 42.195, future,
+                     target_time="3:55:00")
+        # User manually set volume target to 55, overriding auto
+        _insert_goal(db, 1, "Peak volume 50-65km/wk", target_value=55,
+                     target_unit="km/week",
+                     derivation_source="auto_distance", is_override=1)
+        db.commit()
+
+        set_target_race(db, 1)
+        g = db.execute(
+            "SELECT target_value, auto_value, is_override FROM goals WHERE id = 1"
+        ).fetchone()
+        # User's manual override (55) should be preserved
+        assert g["target_value"] == 55
+        assert g["is_override"] == 1
+        # But auto_value is still updated to what derivation produces
+        assert g["auto_value"] == 65
+
+
+class TestGetTargetRace:
+    def test_returns_linked_race(self, db):
+        """Should return the race linked via active goals."""
+        future = (date.today() + timedelta(days=60)).isoformat()
+        _insert_race(db, 1, "Berlin HM", "Half Marathon", 21.0975, future)
+        _insert_goal(db, 1, "Goal", race_id=1)
+        db.commit()
+
+        target = get_target_race(db)
+        assert target is not None
+        assert target["name"] == "Berlin HM"
+
+    def test_no_goals_falls_back_to_furthest_race(self, db):
+        """Without active goals, should fall back to furthest future race."""
+        near = (date.today() + timedelta(days=30)).isoformat()
+        far = (date.today() + timedelta(days=180)).isoformat()
+        _insert_race(db, 1, "10K", "10K", 10.0, near)
+        _insert_race(db, 2, "Marathon", "Marathon", 42.195, far)
+        db.commit()
+
+        target = get_target_race(db)
+        assert target is not None
+        assert target["name"] == "Marathon"
+
+    def test_no_races_returns_none(self, db):
+        """No races at all should return None."""
+        target = get_target_race(db)
+        assert target is None
+
+
+# ════════════════════════════════════════════════════════════════
+# Checkpoint Derivation
+# ════════════════════════════════════════════════════════════════
+
+
+class TestCheckpointDerivation:
+    def test_checkpoint_times_derived(self, db):
+        """Checkpoint races get derived target times via Riegel."""
+        from fit.fitness import derive_checkpoint_targets
+
+        target_date = (date.today() + timedelta(days=120)).isoformat()
+        cp_date = (date.today() + timedelta(days=30)).isoformat()
+        _insert_race(db, 1, "Berlin Marathon", "Marathon", 42.195, target_date,
+                     target_time="3:55:00")
+        _insert_race(db, 2, "Checkpoint 10K", "10K", 10.0, cp_date,
+                     target_time="0:48:00")
+        _insert_goal(db, 1, "Goal", race_id=1)
+        db.commit()
+
+        checkpoints = derive_checkpoint_targets(db)
+        assert len(checkpoints) == 1
+        cp = checkpoints[0]
+        assert cp["name"] == "Checkpoint 10K"
+        assert cp["derived_target_secs"] > 0
+        assert cp["signal"] is not None
+
+    def test_no_target_race_returns_empty(self, db):
+        """Without a target race, checkpoint derivation returns empty."""
+        from fit.fitness import derive_checkpoint_targets
+
+        checkpoints = derive_checkpoint_targets(db)
+        assert checkpoints == []
+
+    def test_checkpoint_riegel_math(self, db):
+        """Derived 10K time from 3:55 marathon should be ~52-55 min."""
+        from fit.fitness import derive_checkpoint_targets
+
+        target_date = (date.today() + timedelta(days=120)).isoformat()
+        cp_date = (date.today() + timedelta(days=30)).isoformat()
+        _insert_race(db, 1, "Marathon", "Marathon", 42.195, target_date,
+                     target_time="3:55:00")
+        _insert_race(db, 2, "10K", "10K", 10.0, cp_date)
+        _insert_goal(db, 1, "Goal", race_id=1)
+        db.commit()
+
+        checkpoints = derive_checkpoint_targets(db)
+        cp = checkpoints[0]
+        # Riegel: 14100 * (10/42.195)^1.06 ≈ 3060-3200 sec ≈ 51-53 min
+        assert 2900 < cp["derived_target_secs"] < 3400
+
+
+# ════════════════════════════════════════════════════════════════
+# Achievability
+# ════════════════════════════════════════════════════════════════
+
+
+class TestAchievability:
+    def test_on_track_when_already_met(self, db):
+        """Objective already met should be 'on_track'."""
+        from fit.fitness import compute_achievability
+
+        # Insert enough weekly_agg data for the query
+        db.execute(
+            "INSERT INTO weekly_agg (week, run_km, run_count, longest_run_km, "
+            "z12_pct, consecutive_weeks_3plus) "
+            "VALUES ('2026-W14', 55, 4, 20, 85, 10)"
+        )
+        db.commit()
+
+        objectives = [
+            {"name": "Weekly Volume", "target_value": 50, "target_unit": "km/week"},
+        ]
+        result = compute_achievability(db, objectives, days_remaining=90)
+        assert result[0]["achievability"] == "on_track"
+        assert result[0]["gap"] <= 0
+
+    def test_at_risk_with_large_gap(self, db):
+        """Objective with huge gap and no trend should be 'at_risk'."""
+        from fit.fitness import compute_achievability
+
+        db.execute(
+            "INSERT INTO weekly_agg (week, run_km, run_count, longest_run_km, "
+            "z12_pct, consecutive_weeks_3plus) "
+            "VALUES ('2026-W14', 20, 2, 10, 50, 2)"
+        )
+        db.commit()
+
+        objectives = [
+            {"name": "Z2 Time", "target_value": 90, "target_unit": "%"},
+        ]
+        result = compute_achievability(db, objectives, days_remaining=30)
+        assert result[0]["achievability"] == "at_risk"
+
+    def test_zero_days_remaining(self, db):
+        """Edge case: 0 days remaining."""
+        from fit.fitness import compute_achievability
+
+        db.execute(
+            "INSERT INTO weekly_agg (week, run_km, run_count, longest_run_km, "
+            "z12_pct, consecutive_weeks_3plus) "
+            "VALUES ('2026-W14', 30, 3, 15, 70, 5)"
+        )
+        db.commit()
+
+        objectives = [
+            {"name": "Weekly Volume", "target_value": 50, "target_unit": "km/week"},
+        ]
+        result = compute_achievability(db, objectives, days_remaining=0)
+        # Not yet at target, 0 days left → at_risk
+        assert result[0]["achievability"] == "at_risk"

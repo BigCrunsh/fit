@@ -342,62 +342,81 @@ def compute_heat_acclimatization(conn: sqlite3.Connection) -> dict | None:
 # ── Race-Day Pacing Strategy ──
 
 
-def generate_pacing_strategy(prediction_seconds: int, config: dict) -> dict:
-    """Translate a marathon prediction into a race-day plan.
+def generate_pacing_strategy(
+    prediction_seconds: int, config: dict, target_km: float = 42.195
+) -> dict:
+    """Translate a race prediction into a race-day pacing plan.
 
-    Returns: target splits per 5km, HR ceiling per segment, fueling timing.
+    Adapts segment count, HR ceilings, and fueling to the target distance:
+    - Marathon (>30km): 8×5km + remainder, 5 gels
+    - Half marathon (15-30km): 4×5km + remainder, 2 gels
+    - 10K and under (≤15km): 2×5km + remainder, 0-1 gel
+
+    Returns: target splits per segment, HR ceiling per phase, fueling timing.
     """
-    marathon_km = 42.195
-    target_pace = prediction_seconds / marathon_km  # sec/km
+    target_pace = prediction_seconds / target_km  # sec/km
+    half_km = target_km / 2
 
-    # Even-split strategy with slight negative split
-    # First half slightly conservative (+2 sec/km), second half on pace
+    # Build segments: 5km chunks + final remainder
     segments = []
-    for i in range(9):  # 8 x 5km + 1 x 2.195km
-        start_km = i * 5
-        end_km = min((i + 1) * 5, marathon_km)
+    km = 0.0
+    while km < target_km:
+        start_km = km
+        end_km = min(km + 5, target_km)
         segment_km = end_km - start_km
 
-        # Slightly conservative first half, on-pace second half
-        if start_km < 21:
-            pace_adj = target_pace + 2  # +2 sec/km first half
-        elif start_km < 35:
+        # Even-split with slight negative split
+        if start_km < half_km:
+            pace_adj = target_pace + 2  # conservative first half
+        elif start_km < target_km * 0.83:
             pace_adj = target_pace  # on pace
         else:
-            pace_adj = target_pace - 1  # slight push final 7km
+            pace_adj = target_pace - 1  # slight push final segment(s)
 
         segment_time = pace_adj * segment_km
-        cumulative_km = end_km
-
         segments.append({
             "start_km": start_km,
             "end_km": round(end_km, 1),
             "pace_sec_km": round(pace_adj),
             "pace_display": _format_pace(pace_adj),
             "segment_time_sec": round(segment_time),
-            "cumulative_km": round(cumulative_km, 1),
+            "cumulative_km": round(end_km, 1),
         })
+        km = end_km
 
-    # HR zones for segments
+    # HR ceilings adapt to distance
     max_hr = config.get("profile", {}).get("max_hr", 192)
-    hr_ceilings = {
-        "0-15km": int(max_hr * 0.78),    # Easy Z2-Z3
-        "15-30km": int(max_hr * 0.82),   # Moderate Z3
-        "30-42km": int(max_hr * 0.87),   # Hard Z3-Z4
-    }
+    if target_km > 30:  # marathon
+        hr_ceilings = {
+            f"0-{int(target_km * 0.36)}km": int(max_hr * 0.78),
+            f"{int(target_km * 0.36)}-{int(target_km * 0.71)}km": int(max_hr * 0.82),
+            f"{int(target_km * 0.71)}-{int(target_km)}km": int(max_hr * 0.87),
+        }
+    elif target_km > 15:  # half marathon
+        hr_ceilings = {
+            f"0-{int(half_km)}km": int(max_hr * 0.80),
+            f"{int(half_km)}-{int(target_km)}km": int(max_hr * 0.85),
+        }
+    else:  # 10K and under
+        hr_ceilings = {
+            f"0-{int(half_km)}km": int(max_hr * 0.83),
+            f"{int(half_km)}-{int(target_km)}km": int(max_hr * 0.88),
+        }
 
-    # Fueling plan
-    fueling = [
-        {"time_min": 45, "item": "gel + water"},
-        {"time_min": 75, "item": "gel"},
-        {"time_min": 105, "item": "gel + water"},
-        {"time_min": 135, "item": "gel"},
-        {"time_min": 165, "item": "gel + water (if needed)"},
-    ]
+    # Fueling plan scales with duration
+    est_time_min = prediction_seconds / 60
+    fueling = []
+    if est_time_min > 60:  # only fuel for races > 1 hour
+        t = 45
+        while t < est_time_min - 10:
+            item = "gel + water" if len(fueling) % 2 == 0 else "gel"
+            fueling.append({"time_min": t, "item": item})
+            t += 30
 
     total_time = sum(s["segment_time_sec"] for s in segments)
     return {
         "target_time_sec": prediction_seconds,
+        "target_km": target_km,
         "target_pace_display": _format_pace(target_pace),
         "segments": segments,
         "hr_ceilings": hr_ceilings,

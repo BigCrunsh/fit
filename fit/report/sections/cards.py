@@ -19,17 +19,9 @@ from fit.narratives import (
     generate_checkin_progress,
 )
 
-logger = logging.getLogger(__name__)
+from fit.report.sections import SAFE, CAUTION, DANGER, Z1, Z2, Z3, Z4, Z5, ACCENT
 
-SAFE = "#34d399"
-CAUTION = "#fbbf24"
-DANGER = "#f87171"
-Z1 = "#93c5fd"
-Z2 = "#60a5fa"
-Z3 = "#fbbf24"
-Z4 = "#f97316"
-Z5 = "#ef4444"
-ACCENT = "#818cf8"
+logger = logging.getLogger(__name__)
 
 
 
@@ -282,7 +274,8 @@ def _run_timeline(conn):
     for r in runs:
         km = r["distance_km"] or 0
         zone = r["hr_zone"] or "Z2"
-        color = Z2 if zone in ("Z1", "Z2") else Z3 if zone == "Z3" else Z4
+        _zone_colors = {"Z1": Z1, "Z2": Z2, "Z3": Z3, "Z4": Z4, "Z5": Z5}
+        color = _zone_colors.get(zone, Z2)
         # Detect gap from previous run (list is DESC, so prev_date is more recent)
         gap_days = None
         if prev_date:
