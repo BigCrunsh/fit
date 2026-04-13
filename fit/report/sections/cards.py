@@ -2382,19 +2382,23 @@ def _training_objectives(conn):
     """4 canonical objective slots for the Training tab.
 
     Slots: Volume, Long Run, Z2 Compliance, Consistency.
-    All active when a target race exists (auto-derived from derive_objectives).
-    All deactivated when no target race — shows prompt to set one.
+    Each slot includes current value, WoW delta, and a 7-day daily trend.
 
     Returns dict with:
-        active: bool — whether objectives are live
-        slots: list of 4 dicts, each with name, target, current, unit, status (on_track/at_risk/off_track), streak_label
+        active: bool — whether objectives are live (target race set)
+        slots: list of 4 dicts with name, target, current, unit, status,
+               wow_delta, wow_pct, streak_label
         prompt: str — shown when deactivated
     """
+    from datetime import timedelta
     from fit.goals import get_target_race
     from fit.analysis import compute_rolling_week
 
     race = get_target_race(conn)
     rolling = compute_rolling_week(conn)
+    prev_rolling = compute_rolling_week(
+        conn, end_date=date.today() - timedelta(days=7),
+    )
 
     # 4 canonical slot definitions with prefix-match to derive_objectives names
     slot_defs = [
@@ -2404,62 +2408,52 @@ def _training_objectives(conn):
         {"key": "consistency", "label": "Consistency", "prefix": "Consistency", "unit": "weeks"},
     ]
 
-    if not race:
-        # Show current measured values even when deactivated
-        weekly = conn.execute("SELECT * FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
-        deactivated_slots = []
-        for sd in slot_defs:
-            current = None
-            if sd["key"] == "volume":
-                current = round(rolling["run_km"], 1) if rolling["run_km"] else 0
-            elif sd["key"] == "long_run":
-                current = round(rolling["longest_run_km"], 1) if rolling.get("longest_run_km") else 0
-            elif sd["key"] == "z2":
-                current = round(rolling["z12_pct"], 1) if rolling.get("z12_pct") is not None else None
-            elif sd["key"] == "consistency":
-                current = weekly["consecutive_weeks_3plus"] if weekly else 0
-            deactivated_slots.append({
-                "name": sd["label"], "target": None, "current": current,
-                "unit": sd["unit"], "status": "deactivated", "streak_label": None,
-            })
-        return {
-            "active": False,
-            "slots": deactivated_slots,
-            "prompt": "Set a target race with `fit target set`",
-        }
-
-    # Get derived objectives from goals table (populated by set_target_race)
-    goals = conn.execute("SELECT * FROM goals WHERE active = 1").fetchall()
+    # Load goals if target race exists
     goal_map = {}
-    for g in goals:
-        name = g["name"] or ""
-        for sd in slot_defs:
-            if name.startswith(sd["prefix"]):
-                goal_map[sd["key"]] = dict(g)
-                break
+    if race:
+        goals = conn.execute("SELECT * FROM goals WHERE active = 1").fetchall()
+        for g in goals:
+            name = g["name"] or ""
+            for sd in slot_defs:
+                if name.startswith(sd["prefix"]):
+                    goal_map[sd["key"]] = dict(g)
+                    break
 
-    # Current values
-    weekly = conn.execute("SELECT * FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
+    # Consistency uses last completed ISO week
+    today = date.today()
+    today_iso = today.isocalendar()
+    current_week_str = f"{today_iso[0]}-W{today_iso[1]:02d}"
+    completed_week = conn.execute(
+        "SELECT * FROM weekly_agg WHERE week < ? ORDER BY week DESC LIMIT 1",
+        (current_week_str,),
+    ).fetchone()
+    prev_completed_week = conn.execute(
+        "SELECT * FROM weekly_agg WHERE week < ? ORDER BY week DESC LIMIT 1 OFFSET 1",
+        (current_week_str,),
+    ).fetchone()
+
+    def _extract_value(key, data):
+        if key == "volume":
+            return round(data["run_km"], 1) if data and data.get("run_km") else 0
+        elif key == "long_run":
+            return round(data["longest_run_km"], 1) if data and data.get("longest_run_km") else 0
+        elif key == "z2":
+            return round(data["z12_pct"], 1) if data and data.get("z12_pct") is not None else None
+        elif key == "consistency":
+            return None  # handled separately
+        return None
 
     slots = []
     for sd in slot_defs:
         goal = goal_map.get(sd["key"])
         target = goal["target_value"] if goal else None
-        current = None
-        status = "deactivated"
         streak_label = None
 
-        if sd["key"] == "volume":
-            current = round(rolling["run_km"], 1) if rolling["run_km"] else 0
-        elif sd["key"] == "long_run":
-            current = round(rolling["longest_run_km"], 1) if rolling.get("longest_run_km") else 0
-        elif sd["key"] == "z2":
-            current = round(rolling["z12_pct"], 1) if rolling.get("z12_pct") is not None else None
-        elif sd["key"] == "consistency":
-            current = weekly["consecutive_weeks_3plus"] if weekly else 0
+        # Current + previous for WoW
+        if sd["key"] == "consistency":
+            current = completed_week["consecutive_weeks_3plus"] if completed_week else 0
+            prev = prev_completed_week["consecutive_weeks_3plus"] if prev_completed_week else None
             # Streak sub-label: show in-week progress
-            today = date.today()
-            iso = today.isocalendar()
             runs_this_week = conn.execute("""
                 SELECT COUNT(*) as n FROM activities
                 WHERE type IN {types} AND date >= date(?, 'weekday 0', '-7 days')
@@ -2467,13 +2461,23 @@ def _training_objectives(conn):
             n = runs_this_week["n"] if runs_this_week else 0
             if n >= 3:
                 streak_label = "streak secured, updates Monday"
-            elif iso.weekday >= 5 and n < 3:
-                remaining = 3 - n
-                streak_label = f"{n}/3 runs this week — {remaining} more to keep streak"
             elif n > 0:
                 remaining = 3 - n
-                streak_label = f"{n}/3 runs this week — {remaining} more to keep streak"
+                streak_label = f"{n}/3 — {remaining} more to keep streak"
+        else:
+            current = _extract_value(sd["key"], rolling)
+            prev = _extract_value(sd["key"], prev_rolling)
 
+        # WoW delta
+        wow_delta = None
+        wow_pct = None
+        if current is not None and prev is not None:
+            wow_delta = round(current - prev, 1)
+            if prev > 0:
+                wow_pct = round((current - prev) / prev * 100)
+
+        # Status
+        status = "deactivated"
         if target is not None and current is not None:
             if sd["key"] == "z2":
                 status = "on_track" if current >= target * 0.9 else "at_risk" if current >= target * 0.7 else "off_track"
@@ -2488,13 +2492,15 @@ def _training_objectives(conn):
             "current": current,
             "unit": sd["unit"],
             "status": status,
+            "wow_delta": wow_delta,
+            "wow_pct": wow_pct,
             "streak_label": streak_label,
         })
 
     return {
-        "active": True,
+        "active": bool(race),
         "slots": slots,
-        "prompt": None,
+        "prompt": None if race else "Set a target race with `fit target set`",
     }
 
 
@@ -2502,20 +2508,17 @@ def _last_7_days_hero(conn, config=None):
     """Last 7 Days hero card for the Training tab.
 
     Returns dict with:
-        compliance_pct: planned vs completed workouts in 7d window (0-100, None if no plan)
-        compliance_completed: number of completed planned workouts
-        compliance_total: total planned workouts in window
-        volume_km: rolling 7d volume
-        volume_target_km: phase target weekly volume (midpoint), or None
-        volume_pct: % of target (0-100+), or None
-        wow_sentence: WoW narrative string, or None
-        next_workouts: list of upcoming planned workouts
-        run_count: number of runs in last 7 days
+        volume_km, run_count, volume_target_km, volume_pct,
+        daily_km: list of 7 dicts (date, km, label) for bar chart,
+        phase_targets: dict with min/max/peak km for target bands,
+        next_workouts: list of upcoming planned workouts with expected zone/HR,
+        compliance_pct/completed/total: plan adherence in window.
     """
     from datetime import timedelta
     from fit.analysis import compute_rolling_week
 
     rolling = compute_rolling_week(conn, config=config)
+    today = date.today()
 
     result = {
         "compliance_pct": None,
@@ -2524,14 +2527,50 @@ def _last_7_days_hero(conn, config=None):
         "volume_km": rolling["run_km"],
         "volume_target_km": None,
         "volume_pct": None,
-        "wow_sentence": None,
-        "next_workouts": _next_workouts(conn),
+        "next_workouts": _next_workouts_enriched(conn),
         "run_count": rolling["run_count"],
+        "daily_km": [],
+        "phase_targets": None,
     }
 
-    # Compliance ring: planned vs completed in last 7 days
-    today = date.today()
+    # Per-day km breakdown for last 7 days bar chart
     window_start = (today - timedelta(days=6)).isoformat()
+    try:
+        day_rows = conn.execute("""
+            SELECT date, SUM(distance_km) as km
+            FROM activities
+            WHERE type IN {types} AND date BETWEEN ? AND ?
+            GROUP BY date ORDER BY date
+        """.format(types=RUNNING_TYPES_SQL), (window_start, today.isoformat())).fetchall()
+        km_by_date = {r["date"]: round(r["km"], 1) for r in day_rows}
+    except Exception:
+        km_by_date = {}
+
+    for i in range(7):
+        d = today - timedelta(days=6 - i)
+        iso = d.isoformat()
+        result["daily_km"].append({
+            "date": iso,
+            "km": km_by_date.get(iso, 0),
+            "label": d.strftime("%a"),
+        })
+
+    # Phase volume targets for band overlay
+    phase = conn.execute(
+        "SELECT * FROM training_phases WHERE status = 'active' LIMIT 1"
+    ).fetchone()
+    if phase and phase["weekly_km_min"] and phase["weekly_km_max"]:
+        target_mid = (phase["weekly_km_min"] + phase["weekly_km_max"]) / 2
+        result["volume_target_km"] = target_mid
+        if target_mid > 0:
+            result["volume_pct"] = round(rolling["run_km"] / target_mid * 100)
+        result["phase_targets"] = {
+            "current_min": phase["weekly_km_min"],
+            "current_max": phase["weekly_km_max"],
+            "phase_name": phase["name"],
+        }
+
+    # Compliance ring: planned vs completed in last 7 days
     try:
         planned = conn.execute("""
             SELECT COUNT(*) as total FROM planned_workouts
@@ -2544,26 +2583,93 @@ def _last_7_days_hero(conn, config=None):
         """.format(types=RUNNING_TYPES_SQL), (window_start, today.isoformat())).fetchone()
         if planned and planned["total"] > 0:
             result["compliance_total"] = planned["total"]
-            result["compliance_completed"] = min(completed["n"], planned["total"]) if completed else 0
-            result["compliance_pct"] = round(result["compliance_completed"] / planned["total"] * 100)
+            result["compliance_completed"] = min(
+                completed["n"], planned["total"]
+            ) if completed else 0
+            result["compliance_pct"] = round(
+                result["compliance_completed"] / planned["total"] * 100
+            )
     except Exception:
         pass
 
-    # Volume progress bar: rolling vs phase target
-    phase = conn.execute("SELECT * FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
-    if phase and phase["weekly_km_min"] and phase["weekly_km_max"]:
-        target_mid = (phase["weekly_km_min"] + phase["weekly_km_max"]) / 2
-        result["volume_target_km"] = target_mid
-        if target_mid > 0:
-            result["volume_pct"] = round(rolling["run_km"] / target_mid * 100)
+    return result
 
-    # WoW sentence
-    # Get previous 7-day window for comparison
-    prev_end = today - timedelta(days=7)
-    from fit.analysis import compute_rolling_week as _crw
-    prev_rolling = _crw(conn, end_date=prev_end, config=config)
-    result["wow_sentence"] = generate_wow_sentence(conn, current=rolling, previous=prev_rolling)
 
+def _zone_hr_range(zone_name, max_hr):
+    """Return (low, high) HR for a zone given max_hr."""
+    pcts = {
+        "Z1": (0.0, 0.60), "Z2": (0.60, 0.70), "Z3": (0.70, 0.80),
+        "Z4": (0.80, 0.90), "Z5": (0.90, 1.00),
+    }
+    lo, hi = pcts.get(zone_name.upper(), (0.60, 0.70))
+    return (round(max_hr * lo), round(max_hr * hi))
+
+
+def _expected_zone_for_type(workout_type):
+    """Map workout type to expected primary HR zone."""
+    mapping = {
+        "easy": "Z2", "recovery": "Z1", "long": "Z2",
+        "tempo": "Z3", "threshold": "Z4",
+        "intervals": "Z4", "race": "Z4",
+    }
+    return mapping.get(workout_type, "Z2")
+
+
+def _next_workouts_enriched(conn):
+    """Next planned workouts with expected zone and HR range."""
+    import re
+    try:
+        rows = conn.execute("""
+            SELECT date, workout_name, workout_type, target_distance_km,
+                   target_zone
+            FROM planned_workouts
+            WHERE date >= date('now') AND status = 'active'
+            ORDER BY date LIMIT 3
+        """).fetchall()
+    except Exception:
+        return []
+
+    # Get max_hr from calibration
+    cal = conn.execute(
+        "SELECT value FROM calibration WHERE metric='max_hr' AND active=1 "
+        "ORDER BY date DESC LIMIT 1"
+    ).fetchone()
+    max_hr = cal["value"] if cal else None
+
+    today = date.today()
+    result = []
+    for r in rows:
+        d = date.fromisoformat(r["date"])
+        days = (d - today).days
+
+        # Clean workout name
+        name = r["workout_name"] or r["workout_type"] or "Run"
+        prefix_match = re.match(r'^(?:.*?W\s*\d+\s*\w+\.\s*)', name)
+        if prefix_match:
+            name = name[prefix_match.end():]
+        name = re.sub(r'\s*\(\d+[,.]?\d*\s*km\)\s*$', '', name)
+        if len(name) > 40:
+            name = name[:37].rsplit(' ', 1)[0] + "..."
+
+        wtype = r["workout_type"] or "easy"
+        zone = (r["target_zone"] or _expected_zone_for_type(wtype)).upper()
+        if not zone.startswith("Z"):
+            zone = _expected_zone_for_type(wtype)
+
+        hr_range = None
+        if max_hr:
+            lo, hi = _zone_hr_range(zone, max_hr)
+            hr_range = f"{lo}–{hi}"
+
+        result.append({
+            "name": name,
+            "type": wtype,
+            "distance_km": r["target_distance_km"] or "?",
+            "date_label": d.strftime("%a %b %-d"),
+            "days": max(0, days),
+            "zone": zone,
+            "hr_range": hr_range,
+        })
     return result
 
 
