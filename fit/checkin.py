@@ -3,7 +3,7 @@
 A runner's day has natural check-in moments:
   morning  — pre-run readiness: sleep quality, legs, energy
   run      — post-run: RPE + session notes (with activity context)
-  evening  — recovery inputs: hydration, eating, alcohol, water, weight
+  evening  — recovery inputs: hydration, eating, alcohol, water
 
 All write to the same checkins row (ON CONFLICT UPDATE), so you can do
 one, two, or all three per day. `fit checkin` auto-selects based on
@@ -171,15 +171,6 @@ def _save_checkin(conn, data, existing):
         "notes": data.get("notes"),
     })
 
-    # Weight cross-write to body_comp
-    if data.get("weight_kg"):
-        conn.execute("""
-            INSERT INTO body_comp (date, weight_kg, source)
-            VALUES (?, ?, 'checkin')
-            ON CONFLICT(date) DO UPDATE SET weight_kg = excluded.weight_kg,
-                                            source = 'checkin'
-        """, (target, data["weight_kg"]))
-
     # RPE cross-write to activities
     if data.get("rpe"):
         conn.execute(
@@ -279,7 +270,7 @@ def run_post_run(conn, target_date=None):
 
 
 def run_evening(conn, target_date=None):
-    """Evening check-in: hydration, eating, alcohol, water, weight."""
+    """Evening check-in: hydration, eating, alcohol, water."""
     target = target_date or date.today().isoformat()
     existing = _get_existing(conn, target)
 
@@ -332,10 +323,6 @@ def run_evening(conn, target_date=None):
         f"  Water (liters){hint}", default=cur_water or ""
     ).strip()
     data["water_liters"] = float(water) if water else None
-
-    # Weight
-    weight_str = Prompt.ask("  Weight kg (enter=skip)", default="").strip()
-    data["weight_kg"] = float(weight_str) if weight_str else None
 
     _save_checkin(conn, data, existing)
     console.print("\n[bold green]✓ Evening check-in saved[/bold green]")

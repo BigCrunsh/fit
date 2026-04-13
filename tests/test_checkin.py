@@ -207,25 +207,13 @@ class TestEvening:
 
     def test_evening_none_alcohol_no_detail_prompt(self, db):
         """Alcohol=None skips the detail question."""
-        # hydration=OK, eating=OK, alcohol=None, water="", weight=""
-        answers = ["o", "o", "n", "", ""]
+        # hydration=OK, eating=OK, alcohol=None, water=""
+        answers = ["o", "o", "n", ""]
         with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
             run_evening(db, target_date="2026-01-17")
         row = db.execute("SELECT * FROM checkins WHERE date = '2026-01-17'").fetchone()
         assert row["alcohol"] == 0
         assert row["alcohol_detail"] is None
-
-    def test_evening_with_weight(self, db):
-        """Evening can record weight, cross-written to body_comp."""
-        # hydration=OK, eating=OK, alcohol=None, water="", weight="78.5"
-        answers = ["o", "o", "n", "", "78.5"]
-        with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
-            run_evening(db, target_date="2026-01-18")
-        bc = db.execute(
-            "SELECT weight_kg FROM body_comp WHERE date = '2026-01-18'"
-        ).fetchone()
-        assert bc is not None
-        assert bc["weight_kg"] == 78.5
 
     def test_evening_preserves_morning(self, db):
         """Evening doesn't overwrite morning fields."""
@@ -234,8 +222,8 @@ class TestEvening:
             "VALUES ('2026-01-19', 'Good', 'Fresh', 'Good', 5)"
         )
         db.commit()
-        # hydration=Good, eating=Good, alcohol=None, water="2", weight=""
-        answers = ["g", "g", "n", "2", ""]
+        # hydration=Good, eating=Good, alcohol=None, water="2"
+        answers = ["g", "g", "n", "2"]
         with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
             run_evening(db, target_date="2026-01-19")
         row = db.execute("SELECT * FROM checkins WHERE date = '2026-01-19'").fetchone()
@@ -352,7 +340,7 @@ class TestYesterdayGap:
         )
         db.commit()
         # Evening answers: hydration=Good, eating=Good, alcohol=none, water="", weight=""
-        answers = ["g", "g", "n", "", ""]
+        answers = ["g", "g", "n", ""]
         # Then today's morning
         answers += ["g", "f", "g", ""]
         with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
@@ -416,8 +404,8 @@ class TestYesterdayGap:
         )
         db.commit()
         # Evening for yesterday + evening for today (hour=19)
-        answers = ["g", "g", "n", "", ""]  # yesterday evening
-        answers += ["g", "g", "n", "", ""]  # today evening
+        answers = ["g", "g", "n", ""]  # yesterday evening
+        answers += ["g", "g", "n", ""]  # today evening
         with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
             with _mock_today("2026-03-15")(hour=19):
                 run_checkin(db)
