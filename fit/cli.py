@@ -1253,20 +1253,35 @@ def status():
     conn = _conn()
 
     try:
-        last_sync = conn.execute("SELECT MAX(date) FROM daily_health").fetchone()[0] or "never"
+        last_health = conn.execute(
+            "SELECT MAX(date) FROM daily_health"
+        ).fetchone()[0] or "never"
+        last_activity = conn.execute(
+            "SELECT MAX(date) FROM activities"
+        ).fetchone()[0]
+        last_sync = last_activity or last_health
 
-        # Target race
+        # Target race header
         from fit.goals import get_active_phase, get_target_race
         target = get_target_race(conn)
         if target:
             days_left = (d.fromisoformat(target["date"]) - d.today()).days
             tt = target.get("target_time") or ""
-            header = f"[bold]{target['name']}[/]\n{target['distance']}  ·  {days_left} days  ·  target {tt}  ·  synced {last_sync}"
+            header = (
+                f"[bold]{target['name']}[/]\n"
+                f"{target['distance']}  ·  {days_left} days"
+                f"  ·  target {tt}  ·  synced {last_sync}"
+            )
         else:
-            header = f"[bold]fit[/]  ·  synced {last_sync}\n[dim]No target race. Run: fit target set <race_id>[/]"
-        console.print(Panel(header, border_style="bright_blue", padding=(0, 2)))
+            header = (
+                f"[bold]fit[/]  ·  synced {last_sync}\n"
+                "[dim]No target race. Run: fit target set <race_id>[/]"
+            )
+        console.print(Panel(
+            header, border_style="bright_blue", padding=(0, 2),
+        ))
 
-        # Alerts (most important — safety first)
+        # Alerts (safety first)
         try:
             from fit.alerts import get_recent_alerts
             alerts = get_recent_alerts(conn, days=3)
@@ -1274,49 +1289,361 @@ def status():
             for a in alerts:
                 if a["type"] not in seen:
                     seen.add(a["type"])
-                    console.print(f"  [red]⚠ {a['type'].replace('_', ' ').title()}:[/] {a['message'][:70]}")
+                    console.print(
+                        f"  [red]⚠ {a['type'].replace('_', ' ').title()}"
+                        f":[/] {a['message'][:70]}"
+                    )
         except Exception:
             pass
 
-        # Key metrics as compact table
-        t = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False, padding=(0, 2))
-        t.add_column("Metric", style="bold")
-        t.add_column("Value", justify="right")
-        t.add_column("", style="dim")
+        # ── Fitness Profile (4 dimensions) ──
+        try:
+            from fit.fitness import get_fitness_profile
+            fp = get_fitness_profile(conn)
+            ft = Table(
+                box=rich_box.SIMPLE_HEAD, show_edge=False,
+                pad_edge=False, padding=(0, 2),
+            )
+            ft.add_column("Dimension", style="bold")
+            ft.add_column("Value", justify="right")
+            ft.add_column("Trend", justify="right")
 
-        # Readiness
-        h = conn.execute("SELECT training_readiness, resting_heart_rate, hrv_last_night, sleep_duration_hours FROM daily_health ORDER BY date DESC LIMIT 1").fetchone()
-        if h:
-            r = h["training_readiness"]
-            action = "[green]quality session[/]" if r and r >= 75 else "[yellow]easy day[/]" if r and r >= 50 else "[red]rest[/]" if r else ""
-            t.add_row("Readiness", str(r or "—"), action)
-            t.add_row("RHR", f"{h['resting_heart_rate'] or '—'} bpm", "")
-            t.add_row("HRV", f"{h['hrv_last_night'] or '—'} ms", "")
-            t.add_row("Sleep", f"{h['sleep_duration_hours']:.1f}h" if h["sleep_duration_hours"] else "—", "")
+            dims = [
+                ("Aerobic", "aerobic", "VO2max"),
+                ("Threshold", "threshold", "Z2 pace"),
+                ("Economy", "economy", "spd/bpm"),
+                ("Resilience", "resilience", "drift km"),
+            ]
+            for label, key, desc in dims:
+                dim = fp.get(key, {})
+                val = dim.get("current_value")
+                trend = dim.get("trend", "")
+                rate = dim.get("rate_per_month")
+                if val is not None:
+                    val_s = (
+                        f"{val:.4f}" if key == "economy"
+                        else f"{val:.1f}"
+                    )
+                    trend_s = ""
+                    n_pts = dim.get("data_points", 0)
+                    if rate is not None:
+                        sign = "+" if rate >= 0 else ""
+                        color = "green" if rate >= 0 else "red"
+                        rate_s = (
+                            f"{sign}{rate:.4f}/mo"
+                            if key == "economy"
+                            else f"{sign}{rate:.1f}/mo"
+                        )
+                        trend_s = f"[{color}]{rate_s}[/]"
+                        if n_pts < 5:
+                            trend_s += f" [dim](n={n_pts})[/]"
+                    elif trend and str(trend) != "None":
+                        trend_s = f"[dim]{trend}[/]"
+                    ft.add_row(
+                        f"{label} [dim]({desc})[/]",
+                        val_s, trend_s,
+                    )
+                else:
+                    src = dim.get("source", "")
+                    ft.add_row(
+                        f"{label} [dim]({desc})[/]",
+                        "[dim]—[/]",
+                        f"[dim]{src}[/]" if src else "",
+                    )
 
-        # ACWR + monotony — rolling 7-day window
+            if fp.get("effective_vdot"):
+                ft.add_row(
+                    "VDOT", f"{fp['effective_vdot']:.1f}", "",
+                )
+
+            # Weight (from body_comp, lower = better for running)
+            wt = conn.execute(
+                "SELECT weight_kg, date FROM body_comp "
+                "WHERE weight_kg IS NOT NULL "
+                "ORDER BY date DESC LIMIT 1"
+            ).fetchone()
+            wt_prev = conn.execute(
+                "SELECT weight_kg, date FROM body_comp "
+                "WHERE weight_kg IS NOT NULL "
+                "AND date <= date('now', '-7 days') "
+                "ORDER BY date DESC LIMIT 1"
+            ).fetchone()
+            if wt:
+                wt_trend = ""
+                if wt_prev:
+                    delta = wt["weight_kg"] - wt_prev["weight_kg"]
+                    days_gap = (
+                        d.fromisoformat(wt["date"])
+                        - d.fromisoformat(wt_prev["date"])
+                    ).days
+                    if abs(delta) < 0.1:
+                        wt_trend = "[dim]→[/]"
+                    else:
+                        # Normalize to per-week rate
+                        rate = delta / days_gap * 7 if days_gap else delta
+                        sign = "+" if rate > 0 else ""
+                        color = "green" if rate < 0 else "red"
+                        wt_trend = (
+                            f"[{color}]{sign}{rate:.1f}/wk[/]"
+                        )
+                ft.add_row(
+                    "Weight [dim](kg)[/]",
+                    f"{wt['weight_kg']:.1f}", wt_trend,
+                )
+
+            console.print(Panel(
+                ft, title="[bold]Fitness Profile[/]",
+                border_style="cyan", padding=(0, 1),
+            ))
+        except Exception:
+            pass
+
+        # ── Objectives (4 canonical slots) ──
+        from datetime import timedelta
         from fit.analysis import compute_rolling_acwr, compute_rolling_week
         rolling = compute_rolling_week(conn)
+        rolling_prev = compute_rolling_week(
+            conn, end_date=d.today() - timedelta(days=7),
+        )
         rolling_acwr = compute_rolling_acwr(conn)
+
+        # Consistency uses last *completed* ISO week, not partial current
+        today_iso = d.today().isocalendar()
+        completed_week = conn.execute(
+            "SELECT * FROM weekly_agg WHERE week < ? "
+            "ORDER BY week DESC LIMIT 1",
+            (f"{today_iso[0]}-W{today_iso[1]:02d}",),
+        ).fetchone()
+        prev_completed = conn.execute(
+            "SELECT * FROM weekly_agg WHERE week < ? "
+            "ORDER BY week DESC LIMIT 1 OFFSET 1",
+            (f"{today_iso[0]}-W{today_iso[1]:02d}",),
+        ).fetchone()
+
+        ot = Table(
+            box=rich_box.SIMPLE_HEAD, show_edge=False,
+            pad_edge=False, padding=(0, 2),
+        )
+        ot.add_column("Objective", style="bold")
+        ot.add_column("Current", justify="right")
+        ot.add_column("WoW", justify="right")
+        ot.add_column("Target", justify="right", style="dim")
+        ot.add_column("Status")
+
+        goals = conn.execute(
+            "SELECT * FROM goals WHERE active = 1"
+        ).fetchall()
+        goal_map = {}
+        for g in goals:
+            name = (g["name"] or "").lower()
+            if "volume" in name:
+                goal_map["volume"] = dict(g)
+            elif "long run" in name:
+                goal_map["long_run"] = dict(g)
+            elif "z2" in name:
+                goal_map["z2"] = dict(g)
+            elif "consistency" in name:
+                goal_map["consistency"] = dict(g)
+
+        obj_defs = [
+            ("Volume", "volume", "km/wk"),
+            ("Long Run", "long_run", "km"),
+            ("Z2 Compliance", "z2", "%"),
+            ("Consistency", "consistency", "wks"),
+        ]
+        for label, key, unit in obj_defs:
+            goal = goal_map.get(key)
+            tgt = goal["target_value"] if goal else None
+
+            cur, prev = None, None
+            if key == "volume":
+                cur = round(rolling["run_km"], 1) if rolling else 0
+                prev = (
+                    round(rolling_prev["run_km"], 1)
+                    if rolling_prev and rolling_prev.get("run_km")
+                    else None
+                )
+            elif key == "long_run":
+                cur = (
+                    round(rolling["longest_run_km"], 1)
+                    if rolling and rolling.get("longest_run_km")
+                    else 0
+                )
+                prev = (
+                    round(rolling_prev["longest_run_km"], 1)
+                    if rolling_prev
+                    and rolling_prev.get("longest_run_km")
+                    else None
+                )
+            elif key == "z2":
+                cur = (
+                    round(rolling["z12_pct"], 1)
+                    if rolling
+                    and rolling.get("z12_pct") is not None
+                    else None
+                )
+                prev = (
+                    round(rolling_prev["z12_pct"], 1)
+                    if rolling_prev
+                    and rolling_prev.get("z12_pct") is not None
+                    else None
+                )
+            elif key == "consistency":
+                cur = (
+                    completed_week["consecutive_weeks_3plus"]
+                    if completed_week else 0
+                )
+                prev = (
+                    prev_completed["consecutive_weeks_3plus"]
+                    if prev_completed else None
+                )
+
+            cur_s = f"{cur}" if cur is not None else "—"
+            tgt_s = f"{tgt} {unit}" if tgt else "no target"
+
+            # WoW delta with arrow
+            if cur is not None and prev is not None:
+                delta = cur - prev
+                if abs(delta) < 0.05:
+                    wow_s = "[dim]→ same[/]"
+                elif delta > 0:
+                    wow_s = f"[green]▲ +{delta:.1f}[/]"
+                else:
+                    wow_s = f"[red]▼ {delta:.1f}[/]"
+            else:
+                wow_s = "[dim]—[/]"
+
+            if tgt and cur is not None:
+                pct = cur / tgt if tgt else 0
+                if pct >= 0.9:
+                    st = "[green]on track[/]"
+                elif pct >= 0.7:
+                    st = "[yellow]at risk[/]"
+                else:
+                    st = "[red]off track[/]"
+            else:
+                st = "[dim]—[/]"
+
+            ot.add_row(label, f"{cur_s} {unit}", wow_s, tgt_s, st)
+
+        console.print(Panel(
+            ot, title="[bold]Objectives[/]",
+            border_style="blue", padding=(0, 1),
+        ))
+
+        # ── Readiness & Load ──
+        rt = Table(
+            box=rich_box.SIMPLE_HEAD, show_edge=False,
+            pad_edge=False, padding=(0, 2),
+        )
+        rt.add_column("Metric", style="bold")
+        rt.add_column("Value", justify="right")
+        rt.add_column("WoW", justify="right")
+        rt.add_column("")
+
+        # Current + 7d-ago health for WoW
+        h = conn.execute(
+            "SELECT training_readiness, resting_heart_rate, "
+            "hrv_last_night, sleep_duration_hours "
+            "FROM daily_health ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        h7 = conn.execute(
+            "SELECT training_readiness, resting_heart_rate, "
+            "hrv_last_night, sleep_duration_hours "
+            "FROM daily_health "
+            "WHERE date <= date('now', '-7 days') "
+            "ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+
+        def _wow(cur, prev, fmt=".0f", invert=False):
+            """Format WoW delta with colored arrow.
+            invert=True means lower is better (e.g. RHR).
+            """
+            if cur is None or prev is None:
+                return "[dim]—[/]"
+            delta = cur - prev
+            if abs(delta) < 0.5:
+                return "[dim]→[/]"
+            good = delta < 0 if invert else delta > 0
+            arrow = "▲" if delta > 0 else "▼"
+            color = "green" if good else "red"
+            sign = "+" if delta > 0 else ""
+            return f"[{color}]{arrow} {sign}{delta:{fmt}}[/]"
+
+        if h:
+            r = h["training_readiness"]
+            action = (
+                "[green]quality session[/]" if r and r >= 75
+                else "[yellow]easy day[/]" if r and r >= 50
+                else "[red]rest[/]" if r else ""
+            )
+            rt.add_row(
+                "Readiness", str(r or "—"),
+                _wow(r, h7["training_readiness"] if h7 else None),
+                action,
+            )
+            rt.add_row(
+                "RHR",
+                f"{h['resting_heart_rate'] or '—'} bpm",
+                _wow(
+                    h["resting_heart_rate"],
+                    h7["resting_heart_rate"] if h7 else None,
+                    invert=True,
+                ),
+                "",
+            )
+            rt.add_row(
+                "HRV",
+                f"{h['hrv_last_night'] or '—'} ms",
+                _wow(
+                    h["hrv_last_night"],
+                    h7["hrv_last_night"] if h7 else None,
+                    fmt=".1f",
+                ),
+                "",
+            )
+            rt.add_row(
+                "Sleep",
+                f"{h['sleep_duration_hours']:.1f}h"
+                if h["sleep_duration_hours"] else "—",
+                _wow(
+                    h["sleep_duration_hours"],
+                    h7["sleep_duration_hours"] if h7 else None,
+                    fmt=".1f",
+                ),
+                "",
+            )
+
         if rolling_acwr is not None:
-            safety = "[green]safe[/]" if 0.8 <= rolling_acwr <= 1.3 else "[yellow]caution[/]" if rolling_acwr <= 1.5 else "[red]DANGER[/]"
-            t.add_row("ACWR", f"{rolling_acwr:.2f}", safety)
-        if rolling and rolling["monotony"]:
+            safety = (
+                "[green]safe[/]" if 0.8 <= rolling_acwr <= 1.3
+                else "[yellow]caution[/]" if rolling_acwr <= 1.5
+                else "[red]DANGER[/]"
+            )
+            rt.add_row("ACWR", f"{rolling_acwr:.2f}", "", safety)
+        if rolling and rolling.get("monotony"):
             m = rolling["monotony"]
-            m_status = "[red]high[/]" if m > 2.0 else "[yellow]moderate[/]" if m > 1.5 else ""
-            t.add_row("Monotony", f"{m:.1f}", m_status)
-        t.add_row("Last 7 days", f"{rolling['run_km']}km / {rolling['run_count']} runs", "")
+            m_st = (
+                "[red]high[/]" if m > 2.0
+                else "[yellow]moderate[/]" if m > 1.5 else ""
+            )
+            rt.add_row("Monotony", f"{m:.1f}", "", m_st)
 
-        # Streak
-        streak_row = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
-        t.add_row("Streak", f"{streak_row[0] or 0} wk" if streak_row else "0 wk", "3+ runs/wk")
+        rt.add_row(
+            "Last 7 days",
+            f"{rolling['run_km']}km / {rolling['run_count']} runs",
+            "",
+            "",
+        )
 
-        # Phase
         phase = get_active_phase(conn)
         if phase:
-            t.add_row("Phase", phase["name"], phase["phase"])
+            rt.add_row("Phase", phase["name"], "", phase["phase"])
 
-        console.print(Panel(t, title="[bold]Today[/]", border_style="blue", padding=(0, 1)))
+        console.print(Panel(
+            rt, title="[bold]Readiness & Load[/]",
+            border_style="green", padding=(0, 1),
+        ))
 
         # Calibration (compact)
         from fit.calibration import get_calibration_status
@@ -1325,10 +1652,15 @@ def status():
         if stale:
             for c in stale:
                 icon = "[yellow]⚠[/]" if c["stale"] else "[red]✗[/]"
-                console.print(f"  {icon} {c['metric']}: {c.get('retest_prompt', 'needs update')}")
+                console.print(
+                    f"  {icon} {c['metric']}: "
+                    f"{c.get('retest_prompt', 'needs update')}"
+                )
         else:
             console.print("  [green]✓[/] All calibrations current")
 
-        console.print("\n  [dim]Details: fit target show · Dashboard: fit report[/]")
+        console.print(
+            "\n  [dim]Details: fit target show · Dashboard: fit report[/]"
+        )
     finally:
         conn.close()
