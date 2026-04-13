@@ -49,8 +49,12 @@ Zone boundaries must come from config, never from memory or common defaults.
 
 ## Dashboard & Visualization
 
-- **Dark background** (`#07070c`) — every dataset must be clearly visible. Annotation bands use 40+ hex opacity (e.g., `#60a5fa40`), never `0c`/`10`/`18`.
-- **5-zone color palette** — Z1=#93c5fd, Z2=#60a5fa, Z3=#fbbf24, Z4=#f97316, Z5=#ef4444. Safety: emerald/amber/red.
+- **Always use the design system** — `fit/report/templates/design_system.css` is the single source of truth for colors, typography, spacing, and components. Never hardcode hex colors or styles that duplicate or contradict it.
+  - Colors: use CSS variables (`var(--safe)`, `var(--z2)`, `var(--text-muted)`, etc.) in HTML. In Python/Chart.js where CSS vars aren't available, use the exact hex values defined in `:root`.
+  - Components: reuse existing classes (`.card`, `.badge`, `.chart-box`, `.run-bar`, etc.) before inventing inline styles.
+  - If a new color or component is needed, propose adding it to `design_system.css` first — don't inline a one-off.
+- **Annotation bands** use 40+ hex opacity (e.g., `#60a5fa40`), never `0c`/`10`/`18`.
+- **Consistent time x-axis** — all charts use `type: 'time'` with ISO date labels. Weekly aggregations (volume, run types) always use `unit: 'week'`. Other charts auto-select: `month` (>180d), `week` (42-180d), `day` (<42d). Profile charts share a fixed range (first phase - 2w → race + 10d). Weekly data uses ISO dates (Sunday of each week), never ISO week strings.
 - **3 vendored JS files** inlined into HTML: chartjs.min.js, chartjs-annotation.min.js, chartjs-date-adapter.min.js
 
 ## Testing
