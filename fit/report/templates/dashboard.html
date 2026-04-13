@@ -461,7 +461,35 @@
 <!-- TRAINING -->
 <div id="tab-training" class="tab-content">
 
-  <!-- 1. Hero Card: Last 7 Days -->
+  <!-- 1. Training Objectives (4 slots — top of tab) -->
+  {% if training_objectives %}
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
+    {% for slot in training_objectives.slots %}
+    {% set sc = 'var(--safe)' if slot.status == 'on_track' else 'var(--caution)' if slot.status == 'at_risk' else 'var(--danger)' if slot.status == 'off_track' else 'var(--text-dim)' %}
+    <div style="background:var(--surface);border-radius:10px;padding:14px 16px;border:1px solid rgba(255,255,255,0.08);border-left:3px solid {{ sc }};{% if slot.status == 'deactivated' %}opacity:0.6{% endif %}">
+      <div style="font-size:10px;font-weight:700;color:{{ sc }};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px">{{ slot.name }}</div>
+      <div style="font-size:26px;font-weight:800;font-family:var(--mono);color:var(--text);line-height:1.1">{{ slot.current if slot.current is not none else '—' }}<span style="font-size:12px;color:var(--text-muted);font-weight:400;font-family:var(--sans)"> {{ slot.unit }}</span></div>
+      {% if slot.wow_delta is not none and slot.wow_delta != 0 %}
+      <div style="font-size:11px;font-weight:600;margin-top:6px;color:{% if slot.wow_delta > 0 %}var(--safe){% else %}var(--danger){% endif %}">
+        {% if slot.wow_delta > 0 %}&#x25B2;{% else %}&#x25BC;{% endif %}
+        {{ '%+.0f' % slot.wow_delta }}{% if slot.wow_pct is not none %} ({{ '%+d' % slot.wow_pct }}%){% endif %}
+        <span style="font-weight:400;color:var(--text-dim);font-size:9px">vs prev 7d</span>
+      </div>
+      {% elif slot.wow_delta is not none %}
+      <div style="font-size:10px;margin-top:6px;color:var(--text-dim)">&#x2192; same vs prev 7d</div>
+      {% endif %}
+      {% if slot.target %}<div style="font-size:10px;color:var(--text-muted);margin-top:4px">target <span style="font-weight:600">{{ slot.target }}</span></div>{% endif %}
+      {% if slot.streak_label %}<div style="font-size:9px;color:{% if 'secured' in slot.streak_label %}var(--safe){% else %}var(--caution){% endif %};margin-top:4px">{{ slot.streak_label }}</div>{% endif %}
+      {% if slot.status == 'deactivated' and not slot.wow_delta %}<div style="font-size:9px;color:var(--text-faint);margin-top:4px">no target</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% if not training_objectives.active %}
+  <div style="text-align:center;color:var(--text-muted);font-size:11px;margin:-8px 0 16px">{{ training_objectives.prompt }}</div>
+  {% endif %}
+  {% endif %}
+
+  <!-- 2. Last 7 Days — Daily Volume Bar Chart -->
   {% if hero_card %}
   <div style="background:var(--surface);border-radius:12px;padding:16px;margin-bottom:16px;border:1px solid rgba(255,255,255,0.06)">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
@@ -470,54 +498,44 @@
         <div style="font-size:22px;font-weight:700;color:var(--text)">{{ '%.0f' % hero_card.volume_km }}km <span style="font-size:13px;color:var(--text-muted);font-weight:400">/ {{ hero_card.run_count }} runs</span></div>
       </div>
       {% if hero_card.compliance_pct is not none %}
-      <div style="text-align:center">
-        <div style="width:52px;height:52px;border-radius:50%;background:conic-gradient(var(--safe) {{ hero_card.compliance_pct * 3.6 }}deg, rgba(255,255,255,0.08) 0);display:flex;align-items:center;justify-content:center">
-          <div style="width:40px;height:40px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--text)">{{ hero_card.compliance_pct }}%</div>
-        </div>
-        <div style="font-size:8px;color:var(--text-dim);margin-top:2px">{{ hero_card.compliance_completed }}/{{ hero_card.compliance_total }} plan</div>
+      <div style="font-size:11px;color:var(--text-muted)">
+        <span style="font-weight:700;color:{% if hero_card.compliance_pct >= 80 %}var(--safe){% elif hero_card.compliance_pct >= 50 %}var(--caution){% else %}var(--danger){% endif %}">{{ hero_card.compliance_pct }}%</span> plan
+        <span style="font-size:9px;color:var(--text-dim)">({{ hero_card.compliance_completed }}/{{ hero_card.compliance_total }})</span>
       </div>
       {% endif %}
     </div>
-    {% if hero_card.volume_target_km %}
-    <div style="background:rgba(255,255,255,0.06);border-radius:6px;height:8px;margin-bottom:8px;overflow:hidden">
-      <div style="height:100%;border-radius:6px;background:{% if hero_card.volume_pct > 110 %}var(--caution){% elif hero_card.volume_pct >= 90 %}var(--safe){% elif hero_card.volume_pct >= 60 %}var(--z2){% else %}var(--text-dim){% endif %};width:{{ [hero_card.volume_pct, 100] | min }}%"></div>
+    {% if hero_card.daily_km %}
+    <div style="height:100px;margin-bottom:4px">
+      <canvas id="daily-volume-chart" style="width:100%;height:100%"></canvas>
     </div>
-    <div style="font-size:9px;color:var(--text-dim)">{{ '%.0f' % hero_card.volume_km }}/{{ '%.0f' % hero_card.volume_target_km }}km target ({{ hero_card.volume_pct }}%){% if hero_card.volume_pct > 110 %} — consider backing off{% endif %}</div>
-    {% endif %}
-    {% if hero_card.wow_sentence %}
-    <div style="font-size:11px;color:#94a3b8;line-height:1.5;margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04)">{{ hero_card.wow_sentence }}</div>
-    {% endif %}
-    {% if hero_card.next_workouts %}
-    <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04)">
-      <div style="font-size:9px;color:var(--text-dim);margin-bottom:4px">NEXT UP</div>
-      {% for w in hero_card.next_workouts %}
-      <div style="display:flex;gap:8px;font-size:10px;padding:2px 0">
-        <span style="color:var(--text-muted);font-family:var(--mono);width:60px">{{ w.date_label }}</span>
-        <span style="color:var(--text)">{{ w.name }}</span>
-        {% if w.distance_km != '?' %}<span style="color:var(--text-dim);font-family:var(--mono)">{{ w.distance_km }}km</span>{% endif %}
-      </div>
-      {% endfor %}
+    {% if hero_card.phase_targets %}
+    <div style="font-size:9px;color:var(--text-dim)">
+      {{ hero_card.phase_targets.phase_name }}: {{ '%.0f' % hero_card.phase_targets.current_min }}–{{ '%.0f' % hero_card.phase_targets.current_max }} km/wk
+      {% if hero_card.volume_pct is not none %} · <span style="font-weight:600;color:{% if hero_card.volume_pct > 110 %}var(--caution){% elif hero_card.volume_pct >= 90 %}var(--safe){% elif hero_card.volume_pct >= 60 %}var(--z2){% else %}var(--text-dim){% endif %}">{{ hero_card.volume_pct }}%</span> of target{% endif %}
     </div>
+    {% endif %}
     {% endif %}
   </div>
   {% endif %}
 
-  <!-- 2. Training Objectives (4 slots) -->
-  {% if training_objectives %}
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
-    {% for slot in training_objectives.slots %}
-    <div style="background:var(--surface);border-radius:10px;padding:10px;border:1px solid rgba(255,255,255,0.06);{% if slot.status == 'deactivated' %}opacity:0.6{% endif %}">
-      <div style="font-size:9px;font-weight:600;color:{% if slot.status == 'on_track' %}var(--safe){% elif slot.status == 'at_risk' %}var(--caution){% elif slot.status == 'off_track' %}var(--danger){% else %}var(--text-dim){% endif %};margin-bottom:4px">{{ slot.name }}</div>
-      <div style="font-size:16px;font-weight:700;color:var(--text)">{{ slot.current if slot.current is not none else '—' }}<span style="font-size:10px;color:var(--text-dim);font-weight:400"> {{ slot.unit }}</span></div>
-      {% if slot.target %}<div style="font-size:9px;color:var(--text-dim)">target: {{ slot.target }}</div>{% endif %}
-      {% if slot.streak_label %}<div style="font-size:8px;color:{% if 'secured' in slot.streak_label %}var(--safe){% else %}var(--caution){% endif %};margin-top:3px">{{ slot.streak_label }}</div>{% endif %}
-      {% if slot.status == 'deactivated' %}<div style="font-size:8px;color:var(--text-faint);margin-top:2px">no target</div>{% endif %}
+  <!-- Next Up — Upcoming planned runs (same card layout as past runs) -->
+  {% if hero_card and hero_card.next_workouts %}
+  <div class="sec"><h2>Next Up</h2><div class="line"></div></div>
+  {% for w in hero_card.next_workouts %}
+  <div style="background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:8px;border:1px solid rgba(255,255,255,0.06);border-left:3px solid rgba(255,255,255,0.12)">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+      <span style="font-family:var(--mono);font-size:10px;color:var(--text-dim);flex-shrink:0">{{ w.date_label }}</span>
+      <span style="font-size:11px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:400px">{{ w.name }}</span>
+      <span style="font-size:9px;padding:1px 6px;border-radius:4px;background:rgba(255,255,255,0.06);color:var(--text-muted);flex-shrink:0">{{ w.type }}</span>
     </div>
-    {% endfor %}
+    <div style="display:flex;gap:12px;font-family:var(--mono);font-size:10px;color:var(--text-muted)">
+      {% if w.distance_km != '?' %}<span>{{ w.distance_km }}km</span>{% endif %}
+      <span style="color:{% if w.zone in ['Z1','Z2'] %}var(--z2){% elif w.zone == 'Z3' %}var(--z3){% elif w.zone in ['Z4','Z5'] %}var(--z4){% else %}var(--text-muted){% endif %}">{{ w.zone }}</span>
+      {% if w.hr_range %}<span>HR {{ w.hr_range }}</span>{% endif %}
+      {% if w.days == 0 %}<span style="color:var(--safe);font-weight:600">today</span>{% elif w.days == 1 %}<span style="color:var(--text-dim)">tomorrow</span>{% else %}<span style="color:var(--text-dim)">in {{ w.days }}d</span>{% endif %}
+    </div>
   </div>
-  {% if not training_objectives.active %}
-  <div style="text-align:center;color:var(--text-muted);font-size:11px;margin:-8px 0 16px">{{ training_objectives.prompt }}</div>
-  {% endif %}
+  {% endfor %}
   {% endif %}
 
   <!-- 3. Last 7 Days — Run Detail Cards -->
@@ -631,13 +649,9 @@
   </div>
   {% endif %}
 
-  <!-- 5. Volume Trend -->
+  <!-- 5. Volume & Run Type Mix -->
   <div class="sec"><h2>Volume Trend</h2><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-volume" height="160"></canvas></div>
-
-  <!-- 6. Run Type Mix -->
-  <div class="sec"><h2>Run Type Mix</h2><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-runtypes" height="120"></canvas></div>
 </div>
 
 <!-- BODY -->
@@ -806,11 +820,12 @@ function resolveAnnotationCollisions(annotations) {
   }
   return annotations;
 }
-const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-stress','chart-efficiency','chart-cadence','chart-rpe','chart-acwr','chart-pacecv','chart-effort-gap','chart-vo2','chart-zones','chart-drift-trend']);
+const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-stress','chart-efficiency','chart-cadence','chart-rpe','chart-acwr','chart-pacecv','chart-effort-gap','chart-vo2','chart-zones','chart-drift-trend','chart-volume']);
+const weeklyCharts = new Set(['chart-volume']);
 // chart-weight has its own time scale config (set in charts.py) — not in this set to avoid double-applying
 
 // Phase bar data + plugin for Profile time-series charts
-const phaseBarCharts = new Set(['chart-vo2','chart-efficiency','chart-cadence','chart-pacecv','chart-effort-gap','chart-weight','chart-zones','chart-drift-trend']);
+const phaseBarCharts = new Set(['chart-vo2','chart-efficiency','chart-cadence','chart-pacecv','chart-effort-gap','chart-weight','chart-zones','chart-drift-trend','chart-volume']);
 {% if training_phases_json %}
 const trainingPhases = {{ training_phases_json | safe }};
 {% else %}
@@ -914,11 +929,17 @@ const chartInstances = {};
       cfg.options.scales.x.min = profileXMin;
       cfg.options.scales.x.max = profileXMax;
       cfg.options.scales.x.ticks = { maxRotation: 0, autoSkipPadding: 20 };
+    } else if (weeklyCharts.has('{{ chart.id }}')) {
+      // Weekly aggregations: week unit, same range as profile charts
+      cfg.options.scales.x.time = { unit: 'week', displayFormats: { week: 'MMM d' }, tooltipFormat: 'yyyy-MM-dd' };
+      cfg.options.scales.x.min = profileXMin;
+      cfg.options.scales.x.max = profileXMax;
+      cfg.options.scales.x.ticks = { maxRotation: 0, autoSkipPadding: 20 };
     } else {
       const labels = cfg.data.labels || [];
       const span = labels.length > 1 ? (new Date(labels[labels.length-1]) - new Date(labels[0])) / 86400000 : 0;
-      const unit = span > 180 ? 'month' : 'day';
-      cfg.options.scales.x.time = { unit: unit, displayFormats: { day: 'MMM d, yy', month: "MMM ''yy" }, tooltipFormat: 'yyyy-MM-dd' };
+      const unit = span > 180 ? 'month' : span > 42 ? 'week' : 'day';
+      cfg.options.scales.x.time = { unit: unit, displayFormats: { day: 'MMM d', week: 'MMM d', month: "MMM ''yy" }, tooltipFormat: 'yyyy-MM-dd' };
     }
     cfg.options.scales.x.grid = { display: false };
   }
@@ -1017,6 +1038,43 @@ function _zoneStyle(zone) {
   var r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
   return { bg:'rgba('+r+','+g+','+b+',0.22)', border:'rgba('+r+','+g+','+b+',0.45)', text:hex };
 }
+
+// ─── DAILY VOLUME BAR CHART (Training tab — hero card) ───
+{% if hero_card and hero_card.daily_km %}
+(function() {
+  var el = document.getElementById('daily-volume-chart');
+  if (!el) return;
+  var labels = {{ hero_card.daily_km | map(attribute='label') | list | tojson }};
+  var data = {{ hero_card.daily_km | map(attribute='km') | list | tojson }};
+  var colors = data.map(function(v) { return v > 0 ? 'rgba(96,165,250,0.85)' : 'rgba(255,255,255,0.04)'; });
+  var ann = {};
+  {% if hero_card.phase_targets %}
+  var dailyTarget = {{ '%.1f' % (hero_card.phase_targets.current_min / 7 * 2) }};
+  ann.targetLine = {
+    type: 'line', yMin: dailyTarget, yMax: dailyTarget,
+    borderColor: 'rgba(52,211,153,0.45)', borderWidth: 1, borderDash: [4,3],
+    label: { display: true, content: '{{ "%.0f" % hero_card.phase_targets.current_min }}km/wk pace', position: 'end',
+             color: 'rgba(52,211,153,0.7)', font: { size: 8 }, backgroundColor: 'transparent', padding: 0 }
+  };
+  {% endif %}
+  new Chart(el, {
+    type: 'bar',
+    data: { labels: labels, datasets: [{ data: data, backgroundColor: colors, borderRadius: 4, barPercentage: 0.7 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#64748b', font: { size: 9 } } },
+        y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#64748b', font: { size: 9 }, callback: function(v) { return v + 'km'; } } }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: function(c) { return c.raw + ' km'; } } },
+        annotation: { annotations: ann }
+      }
+    }
+  });
+})();
+{% endif %}
 
 // ─── SPLIT CHARTS (Training tab — per-run detail) ───
 {% if last_7_days_runs %}

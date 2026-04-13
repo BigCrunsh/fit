@@ -11,40 +11,66 @@ from fit.report.sections import SAFE, CAUTION, DANGER, Z1, Z2, Z3, Z4, Z5, ACCEN
 logger = logging.getLogger(__name__)
 
 
+def _week_to_iso_date(week_str):
+    """Convert ISO week string (e.g., '2026-W14') to ISO date of that Sunday."""
+    from datetime import datetime
+    try:
+        return datetime.strptime(week_str + "-7", "%G-W%V-%u").strftime("%Y-%m-%d")
+    except Exception:
+        return week_str
+
 
 def _all_charts(conn):
     charts = []
 
-    # Volume (Training tab) — 12 weeks default, phase target as shaded band, rolling current bar
-    from fit.analysis import compute_rolling_week
-    weeks = conn.execute("SELECT week, run_km, longest_run_km FROM weekly_agg WHERE run_km > 0 ORDER BY week").fetchall()
-    # Limit to last 12 weeks
-    if len(weeks) > 12:
-        weeks = weeks[-12:]
-    if weeks:
-        def _week_end_label(w):
-            try:
-                from datetime import datetime
-                return datetime.strptime(
-                    w + "-7", "%G-W%V-%u"
-                ).strftime("%b %-d")
-            except Exception:
-                return w
-        labels = [_week_end_label(w["week"]) for w in weeks]
-        data = [w["run_km"] for w in weeks]
-        bg_colors = ["rgba(56,189,248,0.5)"] * len(weeks)
-
-        # Add rolling 7-day bar as "current" if current ISO week isn't in the data
-        rolling = compute_rolling_week(conn)
+    # Volume by run type (Training tab) — stacked bar, km per type per week
+    from datetime import timedelta as _td_vol, datetime as _dt_vol
+    type_km_rows = conn.execute(f"""
+        SELECT strftime('%Y-W', date, 'weekday 0', '-6 days') ||
+               substr('0' || (cast(strftime('%W', date) as integer)), -2) as week,
+               run_type, ROUND(SUM(distance_km), 1) as km
+        FROM activities WHERE type IN {RUNNING_TYPES_SQL} AND run_type IS NOT NULL
+        GROUP BY week, run_type ORDER BY week
+    """).fetchall()
+    if type_km_rows:
         today = date.today()
-        iso = today.isocalendar()
-        current_week = f"{iso[0]}-W{iso[1]:02d}"
-        if current_week not in labels and rolling["run_km"] > 0:
-            labels.append("Last 7d")
-            data.append(rolling["run_km"])
-            bg_colors.append("rgba(56,189,248,0.8)")  # brighter for rolling
+        # Build continuous week grid
+        valid_wks = [r["week"] for r in type_km_rows if r["week"] and r["week"] > "2000-W01"]
+        if not valid_wks:
+            valid_wks = [f"{today.isocalendar()[0]}-W{today.isocalendar()[1]:02d}"]
+        earliest_wk = min(valid_wks)
+        try:
+            d = _dt_vol.strptime(earliest_wk + "-1", "%G-W%V-%u").date()
+        except ValueError:
+            d = today - _td_vol(weeks=12)
+        weeks_iso = []
+        weeks_labels = []
+        while d <= today:
+            iso = d.isocalendar()
+            weeks_iso.append(f"{iso[0]}-W{iso[1]:02d}")
+            weeks_labels.append(_week_to_iso_date(f"{iso[0]}-W{iso[1]:02d}"))
+            d += _td_vol(weeks=1)
 
-        # Phase target as shaded band (box annotation, 40+ hex opacity)
+        type_names = ["easy", "long", "tempo", "progression", "intervals", "recovery", "race"]
+        type_colors = {
+            "easy": Z2,               # blue-400
+            "recovery": Z1 + "80",    # blue-300 faded
+            "long": "#3b82f6",        # blue-500
+            "tempo": Z3,              # warm yellow
+            "progression": "#a78bfa", # purple-400
+            "intervals": Z4,          # orange
+            "race": Z5,               # red
+        }
+        datasets = []
+        for t in type_names:
+            data = []
+            for w in weeks_iso:
+                km = sum(r["km"] for r in type_km_rows if r["week"] == w and r["run_type"] == t)
+                data.append(km)
+            if any(v > 0 for v in data):
+                datasets.append({"label": t, "data": data, "backgroundColor": type_colors.get(t, Z2), "stack": "s"})
+
+        # Phase target band
         phase_vol = conn.execute("SELECT weekly_km_min, weekly_km_max FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
         vol_annots = {}
         if phase_vol and phase_vol["weekly_km_min"]:
@@ -55,41 +81,24 @@ def _all_charts(conn):
                 "backgroundColor": SAFE + "40",
                 "borderWidth": 0,
                 "label": {
-                    "content": f"target {phase_vol['weekly_km_min']:.0f}-{phase_vol['weekly_km_max']:.0f}km",
+                    "content": f"target {phase_vol['weekly_km_min']:.0f}–{phase_vol['weekly_km_max']:.0f} km",
                     "display": True, "position": {"x": "end", "y": "start"},
                     "font": {"size": 8}, "color": SAFE + "90",
                 },
             }
 
-        # Gap annotations: shaded regions for training breaks >14 days
-        from fit.narratives import generate_volume_story
-        vol_story = generate_volume_story(conn)
-        if vol_story and vol_story.get("gaps"):
-            for i, gap in enumerate(vol_story["gaps"]):
-                # Find labels that bracket this gap
-                vol_annots[f"gap_{i}"] = {
-                    "type": "box",
-                    "xMin": gap["start"][:10],
-                    "xMax": gap["end"][:10],
-                    "backgroundColor": "rgba(255,255,255,0.05)",
-                    "borderWidth": 0,
-                    "label": {
-                        "content": f"{gap['days']}d break",
-                        "display": True, "position": "center",
-                        "font": {"size": 7}, "color": "rgba(255,255,255,0.3)",
-                    },
-                }
-
-        charts.append({"id": "chart-volume", "config": json.dumps({
-            "type": "bar",
-            "data": {"labels": labels,
-                     "datasets": [{"label": "km/week", "data": data,
-                                   "backgroundColor": bg_colors, "borderRadius": 4}]},
-            "options": {"responsive": True, "plugins": {"legend": {"display": False},
-                                                         "annotation": {"annotations": vol_annots} if vol_annots else {}},
-                        "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
-                                   "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
-        })})
+        if datasets:
+            charts.append({"id": "chart-volume", "config": json.dumps({
+                "type": "bar",
+                "data": {"labels": weeks_labels, "datasets": datasets},
+                "options": {"responsive": True,
+                            "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}},
+                                        "annotation": {"annotations": vol_annots} if vol_annots else {}},
+                            "scales": {"x": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}},
+                                       "y": {"stacked": True, "beginAtZero": True,
+                                             "grid": {"color": "rgba(255,255,255,0.03)"},
+                                             "title": {"display": True, "text": "km/week"}}}}
+            })})
 
     # Readiness (Body tab) — standalone bar chart, no competing lines
     health = conn.execute("SELECT date, training_readiness, resting_heart_rate, hrv_last_night FROM daily_health WHERE date >= date('now','-30 days') ORDER BY date").fetchall()
@@ -748,7 +757,7 @@ def _all_charts(conn):
         acwr_annots.update(_get_acwr_annotations(conn))
         charts.append({"id": "chart-acwr", "config": json.dumps({
             "type": "line",
-            "data": {"labels": [a["week"] for a in acwr_data],
+            "data": {"labels": [_week_to_iso_date(a["week"]) for a in acwr_data],
                      "datasets": [{"label": "ACWR", "data": [a["acwr"] for a in acwr_data],
                                    "borderColor": ACCENT, "borderWidth": 2, "pointRadius": 4,
                                    "pointBackgroundColor": point_colors, "pointBorderColor": point_colors,
@@ -760,44 +769,7 @@ def _all_charts(conn):
                                          "title": {"display": True, "text": "ACWR (capped at 3.0)"}}}}
         })})
 
-    # Run type breakdown stacked (Training tab)
-    type_weeks = conn.execute(f"""
-        SELECT strftime('%Y-W', date, 'weekday 0', '-6 days') ||
-               substr('0' || (cast(strftime('%W', date) as integer)), -2) as week,
-               run_type, COUNT(*) as n
-        FROM activities WHERE type IN {RUNNING_TYPES_SQL} AND run_type IS NOT NULL
-        GROUP BY week, run_type ORDER BY week
-    """).fetchall()
-    if type_weeks:
-        weeks_set = sorted({r["week"] for r in type_weeks})[-12:]  # last 12 weeks
-        type_names = ["easy", "long", "tempo", "intervals", "recovery", "race"]
-        # Distinct colors: blue family for easy, warm for hard, purple for race
-        # Long runs are aerobic base — same blue family as easy/recovery
-        type_colors = {
-            "easy": Z2,               # blue-400
-            "recovery": Z1 + "80",    # blue-300 faded
-            "long": "#3b82f6",        # blue-500 (darker — distinct but same family)
-            "tempo": Z3,              # warm yellow
-            "intervals": Z4,          # orange
-            "race": ACCENT,           # purple
-        }
-        datasets = []
-        for t in type_names:
-            data = []
-            for w in weeks_set:
-                count = sum(r["n"] for r in type_weeks if r["week"] == w and r["run_type"] == t)
-                data.append(count)
-            if any(d > 0 for d in data):
-                datasets.append({"label": t, "data": data, "backgroundColor": type_colors.get(t, Z2), "stack": "s"})
-        if datasets:
-            charts.append({"id": "chart-runtypes", "config": json.dumps({
-                "type": "bar",
-                "data": {"labels": weeks_set, "datasets": datasets},
-                "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
-                            "scales": {"x": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}},
-                                       "y": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"},
-                                             "title": {"display": True, "text": "runs"}}}}
-            })})
+    # (Run type mix merged into chart-volume above)
 
     # Cadence trend (Fitness tab — W3)
     cadence = conn.execute(f"""
