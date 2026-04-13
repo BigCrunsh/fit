@@ -281,6 +281,177 @@ class TestSmartDefault:
 
 
 # ════════════════════════════════════════════════════════════════
+# Yesterday gap detection
+# ════════════════════════════════════════════════════════════════
+
+
+def _mock_today(iso_str):
+    """Context manager that patches date.today() and datetime.now() for checkin."""
+    from datetime import date as real_date, datetime as real_dt
+
+    fake_today = real_date.fromisoformat(iso_str)
+
+    class FakeDate(real_date):
+        @classmethod
+        def today(cls):
+            return fake_today
+
+        @classmethod
+        def fromisoformat(cls, s):
+            return real_date.fromisoformat(s)
+
+    mock_dt_cm = patch("fit.checkin.datetime")
+
+    class _Ctx:
+        def __init__(self, hour=9):
+            self.hour = hour
+
+        def __enter__(self):
+            self._date_patch = patch("fit.checkin.date", FakeDate)
+            self._date_patch.__enter__()
+            self._mock_dt = mock_dt_cm.__enter__()
+            self._mock_dt.now.return_value.hour = self.hour
+            self._mock_dt.side_effect = lambda *a, **k: real_dt(*a, **k)
+            return self
+
+        def __exit__(self, *args):
+            self._mock_dt.__exit__(*args)
+            self._date_patch.__exit__(*args)
+
+    return _Ctx
+
+
+class TestYesterdayGap:
+    """run_checkin prompts for yesterday's incomplete sections."""
+
+    @pytest.fixture(autouse=True)
+    def _clear(self, db):
+        db.execute("DELETE FROM checkins")
+        db.commit()
+
+    def test_no_row_prompts_morning(self, db):
+        """Yesterday has no checkin row at all → prompts for morning first."""
+        # Morning answers: sleep=Good, legs=Fresh, energy=Good, notes=""
+        answers = ["g", "f", "g", ""]
+        # Then today's morning: same
+        answers += ["g", "f", "g", ""]
+        with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
+            with _mock_today("2026-03-15")(hour=9):
+                run_checkin(db)
+        yesterday = db.execute(
+            "SELECT * FROM checkins WHERE date = '2026-03-14'"
+        ).fetchone()
+        assert yesterday is not None
+        assert yesterday["sleep_quality"] == "Good"
+
+    def test_partial_evening_prompts_evening(self, db):
+        """Yesterday has morning done but no evening → prompts for evening."""
+        db.execute(
+            "INSERT INTO checkins (date, sleep_quality, legs, energy) "
+            "VALUES ('2026-03-14', 'Good', 'Fresh', 'Good')"
+        )
+        db.commit()
+        # Evening answers: hydration=Good, eating=Good, alcohol=none, water="", weight=""
+        answers = ["g", "g", "n", "", ""]
+        # Then today's morning
+        answers += ["g", "f", "g", ""]
+        with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
+            with _mock_today("2026-03-15")(hour=9):
+                run_checkin(db)
+        yesterday = db.execute(
+            "SELECT * FROM checkins WHERE date = '2026-03-14'"
+        ).fetchone()
+        assert yesterday["hydration"] == "Good"
+        assert yesterday["eating"] == "Good"
+
+    def test_complete_yesterday_no_prompt(self, db):
+        """Yesterday fully complete → no yesterday prompt, goes to today."""
+        db.execute(
+            "INSERT INTO checkins (date, sleep_quality, legs, energy, "
+            "hydration, eating, rpe, alcohol) "
+            "VALUES ('2026-03-14', 'Good', 'Fresh', 'Good', "
+            "'OK', 'OK', 5, 0)"
+        )
+        db.commit()
+        # Only today's morning answers needed
+        answers = ["g", "f", "g", ""]
+        with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
+            with _mock_today("2026-03-15")(hour=9):
+                run_checkin(db)
+        today = db.execute(
+            "SELECT * FROM checkins WHERE date = '2026-03-15'"
+        ).fetchone()
+        assert today["sleep_quality"] == "Good"
+
+    def test_yesterday_run_gap_with_activity(self, db):
+        """Yesterday has morning but ran without RPE → prompts for run section."""
+        db.execute(
+            "INSERT INTO checkins (date, sleep_quality, legs, energy, "
+            "hydration, eating, alcohol) "
+            "VALUES ('2026-03-14', 'Good', 'Fresh', 'Good', 'OK', 'OK', 0)"
+        )
+        db.execute(
+            "INSERT INTO activities (date, type, name, distance_km, duration_min, "
+            "avg_hr, avg_speed) "
+            "VALUES ('2026-03-14', 'running', 'Easy run', 8.0, 50, 140, 9.6)"
+        )
+        db.commit()
+        # Run answers: RPE prompt + notes
+        answers = ["5", "felt ok"]
+        # Then today's morning
+        answers += ["g", "f", "g", ""]
+        with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
+            with _mock_today("2026-03-15")(hour=9):
+                run_checkin(db)
+        yesterday = db.execute(
+            "SELECT * FROM checkins WHERE date = '2026-03-14'"
+        ).fetchone()
+        assert yesterday["rpe"] == 5
+
+    def test_evening_prompt_not_limited_to_noon(self, db):
+        """Yesterday gap detected even after noon."""
+        db.execute(
+            "INSERT INTO checkins (date, sleep_quality, legs, energy) "
+            "VALUES ('2026-03-14', 'Good', 'Fresh', 'Good')"
+        )
+        db.commit()
+        # Evening for yesterday + evening for today (hour=19)
+        answers = ["g", "g", "n", "", ""]  # yesterday evening
+        answers += ["g", "g", "n", "", ""]  # today evening
+        with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
+            with _mock_today("2026-03-15")(hour=19):
+                run_checkin(db)
+        yesterday = db.execute(
+            "SELECT * FROM checkins WHERE date = '2026-03-14'"
+        ).fetchone()
+        assert yesterday["hydration"] == "Good"
+
+    def test_morning_done_no_evening_before_6pm(self, db):
+        """Morning done at 10am, no activity → no evening prompt, just status message."""
+        # Yesterday complete
+        db.execute(
+            "INSERT INTO checkins (date, sleep_quality, legs, energy, "
+            "hydration, eating, alcohol) "
+            "VALUES ('2026-03-14', 'Good', 'Fresh', 'Good', 'OK', 'OK', 0)"
+        )
+        # Today morning already done
+        db.execute(
+            "INSERT INTO checkins (date, sleep_quality, legs, energy) "
+            "VALUES ('2026-03-15', 'Good', 'Fresh', 'Good')"
+        )
+        db.commit()
+        # No Prompt.ask calls expected — should just print status
+        with patch("fit.checkin.Prompt.ask", side_effect=AssertionError("unexpected prompt")):
+            with _mock_today("2026-03-15")(hour=10):
+                run_checkin(db)
+        # Evening should NOT have been filled
+        today = db.execute(
+            "SELECT * FROM checkins WHERE date = '2026-03-15'"
+        ).fetchone()
+        assert today["hydration"] is None
+
+
+# ════════════════════════════════════════════════════════════════
 # CLI commands
 # ════════════════════════════════════════════════════════════════
 

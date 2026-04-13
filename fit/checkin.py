@@ -384,19 +384,42 @@ def run_checkin(conn, target_date=None, update=False):
             run_morning(conn, target)
         return
 
-    # Check yesterday's gaps (only when checking in for today, before noon)
-    if target == today and hour < 12 and not target_date:
+    # Check yesterday's gaps (only when checking in for today, no explicit date)
+    if target == today and not target_date:
         yesterday = (
             date.fromisoformat(today) - timedelta(days=1)
         ).isoformat()
         yd = _get_existing(conn, yesterday)
-        if yd and not (yd["hydration"] and yd["eating"]):
+        yd_activity = _get_today_activity(conn, yesterday)
+
+        yd_has_morning = (
+            yd and yd["sleep_quality"] and yd["legs"] and yd["energy"]
+        )
+        yd_has_rpe = yd and yd["rpe"] is not None
+        yd_has_evening = yd and yd["hydration"] and yd["eating"]
+
+        gaps = []
+        if not yd_has_morning:
+            gaps.append("morning")
+        if yd_activity and not yd_has_rpe:
+            gaps.append("run")
+        if not yd_has_evening:
+            gaps.append("evening")
+
+        if gaps:
             console.print(
-                "[yellow]Yesterday's evening check-in is incomplete.[/yellow]"
+                f"[yellow]Yesterday's check-in is incomplete "
+                f"({', '.join(gaps)}).[/yellow]"
             )
-            run_evening(conn, yesterday)
+            for section in gaps:
+                if section == "morning":
+                    run_morning(conn, yesterday)
+                elif section == "run":
+                    run_post_run(conn, yesterday)
+                elif section == "evening":
+                    run_evening(conn, yesterday)
             console.print()  # spacing before today's check-in
-            # Continue to today's morning
+            # Continue to today's check-in
 
     # Smart default based on time + state
     if not has_morning:
@@ -405,10 +428,17 @@ def run_checkin(conn, target_date=None, update=False):
         run_post_run(conn, target)
     elif hour >= 18 and not has_evening:
         run_evening(conn, target)
-    elif activity and not has_rpe:
-        run_post_run(conn, target)
+    elif not has_evening and (activity or has_rpe):
+        # All pre-evening sections done, nothing left until evening
+        console.print(
+            f"\n[dim]Morning done for {target}. "
+            f"Evening check-in opens after 6pm.[/dim]"
+        )
     elif not has_evening:
-        run_evening(conn, target)
+        console.print(
+            f"\n[dim]Morning done for {target}. "
+            f"Run and evening check-ins will open later.[/dim]"
+        )
     else:
         console.print(
             f"\n[dim]All check-ins done for {target}. "
