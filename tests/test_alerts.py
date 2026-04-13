@@ -128,8 +128,9 @@ class TestACWRRollingAlert:
         """ACWR undertraining alert fires when rolling ACWR < 0.6, regardless of day of week."""
         today = date.today()
         # Build 4 weeks of chronic history with decent total_load
+        # Start from w+2 so nearest chronic week doesn't overlap rolling 7-day window
         for w in range(4):
-            monday = today - timedelta(days=today.weekday()) - timedelta(weeks=w + 1)
+            monday = today - timedelta(days=today.weekday()) - timedelta(weeks=w + 2)
             week_label = f"{monday.isocalendar()[0]}-W{monday.isocalendar()[1]:02d}"
             db.execute(
                 "INSERT INTO weekly_agg (week, run_km, run_count, z12_pct, total_load) "
