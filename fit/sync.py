@@ -297,17 +297,44 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
 
 
 def _match_race_calendar(conn: sqlite3.Connection) -> None:
-    """Match race_calendar entries to activities by date. Tag matched activities as run_type='race'."""
+    """Match race_calendar entries to activities by date. Tag matched activities as run_type='race'.
+
+    Auto-completes 'registered' races whose date has passed when a matching activity exists.
+    When multiple activities exist on race day, picks the one closest in distance to the race.
+    """
+    from datetime import date as _date
+
+    # Auto-complete registered races whose date has passed and an activity exists
+    past_registered = conn.execute("""
+        SELECT rc.id, rc.date, rc.distance_km FROM race_calendar rc
+        WHERE rc.status = 'registered' AND rc.date < ?
+    """, (_date.today().isoformat(),)).fetchall()
+    for rc in past_registered:
+        activities = conn.execute(f"""
+            SELECT id, distance_km FROM activities
+            WHERE date = ? AND type IN {RUNNING_TYPES_SQL}
+        """, (rc["date"],)).fetchall()
+        if activities:
+            conn.execute("UPDATE race_calendar SET status = 'completed' WHERE id = ?", (rc["id"],))
+            logger.info("Auto-completed race %s on %s (activity found)", rc["id"], rc["date"])
+
+    # Match completed races without activity_id
     unmatched = conn.execute("""
         SELECT rc.id, rc.date, rc.distance_km FROM race_calendar rc
         WHERE rc.status = 'completed' AND rc.activity_id IS NULL
     """).fetchall()
     for rc in unmatched:
-        activity = conn.execute(f"""
+        activities = conn.execute(f"""
             SELECT id, distance_km, duration_min FROM activities
-            WHERE date = ? AND type IN {RUNNING_TYPES_SQL} ORDER BY distance_km DESC LIMIT 1
-        """, (rc["date"],)).fetchone()
-        if activity:
+            WHERE date = ? AND type IN {RUNNING_TYPES_SQL}
+        """, (rc["date"],)).fetchall()
+        if activities:
+            # Pick closest distance to race distance
+            race_km = rc["distance_km"] or 0
+            if race_km:
+                activity = min(activities, key=lambda a: abs((a["distance_km"] or 0) - race_km))
+            else:
+                activity = max(activities, key=lambda a: a["distance_km"] or 0)
             dur = activity["duration_min"] or 0
             garmin_time = f"{int(dur // 60)}:{int(dur % 60):02d}:{int((dur * 60) % 60):02d}"
             pace = (dur * 60) / activity["distance_km"] if activity["distance_km"] else None

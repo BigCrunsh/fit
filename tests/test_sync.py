@@ -155,23 +155,57 @@ class TestMatchRaceCalendar:
         act = db.execute("SELECT run_type FROM activities WHERE id = 'act-hm'").fetchone()
         assert act["run_type"] == "race"
 
-    def test_skips_registered_races(self, db):
+    def test_skips_future_registered_races(self, db):
+        """Registered races with a future date are not auto-completed."""
         db.execute("""
             INSERT INTO race_calendar (name, date, distance, distance_km, status)
-            VALUES ('Future Race', '2025-10-01', '10K', 10.0, 'registered')
+            VALUES ('Future Race', '2099-10-01', '10K', 10.0, 'registered')
         """)
         db.execute("""
             INSERT INTO activities (id, date, type, distance_km, duration_min)
-            VALUES ('act-f', '2025-10-01', 'running', 10.2, 48.0)
+            VALUES ('act-f', '2099-10-01', 'running', 10.2, 48.0)
         """)
         db.commit()
 
         _match_race_calendar(db)
 
-        rc = db.execute("SELECT activity_id FROM race_calendar WHERE name = 'Future Race'").fetchone()
+        rc = db.execute("SELECT activity_id, status FROM race_calendar WHERE name = 'Future Race'").fetchone()
         assert rc["activity_id"] is None
+        assert rc["status"] == "registered"
 
-    def test_picks_longest_run_on_date(self, db):
+    def test_auto_completes_past_registered_race(self, db):
+        """Registered races whose date has passed get auto-completed when an activity exists."""
+        db.execute("""
+            INSERT INTO race_calendar (name, date, distance, distance_km, status)
+            VALUES ('Past Race', '2025-06-01', '10K', 10.0, 'registered')
+        """)
+        db.execute("""
+            INSERT INTO activities (id, date, type, distance_km, duration_min)
+            VALUES ('act-past', '2025-06-01', 'running', 10.2, 48.0)
+        """)
+        db.commit()
+
+        _match_race_calendar(db)
+
+        rc = db.execute("SELECT activity_id, status FROM race_calendar WHERE name = 'Past Race'").fetchone()
+        assert rc["status"] == "completed"
+        assert rc["activity_id"] == "act-past"
+
+    def test_no_auto_complete_without_activity(self, db):
+        """Registered races whose date has passed stay registered if no activity exists."""
+        db.execute("""
+            INSERT INTO race_calendar (name, date, distance, distance_km, status)
+            VALUES ('Missed Race', '2025-06-01', '10K', 10.0, 'registered')
+        """)
+        db.commit()
+
+        _match_race_calendar(db)
+
+        rc = db.execute("SELECT status FROM race_calendar WHERE name = 'Missed Race'").fetchone()
+        assert rc["status"] == "registered"
+
+    def test_picks_closest_distance_on_date(self, db):
+        """When multiple activities on race day, picks closest distance to race."""
         db.execute("""
             INSERT INTO race_calendar (name, date, distance, distance_km, status)
             VALUES ('Park Run', '2025-02-01', '5K', 5.0, 'completed')
@@ -182,14 +216,18 @@ class TestMatchRaceCalendar:
         """)
         db.execute("""
             INSERT INTO activities (id, date, type, distance_km, duration_min)
-            VALUES ('act-long', '2025-02-01', 'running', 5.1, 25.0)
+            VALUES ('act-close', '2025-02-01', 'running', 5.1, 25.0)
+        """)
+        db.execute("""
+            INSERT INTO activities (id, date, type, distance_km, duration_min)
+            VALUES ('act-long', '2025-02-01', 'running', 12.0, 60.0)
         """)
         db.commit()
 
         _match_race_calendar(db)
 
         rc = db.execute("SELECT activity_id FROM race_calendar WHERE name = 'Park Run'").fetchone()
-        assert rc["activity_id"] == "act-long"
+        assert rc["activity_id"] == "act-close"
 
 
 # ════════════════════════════════════════════════════════════════
