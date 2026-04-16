@@ -1807,7 +1807,7 @@ def _last_7_days_runs(conn):
                srpe, splits_status
         FROM activities
         WHERE type IN {RUNNING_TYPES_SQL} AND date BETWEEN ? AND ?
-        ORDER BY date DESC
+        ORDER BY date DESC, id DESC
     """, (window_start, today.isoformat())).fetchall()
 
     result = []
@@ -1829,15 +1829,68 @@ def _last_7_days_runs(conn):
             "srpe": None,
         }
 
-        # Plan comparison (task 5.2)
-        planned = conn.execute("""
-            SELECT workout_name, workout_type, target_distance_km
+        # Plan comparison — match activity to planned workout
+        # Resolution priority:
+        #   1. Garmin ID link (garmin_workout_id == activity id)
+        #   2. Race activity → show race_calendar info instead of plan
+        #   3. Type match (workout_type == run_type), only if unique
+        #   4. Single plan for single unmatched activity
+        #   5. Ambiguous → leave unmatched
+        day_plans = conn.execute("""
+            SELECT workout_name, workout_type, target_distance_km, garmin_workout_id
             FROM planned_workouts WHERE date = ? AND status != 'skipped'
-            LIMIT 1
-        """, (r["date"],)).fetchone()
-        if planned:
+        """, (r["date"],)).fetchall()
+        planned = None
+        match_method = None
+        activity_id = str(r["id"])
+        run_type = r["run_type"] or ""
+
+        # 1. Direct Garmin ID link
+        for p in day_plans:
+            if p["garmin_workout_id"] and str(p["garmin_workout_id"]) == activity_id:
+                planned = p
+                match_method = "Garmin workout link"
+                break
+
+        # 2. Race activity → show race info from race_calendar
+        if not planned and run_type == "race":
+            race = conn.execute("""
+                SELECT name, target_time, result_time, garmin_time, distance
+                FROM race_calendar WHERE activity_id = ?
+            """, (activity_id,)).fetchone()
+            if race:
+                race_result = race["result_time"] or race["garmin_time"]
+                target = race["target_time"]
+                if race_result and target:
+                    verdict = "race"
+                else:
+                    verdict = "race"
+                run["plan_comparison"] = {
+                    "planned_name": race["name"],
+                    "planned_type": "race",
+                    "target_km": None,
+                    "verdict": verdict,
+                    "match_method": "race calendar",
+                    "race_result": race_result,
+                    "race_target": target,
+                }
+                # Skip remaining plan matching for race activities
+                planned = "race_handled"
+
+        # 3. Type match (only if unique)
+        if not planned:
+            type_matches = [p for p in day_plans if (p["workout_type"] or "") == run_type]
+            if len(type_matches) == 1:
+                planned = type_matches[0]
+                match_method = "type match"
+
+        # 4. Single plan for the day
+        if not planned and len(day_plans) == 1:
+            planned = day_plans[0]
+            match_method = "only plan"
+
+        if planned and planned != "race_handled":
             plan_type = planned["workout_type"] or ""
-            # Pacing verdict: if plan says easy but HR is Z3+, flag "too fast"
             verdict = "on target"
             if plan_type in ("easy", "recovery") and r["hr_zone"] in ("Z3", "Z4", "Z5"):
                 verdict = "too fast"
@@ -1848,9 +1901,9 @@ def _last_7_days_runs(conn):
                 "planned_type": plan_type,
                 "target_km": planned["target_distance_km"],
                 "verdict": verdict,
+                "match_method": match_method,
             }
-        else:
-            # Check if any plan exists at all to distinguish "unplanned" from "no plan loaded"
+        elif planned != "race_handled":
             has_any_plan = conn.execute(
                 "SELECT 1 FROM planned_workouts LIMIT 1"
             ).fetchone()

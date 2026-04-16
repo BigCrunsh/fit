@@ -559,8 +559,8 @@
       </div>
     </div>
     {% if run.plan_comparison %}
-    <div style="font-size:9px;margin-top:4px;color:{% if run.plan_comparison.verdict == 'on target' %}var(--safe){% elif run.plan_comparison.verdict == 'too fast' %}var(--danger){% elif run.plan_comparison.verdict == 'unplanned' %}var(--text-dim){% else %}var(--caution){% endif %}">
-      {% if run.plan_comparison.verdict == 'unplanned' %}Unplanned run{% else %}Plan: {{ run.plan_comparison.planned_name }} ({{ run.plan_comparison.planned_type }}) — {{ run.plan_comparison.verdict }}{% endif %}
+    <div style="font-size:9px;margin-top:4px;color:{% if run.plan_comparison.verdict == 'race' %}var(--z5){% elif run.plan_comparison.verdict == 'on target' %}var(--safe){% elif run.plan_comparison.verdict == 'too fast' %}var(--danger){% elif run.plan_comparison.verdict == 'unplanned' %}var(--text-dim){% else %}var(--caution){% endif %}">
+      {% if run.plan_comparison.verdict == 'race' %}Race: {{ run.plan_comparison.planned_name }}{% if run.plan_comparison.race_result %} — {{ run.plan_comparison.race_result }}{% endif %}{% if run.plan_comparison.race_target %} (target {{ run.plan_comparison.race_target }}){% endif %}{% elif run.plan_comparison.verdict == 'unplanned' %}Unplanned run{% else %}Plan: {{ run.plan_comparison.planned_name }} ({{ run.plan_comparison.planned_type }}) — {{ run.plan_comparison.verdict }}{% if run.plan_comparison.match_method %} <span style="color:var(--text-dim)">[{{ run.plan_comparison.match_method }}]</span>{% endif %}{% endif %}
     </div>
     {% endif %}
 

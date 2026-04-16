@@ -224,6 +224,110 @@ class TestLast7DaysRuns:
         assert len(runs) == 0
 
 
+    def test_plan_match_via_garmin_id(self, db):
+        """Garmin workout ID link takes priority over type match."""
+        today = date.today()
+        d = (today - timedelta(days=1)).isoformat()
+        # Two plans for the same day
+        db.execute(
+            "INSERT INTO planned_workouts (date, workout_name, workout_type, "
+            "garmin_workout_id, status) "
+            "VALUES (?, 'Intervals', 'intervals', 'act-int', 'completed')",
+            (d,),
+        )
+        db.execute(
+            "INSERT INTO planned_workouts (date, workout_name, workout_type, "
+            "garmin_workout_id, status, sequence_ordinal) "
+            "VALUES (?, 'Easy Run', 'easy', NULL, 'active', 2)",
+            (d,),
+        )
+        # Activity matches by Garmin ID
+        db.execute(
+            "INSERT INTO activities (id, date, type, name, distance_km, "
+            "duration_min, pace_sec_per_km, avg_hr, hr_zone, run_type) "
+            "VALUES ('act-int', ?, 'running', 'Intervals', 8, 45, 337, 160, 'Z4', 'intervals')",
+            (d,),
+        )
+        db.commit()
+
+        runs = _last_7_days_runs(db)
+        assert len(runs) == 1
+        assert runs[0]["plan_comparison"]["planned_name"] == "Intervals"
+        assert runs[0]["plan_comparison"]["match_method"] == "Garmin workout link"
+
+    def test_race_shows_race_calendar(self, db):
+        """Race activity shows race_calendar info, not training plan."""
+        today = date.today()
+        d = (today - timedelta(days=1)).isoformat()
+        # A training plan exists for the day
+        db.execute(
+            "INSERT INTO planned_workouts (date, workout_name, workout_type, status) "
+            "VALUES (?, 'Easy Run', 'easy', 'active')",
+            (d,),
+        )
+        # Race activity
+        db.execute(
+            "INSERT INTO activities (id, date, type, name, distance_km, "
+            "duration_min, pace_sec_per_km, avg_hr, hr_zone, run_type) "
+            "VALUES ('race-1', ?, 'running', 'Park Run', 5.0, 22, 264, 175, 'Z5', 'race')",
+            (d,),
+        )
+        # Race calendar entry linked to activity
+        db.execute(
+            "INSERT INTO race_calendar (name, date, distance, distance_km, "
+            "status, activity_id, garmin_time, target_time) "
+            "VALUES ('Park Run 5K', ?, '5K', 5.0, 'completed', 'race-1', '0:22:00', '0:21:30')",
+            (d,),
+        )
+        db.commit()
+
+        runs = _last_7_days_runs(db)
+        assert len(runs) == 1
+        assert runs[0]["plan_comparison"]["verdict"] == "race"
+        assert runs[0]["plan_comparison"]["planned_name"] == "Park Run 5K"
+        assert runs[0]["plan_comparison"]["race_result"] == "0:22:00"
+        assert runs[0]["plan_comparison"]["race_target"] == "0:21:30"
+
+    def test_two_activities_one_plan_garmin_id(self, db):
+        """Two activities, one plan with Garmin ID → plan matches linked activity, other is unplanned."""
+        today = date.today()
+        d = (today - timedelta(days=1)).isoformat()
+        db.execute(
+            "INSERT INTO planned_workouts (date, workout_name, workout_type, "
+            "garmin_workout_id, status) "
+            "VALUES (?, 'Intervals', 'intervals', 'act-train', 'completed')",
+            (d,),
+        )
+        db.execute(
+            "INSERT INTO activities (id, date, type, name, distance_km, "
+            "duration_min, pace_sec_per_km, avg_hr, hr_zone, run_type) "
+            "VALUES ('act-train', ?, 'running', 'Intervals', 8, 45, 337, 160, 'Z4', 'intervals')",
+            (d,),
+        )
+        db.execute(
+            "INSERT INTO activities (id, date, type, name, distance_km, "
+            "duration_min, pace_sec_per_km, avg_hr, hr_zone, run_type) "
+            "VALUES ('act-race', ?, 'running', 'Evening Race', 3, 14, 280, 180, 'Z5', 'race')",
+            (d,),
+        )
+        db.execute(
+            "INSERT INTO race_calendar (name, date, distance, distance_km, "
+            "status, activity_id, garmin_time) "
+            "VALUES ('Evening 3K', ?, '3K', 3.0, 'completed', 'act-race', '0:14:00')",
+            (d,),
+        )
+        db.commit()
+
+        runs = _last_7_days_runs(db)
+        assert len(runs) == 2
+        # Ordered by id DESC: act-train first (higher id string), act-race second
+        by_id = {r["name"]: r for r in runs}
+        assert by_id["Intervals"]["plan_comparison"]["planned_name"] == "Intervals"
+        assert by_id["Intervals"]["plan_comparison"]["match_method"] == "Garmin workout link"
+        assert by_id["Evening Race"]["plan_comparison"]["verdict"] == "race"
+        assert by_id["Evening Race"]["plan_comparison"]["planned_name"] == "Evening 3K"
+
+
 class TestWeeklyPlanAdherence:
     def test_no_plan_data(self, db):
         """Returns empty list with no planned workouts."""
