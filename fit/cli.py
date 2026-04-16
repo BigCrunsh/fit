@@ -416,7 +416,7 @@ def races_list():
         for r in rows:
             sc = {"completed": "green", "registered": "cyan", "planned": "dim", "dns": "red", "dnf": "red"}.get(r["status"], "dim")
             matched = "[green]✓[/]" if r["activity_id"] else " "
-            result = r["result_time"] or "—"
+            result = r["result_time"] or r["garmin_time"] or "—"
             target = r["target_time"] or "—"
             t.add_row(matched, str(r["id"]), r["date"], r["distance"],
                       result, target, f"[{sc}]{r['name']}[/]")
