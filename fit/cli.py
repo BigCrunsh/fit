@@ -116,6 +116,103 @@ def splits(backfill: bool, activity_id: str):
         conn.close()
 
 
+@main.group()
+def backfill():
+    """One-shot data backfills."""
+
+
+@backfill.command("rpe")
+@click.option("--refresh", is_flag=True,
+              help="Re-fetch RPE for all running activities, even if already populated. "
+                   "Default sync only refreshes the last 14 days; use this to force a full refresh.")
+def backfill_rpe(refresh: bool):
+    """Backfill per-activity RPE/feel/compliance from Garmin.
+
+    Walks all running activities lacking these fields and calls
+    api.get_activity(id) for each. Idempotent — re-running skips
+    activities already populated unless --refresh is passed.
+    """
+    from rich.progress import (Progress, SpinnerColumn, TextColumn,
+                               BarColumn, MofNCompleteColumn, TimeElapsedColumn)
+
+    from fit.config import get_config
+    from fit.db import get_db
+    from fit import garmin
+    from fit.analysis import RUNNING_TYPES_SQL
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+
+    try:
+        api = garmin.connect(config["sync"]["garmin_token_dir"])
+        if refresh:
+            rows = conn.execute(
+                f"SELECT id, name FROM activities "
+                f"WHERE type IN {RUNNING_TYPES_SQL} ORDER BY date DESC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"SELECT id, name FROM activities "
+                f"WHERE type IN {RUNNING_TYPES_SQL} "
+                f"AND (rpe IS NULL OR feel IS NULL OR compliance_score IS NULL) "
+                f"ORDER BY date DESC"
+            ).fetchall()
+
+        if not rows:
+            console.print("[dim]Nothing to backfill — all running activities have RPE/feel/compliance populated.[/dim]")
+            return
+
+        console.print(f"[bold]Backfilling RPE for {len(rows)} activities...[/bold]")
+        updated = 0
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+        ) as progress:
+            task = progress.add_task("RPE", total=len(rows))
+            for r in rows:
+                try:
+                    g = garmin.fetch_activity_rpe(api, r["id"])
+                except Exception as e:
+                    logger.debug("RPE fetch failed for %s: %s", r["id"], e)
+                    progress.advance(task)
+                    continue
+                if any(v is not None for v in g.values()):
+                    if refresh:
+                        conn.execute(
+                            "UPDATE activities SET "
+                            "rpe = COALESCE(?, rpe), "
+                            "feel = COALESCE(?, feel), "
+                            "compliance_score = COALESCE(?, compliance_score) "
+                            "WHERE id = ?",
+                            (g["rpe"], g["feel"], g["compliance_score"], r["id"]),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE activities SET "
+                            "rpe = COALESCE(rpe, ?), "
+                            "feel = COALESCE(feel, ?), "
+                            "compliance_score = COALESCE(compliance_score, ?) "
+                            "WHERE id = ?",
+                            (g["rpe"], g["feel"], g["compliance_score"], r["id"]),
+                        )
+                    updated += 1
+                progress.advance(task)
+            conn.commit()
+
+        console.print(f"\n[bold green]Done.[/bold green] Updated {updated} of {len(rows)} activities.")
+
+        # Recompute sRPE for activities that now have RPE
+        from fit.analysis import compute_srpe
+        n = compute_srpe(conn)
+        if n:
+            console.print(f"  [dim]sRPE computed for {n} activities[/dim]")
+    finally:
+        conn.close()
+
+
 @main.group(invoke_without_command=True)
 @click.pass_context
 def checkin(ctx):
