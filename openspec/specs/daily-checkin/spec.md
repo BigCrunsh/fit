@@ -1,19 +1,19 @@
 ## ADDED Requirements
 
 ### Requirement: Interactive daily check-in CLI
-`fit checkin` SHALL present an interactive terminal prompt collecting: hydration (Low / OK / Good), alcohol (drink count + optional detail text), leg freshness (Heavy / OK / Fresh), eating quality (Poor / OK / Good), water intake (liters), energy level (Low / Normal / Good), sleep quality (Poor / OK / Good — subjective, complements Garmin sleep data), RPE (Rate of Perceived Exertion, 1-10, optional — how hard did today's workout feel), optional weight (kg), and free-text notes. The CLI SHALL use Rich for formatted terminal output.
+The system SHALL provide a `fit checkin` CLI command that interactively prompts for daily wellness inputs and stores them via INSERT ON CONFLICT into the `checkins` table. Inputs SHALL be split across three moments: morning (sleep quality, legs, energy), post-run (session notes only), and evening (hydration, eating, alcohol, alcohol detail, water). RPE is NOT prompted in any check-in moment — it is sourced per-activity from Garmin during sync.
 
-#### Scenario: Complete check-in with all fields
-- **WHEN** user runs `fit checkin` and provides values for all fields
-- **THEN** a row is inserted into the `checkins` table with the current date and all provided values, and a confirmation is displayed
+#### Scenario: Morning check-in collects readiness fields
+- **WHEN** user runs `fit checkin morning`
+- **THEN** the system prompts for sleep quality, legs, energy, and notes; saves to `checkins` row for today
 
-#### Scenario: Check-in with skipped optional fields
-- **WHEN** user runs `fit checkin` and presses enter to skip weight and notes
-- **THEN** the row is inserted with `NULL` for skipped fields
+#### Scenario: Post-run check-in collects session notes only
+- **WHEN** user runs `fit checkin run` after a running activity
+- **THEN** the system displays the activity's name, distance, HR zone, and aerobic TE for context, then prompts for session notes only (no RPE prompt)
 
-#### Scenario: Weight provided in check-in
-- **WHEN** user enters a weight value during `fit checkin`
-- **THEN** the weight is stored in both `checkins` (as context) and `body_comp` (as a measurement with `source = 'checkin'`)
+#### Scenario: Evening check-in collects recovery fields
+- **WHEN** user runs `fit checkin evening`
+- **THEN** the system prompts for hydration, eating, alcohol (with optional detail), and water liters; saves to `checkins` row for today
 
 ### Requirement: Check-in uses single-key input for categorical fields
 Categorical fields (hydration, legs, eating, energy) SHALL accept single-key input: first letter of the option (e.g., `g` for Good, `h` for Heavy, `l` for Low). The CLI SHALL display the key mapping inline (e.g., `[L]ow / [O]K / [G]ood`).
@@ -36,21 +36,6 @@ The system SHALL prevent multiple check-ins for the same date. If a check-in alr
 #### Scenario: Duplicate check-in same day
 - **WHEN** user runs `fit checkin` and a check-in already exists for today
 - **THEN** the CLI shows the existing check-in values and prompts "Overwrite? [y/N]"
-
-### Requirement: RPE captures perceived workout effort
-The RPE field SHALL accept an integer 1-10 or be skipped (enter = skip, stored as NULL). If an activity exists for today, the CLI SHALL show the activity name and HR to help calibrate the RPE rating. The RPE value is stored in `checkins.rpe` and also written to the most recent activity's `activities.rpe` if one exists for today.
-
-#### Scenario: RPE entered with activity today
-- **WHEN** user enters RPE 7 and a running activity exists for today
-- **THEN** `checkins.rpe = 7` AND `activities.rpe = 7` for today's activity
-
-#### Scenario: RPE entered without activity today
-- **WHEN** user enters RPE 3 and no activity exists for today (rest day)
-- **THEN** `checkins.rpe = 3` (general day effort), no activity update
-
-#### Scenario: RPE skipped
-- **WHEN** user presses enter to skip RPE
-- **THEN** `checkins.rpe` is NULL
 
 ### Requirement: Alcohol detail captures free text
 The alcohol field SHALL capture both a numeric count and an optional free-text detail (e.g., "2 beers", "1 glass wine"). The count goes to `checkins.alcohol` and the detail to `checkins.alcohol_detail`.

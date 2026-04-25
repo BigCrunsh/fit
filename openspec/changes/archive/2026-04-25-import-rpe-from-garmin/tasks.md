@@ -63,9 +63,10 @@
 
 ## 10. Commit (logical units)
 
-- [ ] 10.1 Commit migration + Garmin extraction (1.x + 2.x).
-- [ ] 10.2 Commit sync integration + sRPE source switch (3.x + 5.x).
-- [ ] 10.3 Commit backfill command (4.x).
-- [ ] 10.4 Commit check-in changes (6.x).
-- [ ] 10.5 Commit dashboard display (7.x).
-- [ ] 10.6 Commit test additions (8.x) — split per area if needed.
+- [x] 10.1 Commit OpenSpec artifacts (proposal/design/specs/tasks).
+- [x] 10.2 Commit migration + Garmin extraction (1.x + 2.x). [de18b78]
+- [x] 10.3 Commit sync integration + sRPE source switch (3.x + 5.x). [8812a7a]
+- [x] 10.4 Commit backfill command (4.x). [195b79b]
+- [x] 10.5 Commit check-in changes (6.x). [bb77ebc]
+- [x] 10.6 Commit dashboard display (7.x). [5a2c6d6]
+- [x] 10.7 Commit docs updates (CLAUDE.md + README.md). [c97a99f]
