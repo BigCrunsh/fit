@@ -557,6 +557,13 @@
         {% if run.training_load %}<span>load {{ run.training_load }}</span>{% endif %}
         {% if run.effort_class %}<span style="font-size:9px;color:var(--text-dim)">{{ run.effort_class }}</span>{% endif %}
       </div>
+      {% if run.rpe is not none or run.feel is not none or run.compliance_score is not none %}
+      <div style="display:flex;gap:12px;font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-top:2px">
+        <span>RPE {{ run.rpe if run.rpe is not none else '—' }}</span>
+        <span>Feel {{ run.feel_label if run.feel_label else '—' }}</span>
+        <span>Compliance {{ run.compliance_score ~ '%' if run.compliance_score is not none else '—' }}</span>
+      </div>
+      {% endif %}
     </div>
     {% if run.plan_comparison %}
     <div style="font-size:9px;margin-top:4px;color:{% if run.plan_comparison.verdict == 'race' %}var(--z5){% elif run.plan_comparison.verdict == 'on target' %}var(--safe){% elif run.plan_comparison.verdict == 'too fast' %}var(--danger){% elif run.plan_comparison.verdict == 'unplanned' %}var(--text-dim){% else %}var(--caution){% endif %}">

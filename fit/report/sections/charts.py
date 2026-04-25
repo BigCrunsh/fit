@@ -682,20 +682,17 @@ def _all_charts(conn):
                                        "x": {"grid": {"display": False}}}}
             }).replace('"__PCVCB__"', 'function(v){return v+"%"}')})
 
-    # Effort Gap — Garmin TE vs Check-in RPE (Profile tab)
-    # Join activities with checkins to get RPE from check-in table (activities.rpe is rarely populated)
+    # Effort Gap — Garmin TE vs activity RPE (Profile tab)
     effort_data = conn.execute(f"""
-        SELECT a.date, a.aerobic_te,
-               c.rpe as checkin_rpe
+        SELECT a.date, a.aerobic_te, a.rpe as activity_rpe
         FROM activities a
-        LEFT JOIN checkins c ON a.date = c.date
         WHERE a.type IN {RUNNING_TYPES_SQL} AND a.aerobic_te IS NOT NULL
         ORDER BY a.date
     """).fetchall()
     if effort_data and len(effort_data) >= 3:
         te_values = [e["aerobic_te"] for e in effort_data]
-        # Normalize check-in RPE from 1-10 to 1-5 scale to match TE scale
-        rpe_values = [round(e["checkin_rpe"] / 2, 1) if e["checkin_rpe"] is not None else None for e in effort_data]
+        # Normalize activity RPE from 1-10 to 1-5 scale to match TE scale
+        rpe_values = [round(e["activity_rpe"] / 2, 1) if e["activity_rpe"] is not None else None for e in effort_data]
         has_rpe = any(v is not None for v in rpe_values)
 
         # Compute 5-point moving average trend lines
@@ -717,7 +714,7 @@ def _all_charts(conn):
         if has_rpe:
             rpe_trend = _moving_avg(rpe_values)
             datasets.append(
-                {"label": "Check-in RPE", "data": rpe_values,
+                {"label": "Your RPE", "data": rpe_values,
                  "borderColor": Z4 + "40", "borderWidth": 1, "pointRadius": 3, "tension": 0.3,
                  "fill": False, "spanGaps": False}
             )
@@ -816,7 +813,7 @@ def _all_charts(conn):
         # Add actual RPE line if any check-in RPE data exists
         actual_rpes = [r["actual_rpe"] for r in rpe_data]
         if any(v is not None for v in actual_rpes):
-            datasets.append({"label": "Your RPE (checkin)", "data": actual_rpes,
+            datasets.append({"label": "Your RPE", "data": actual_rpes,
                              "borderColor": Z4, "borderWidth": 2, "pointRadius": 4, "fill": False,
                              "spanGaps": True})
         charts.append({"id": "chart-rpe", "config": json.dumps({

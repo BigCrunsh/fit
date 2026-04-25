@@ -328,11 +328,11 @@ def _definitions(conn):
         "volume": "Total running km per week. The darker segment shows the longest single run. For marathon training: long run should build gradually to 30-32 km, weekly volume to 50-60 km at peak.",
         "cadence": f"Your 30d avg cadence: {avg_cadence_val} spm. Below 165 often indicates overstriding. Target: 170-180. Tends to improve with fatigue resilience and form work.",
         "cardiac_drift": "<strong>Cardiac drift</strong> = HR rising while pace stays constant, caused by glycogen depletion, core temp rise, and plasma volume loss. <strong>Top chart:</strong> per-km pace + HR averaged across last 4 weeks (thin lines = individual runs, thick = average). <strong>Drift onset</strong> = the first km in the second half where HR exceeds first-half average + 5 bpm. <strong>Bottom chart:</strong> drift onset km per run over time — higher is better. Onset after km 15 (green zone) indicates strong aerobic base. Onset before km 10 suggests base work needed.",
-        "rpe": "Garmin Effort = Aerobic Training Effect × 2 (dashed line, from every run). Your RPE = subjective effort from check-in (solid line, when available). When your RPE consistently exceeds Garmin's estimate, you're more fatigued than the numbers suggest.",
+        "rpe": "Garmin Effort = Aerobic Training Effect × 2 (dashed line, from every run). Your RPE = the perceived effort you logged in Garmin Connect (solid line, when available). When your RPE consistently exceeds Garmin's estimate, you're more fatigued than the numbers suggest.",
         "race_prediction": "Riegel formula: extrapolates from shorter race times using T2 = T1 × (D2/D1)^1.06. VDOT: from Daniels' tables using VO2max. Both are estimates — actual performance depends on training specificity, fueling, and conditions.",
         "acwr": f"Acute:Chronic Workload Ratio. Current: {acwr_val}. This week's load ÷ avg of previous 4 weeks. <strong style='color:var(--safe)'>0.8-1.3 = safe</strong>, <strong style='color:var(--caution)'>1.3-1.5 = caution</strong>, <strong style='color:var(--danger)'>> 1.5 = injury risk (spike)</strong>, < 0.6 = detraining. Critical for comeback training.",
         "pacecv": "Coefficient of Variation of pace within a run — how even your pacing is. Lower = more consistent. <strong style='color:var(--safe)'>< 5% = very even</strong>, <strong style='color:var(--caution)'>5-10% = moderate variation</strong>, <strong style='color:var(--danger)'>> 10% = erratic pacing</strong>. Even pacing is a key predictor of marathon success. Interval sessions naturally have higher CV.",
-        "effort_gap": "Garmin Training Effect (TE) measures physiological load from sensor data. Check-in RPE is your subjective effort score (scaled to match). When RPE consistently exceeds TE, you're accumulating fatigue the watch can't see — consider extra recovery. When TE exceeds RPE, you're adapting well.",
+        "effort_gap": "Garmin Training Effect (TE) measures physiological load from sensor data. Your RPE (logged in Garmin Connect) is your subjective effort score (scaled to match). When RPE consistently exceeds TE, you're accumulating fatigue the watch can't see — consider extra recovery. When TE exceeds RPE, you're adapting well.",
     }
 
 
@@ -1804,11 +1804,13 @@ def _last_7_days_runs(conn):
     runs = conn.execute(f"""
         SELECT id, date, name, run_type, distance_km, duration_min,
                pace_sec_per_km, avg_hr, hr_zone, effort_class, training_load,
-               srpe, splits_status
+               srpe, splits_status, rpe, feel, compliance_score
         FROM activities
         WHERE type IN {RUNNING_TYPES_SQL} AND date BETWEEN ? AND ?
         ORDER BY date DESC, id DESC
     """, (window_start, today.isoformat())).fetchall()
+
+    _FEEL_LABELS = {1: "Bad", 2: "Poor", 3: "Neutral", 4: "Good", 5: "Great"}
 
     result = []
     for r in runs:
@@ -1823,6 +1825,10 @@ def _last_7_days_runs(conn):
             "hr_zone": r["hr_zone"] or "",
             "effort_class": r["effort_class"] or "",
             "training_load": round(r["training_load"]) if r["training_load"] else None,
+            "rpe": r["rpe"] if r["rpe"] is not None else None,
+            "feel": r["feel"] if r["feel"] is not None else None,
+            "feel_label": _FEEL_LABELS.get(r["feel"]) if r["feel"] is not None else None,
+            "compliance_score": r["compliance_score"] if r["compliance_score"] is not None else None,
             "plan_comparison": None,
             "splits": [],
             "adaptation_signals": None,

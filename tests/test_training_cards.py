@@ -328,6 +328,84 @@ class TestLast7DaysRuns:
         assert by_id["Evening Race"]["plan_comparison"]["planned_name"] == "Evening 3K"
 
 
+    def test_run_card_displays_rpe_feel_compliance(self, db):
+        """Per-run card surfaces Garmin-imported RPE/feel/compliance."""
+        today = date.today()
+        d = (today - timedelta(days=1)).isoformat()
+        db.execute(
+            "INSERT INTO activities (id, date, type, name, distance_km, "
+            "duration_min, pace_sec_per_km, avg_hr, hr_zone, run_type, "
+            "rpe, feel, compliance_score) "
+            "VALUES ('run-rpe', ?, 'running', 'Easy Run', 8, 50, 375, 130, 'Z2', 'easy', "
+            "7, 4, 95)",
+            (d,),
+        )
+        db.commit()
+
+        runs = _last_7_days_runs(db)
+        assert len(runs) == 1
+        assert runs[0]["rpe"] == 7
+        assert runs[0]["feel"] == 4
+        assert runs[0]["feel_label"] == "Good"
+        assert runs[0]["compliance_score"] == 95
+
+    def test_run_card_handles_null_rpe(self, db):
+        """Runs without RPE/feel/compliance get None for all three."""
+        today = date.today()
+        d = (today - timedelta(days=1)).isoformat()
+        db.execute(
+            "INSERT INTO activities (id, date, type, name, distance_km, "
+            "duration_min, pace_sec_per_km, avg_hr, hr_zone, run_type) "
+            "VALUES ('run-no-rpe', ?, 'running', 'Easy Run', 8, 50, 375, 130, 'Z2', 'easy')",
+            (d,),
+        )
+        db.commit()
+
+        runs = _last_7_days_runs(db)
+        assert len(runs) == 1
+        assert runs[0]["rpe"] is None
+        assert runs[0]["feel"] is None
+        assert runs[0]["feel_label"] is None
+        assert runs[0]["compliance_score"] is None
+
+    def test_run_card_partial_fields(self, db):
+        """Partial population — only RPE set, feel/compliance NULL."""
+        today = date.today()
+        d = (today - timedelta(days=1)).isoformat()
+        db.execute(
+            "INSERT INTO activities (id, date, type, name, distance_km, "
+            "duration_min, pace_sec_per_km, avg_hr, hr_zone, run_type, rpe) "
+            "VALUES ('run-part', ?, 'running', 'Run', 5, 30, 360, 140, 'Z2', 'easy', 5)",
+            (d,),
+        )
+        db.commit()
+
+        runs = _last_7_days_runs(db)
+        assert runs[0]["rpe"] == 5
+        assert runs[0]["feel"] is None
+        assert runs[0]["feel_label"] is None
+        assert runs[0]["compliance_score"] is None
+
+    def test_run_card_feel_label_mapping(self, db):
+        """Feel 1-5 maps to Bad/Poor/Neutral/Good/Great."""
+        today = date.today()
+        d = (today - timedelta(days=1)).isoformat()
+        # Insert one run per feel value
+        for feel_val, expected in [(1, "Bad"), (2, "Poor"), (3, "Neutral"),
+                                    (4, "Good"), (5, "Great")]:
+            db.execute(
+                "INSERT INTO activities (id, date, type, name, distance_km, "
+                "duration_min, pace_sec_per_km, avg_hr, hr_zone, run_type, feel) "
+                "VALUES (?, ?, 'running', 'R', 5, 30, 360, 140, 'Z2', 'easy', ?)",
+                (f"feel-{feel_val}", d, feel_val),
+            )
+        db.commit()
+
+        runs = _last_7_days_runs(db)
+        labels = {r["feel"]: r["feel_label"] for r in runs}
+        assert labels == {1: "Bad", 2: "Poor", 3: "Neutral", 4: "Good", 5: "Great"}
+
+
 class TestWeeklyPlanAdherence:
     def test_no_plan_data(self, db):
         """Returns empty list with no planned workouts."""
