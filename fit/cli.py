@@ -243,7 +243,7 @@ def checkin_morning(target_date: str | None):
 @checkin.command("run")
 @click.argument("target_date", default=None, required=False)
 def checkin_run(target_date: str | None):
-    """Post-run: RPE + session notes (shows today's activity)."""
+    """Post-run: session notes (shows today's activity). RPE comes from Garmin."""
     from fit.checkin import run_post_run
 
     conn = _conn()
@@ -292,15 +292,15 @@ def checkin_list(days: int):
     conn = _conn()
     try:
         rows = conn.execute(
-            "SELECT c.date, c.rpe, c.sleep_quality, c.energy, c.legs, "
+            "SELECT c.date, c.sleep_quality, c.energy, c.legs, "
             "c.hydration, c.eating, c.alcohol, c.alcohol_detail, "
             "c.water_liters, c.notes, "
-            "a.distance_km AS run_km, "
+            "a.distance_km AS run_km, a.rpe AS rpe, "
             "p.target_distance_km AS plan_km, "
             "p.workout_type AS plan_type "
             "FROM checkins c "
             "LEFT JOIN ("
-            "  SELECT date, distance_km "
+            "  SELECT date, distance_km, rpe "
             "  FROM activities "
             "  WHERE type IN ('running','track_running','trail_running') "
             "  GROUP BY date ORDER BY training_load DESC"

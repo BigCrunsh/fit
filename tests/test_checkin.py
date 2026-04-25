@@ -158,15 +158,29 @@ class TestMorning:
 
 
 class TestPostRun:
-    def test_post_run_saves_rpe(self, db):
-        """Post-run saves RPE and session notes."""
-        answers = ["7", "felt strong"]
+    def test_post_run_saves_notes_only(self, db):
+        """Post-run only collects session notes; RPE is sourced from Garmin."""
+        answers = ["felt strong"]
         with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
             run_post_run(db, target_date="2026-01-15")
         row = db.execute("SELECT * FROM checkins WHERE date = '2026-01-15'").fetchone()
         assert row is not None
-        assert row["rpe"] == 7
         assert row["notes"] == "felt strong"
+        assert row["rpe"] is None
+
+    def test_post_run_does_not_prompt_rpe(self, db):
+        """Post-run prompts only for notes — never asks for RPE."""
+        prompts_seen = []
+
+        def _capture(prompt_text, default=None):
+            prompts_seen.append(prompt_text)
+            return ""  # accept default
+
+        with patch("fit.checkin.Prompt.ask", side_effect=_capture):
+            run_post_run(db, target_date="2026-01-15")
+        # No prompt should mention RPE
+        assert not any("RPE" in p for p in prompts_seen), \
+            f"Expected no RPE prompt, got: {prompts_seen}"
 
     def test_post_run_preserves_morning(self, db):
         """Post-run doesn't overwrite morning fields."""
@@ -175,11 +189,11 @@ class TestPostRun:
             "VALUES ('2026-01-17', 'Good', 'Fresh', 'Good')"
         )
         db.commit()
-        answers = ["8", "hard tempo"]
+        answers = ["hard tempo"]
         with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
             run_post_run(db, target_date="2026-01-17")
         row = db.execute("SELECT * FROM checkins WHERE date = '2026-01-17'").fetchone()
-        assert row["rpe"] == 8
+        assert row["notes"] == "hard tempo"
         assert row["sleep_quality"] == "Good"
         assert row["legs"] == "Fresh"
 
@@ -371,8 +385,13 @@ class TestYesterdayGap:
         ).fetchone()
         assert today["sleep_quality"] == "Good"
 
-    def test_yesterday_run_gap_with_activity(self, db):
-        """Yesterday has morning but ran without RPE → prompts for run section."""
+    def test_yesterday_run_gap_does_not_prompt(self, db):
+        """Yesterday's run section is no longer auto-prompted (RPE comes from Garmin).
+
+        Even when an activity exists and no notes are filled, the smart default
+        only fills morning + evening gaps. Users invoke `fit checkin run`
+        explicitly when they want to add session notes.
+        """
         db.execute(
             "INSERT INTO checkins (date, sleep_quality, legs, energy, "
             "hydration, eating, alcohol) "
@@ -384,17 +403,17 @@ class TestYesterdayGap:
             "VALUES ('2026-03-14', 'running', 'Easy run', 8.0, 50, 140, 9.6)"
         )
         db.commit()
-        # Run answers: RPE prompt + notes
-        answers = ["5", "felt ok"]
-        # Then today's morning
-        answers += ["g", "f", "g", ""]
+        # Yesterday is fully complete (morning + evening), so only today's
+        # morning answers are needed.
+        answers = ["g", "f", "g", ""]
         with patch("fit.checkin.Prompt.ask", side_effect=_prompt_side_effect(answers)):
             with _mock_today("2026-03-15")(hour=9):
                 run_checkin(db)
         yesterday = db.execute(
             "SELECT * FROM checkins WHERE date = '2026-03-14'"
         ).fetchone()
-        assert yesterday["rpe"] == 5
+        # No RPE was prompted or saved
+        assert yesterday["rpe"] is None
 
     def test_evening_prompt_not_limited_to_noon(self, db):
         """Yesterday gap detected even after noon."""

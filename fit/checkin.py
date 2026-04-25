@@ -171,27 +171,7 @@ def _save_checkin(conn, data, existing):
         "notes": data.get("notes"),
     })
 
-    # RPE cross-write to activities
-    if data.get("rpe"):
-        conn.execute(
-            f"UPDATE activities SET rpe = ? "
-            f"WHERE date = ? AND type IN {RUNNING_TYPES_SQL}",
-            (data["rpe"], target),
-        )
-
     conn.commit()
-
-    # sRPE computation
-    if data.get("rpe"):
-        try:
-            from fit.analysis import compute_srpe
-            srpe_count = compute_srpe(conn)
-            if srpe_count:
-                console.print(
-                    f"  [dim]sRPE computed for {srpe_count} activity(ies)[/dim]"
-                )
-        except Exception as e:
-            logger.debug("sRPE computation after checkin failed: %s", e)
 
 
 # ── Check-in moments ──
@@ -243,20 +223,11 @@ def run_post_run(conn, target_date=None):
         console.print(f"  [dim]No run found for {target}[/dim]")
 
     console.print(
-        "  [dim]RPE: 1-2=rest, 3-4=easy, 5-6=moderate, "
-        "7-8=hard, 9-10=race[/dim]"
+        "  [dim]RPE is sourced from Garmin (post-run prompt on the watch / "
+        "Connect app).[/dim]"
     )
 
     data = {"date": target}
-
-    cur_rpe = str(existing["rpe"]) if existing and existing["rpe"] else ""
-    hint = f" [dim]({cur_rpe})[/dim]" if cur_rpe else ""
-    rpe_str = Prompt.ask(f"  RPE 1-10{hint}", default=cur_rpe or "").strip()
-    data["rpe"] = (
-        int(rpe_str)
-        if rpe_str and rpe_str.isdigit() and 1 <= int(rpe_str) <= 10
-        else (existing["rpe"] if existing else None)
-    )
 
     cur_notes = existing["notes"] if existing else None
     hint = f" [dim]({cur_notes[:40]})[/dim]" if cur_notes else ""
@@ -344,7 +315,6 @@ def run_checkin(conn, target_date=None, update=False):
     target = target_date or date.today().isoformat()
     today = date.today().isoformat()
     existing = _get_existing(conn, target)
-    activity = _get_today_activity(conn, target)
     hour = datetime.now().hour
 
     # Determine what's already filled for target date
@@ -354,7 +324,6 @@ def run_checkin(conn, target_date=None, update=False):
         and existing["legs"]
         and existing["energy"]
     )
-    has_rpe = existing and existing["rpe"] is not None
     has_evening = (
         existing
         and existing["hydration"]
@@ -365,31 +334,28 @@ def run_checkin(conn, target_date=None, update=False):
         # Explicit update: show the most relevant section
         if has_evening:
             run_evening(conn, target)
-        elif has_rpe:
-            run_post_run(conn, target)
         else:
             run_morning(conn, target)
         return
 
-    # Check yesterday's gaps (only when checking in for today, no explicit date)
+    # Check yesterday's gaps (only when checking in for today, no explicit date).
+    # RPE/run details come from Garmin per-activity, so we only gate on
+    # morning + evening here — there's nothing the checkin run section can fill
+    # automatically that the user hasn't already entered in Garmin.
     if target == today and not target_date:
         yesterday = (
             date.fromisoformat(today) - timedelta(days=1)
         ).isoformat()
         yd = _get_existing(conn, yesterday)
-        yd_activity = _get_today_activity(conn, yesterday)
 
         yd_has_morning = (
             yd and yd["sleep_quality"] and yd["legs"] and yd["energy"]
         )
-        yd_has_rpe = yd and yd["rpe"] is not None
         yd_has_evening = yd and yd["hydration"] and yd["eating"]
 
         gaps = []
         if not yd_has_morning:
             gaps.append("morning")
-        if yd_activity and not yd_has_rpe:
-            gaps.append("run")
         if not yd_has_evening:
             gaps.append("evening")
 
@@ -401,30 +367,24 @@ def run_checkin(conn, target_date=None, update=False):
             for section in gaps:
                 if section == "morning":
                     run_morning(conn, yesterday)
-                elif section == "run":
-                    run_post_run(conn, yesterday)
                 elif section == "evening":
                     run_evening(conn, yesterday)
             console.print()  # spacing before today's check-in
             # Continue to today's check-in
 
-    # Smart default based on time + state
+    # Smart default based on time + state.
+    # The post-run section is now opt-in (notes only — RPE is sourced from
+    # Garmin), so it is not auto-prompted; users invoke `fit checkin run`
+    # explicitly when they want to add session notes.
     if not has_morning:
         run_morning(conn, target)
-    elif activity and not has_rpe:
-        run_post_run(conn, target)
     elif hour >= 18 and not has_evening:
         run_evening(conn, target)
-    elif not has_evening and (activity or has_rpe):
-        # All pre-evening sections done, nothing left until evening
-        console.print(
-            f"\n[dim]Morning done for {target}. "
-            f"Evening check-in opens after 6pm.[/dim]"
-        )
     elif not has_evening:
         console.print(
             f"\n[dim]Morning done for {target}. "
-            f"Run and evening check-ins will open later.[/dim]"
+            f"Evening check-in opens after 6pm. "
+            f"Use `fit checkin run` to add session notes.[/dim]"
         )
     else:
         console.print(
