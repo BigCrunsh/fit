@@ -795,37 +795,6 @@ def _all_charts(conn):
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
-    # RPE chart (Fitness tab) — Garmin effort (from aerobic_te) vs actual RPE
-    # aerobic_te is 1-5 Garmin scale, map to RPE 1-10: RPE ≈ aerobic_te * 2
-    rpe_data = conn.execute(f"""
-        SELECT a.date, a.rpe as actual_rpe, a.aerobic_te,
-               ROUND(a.aerobic_te * 2, 1) as garmin_rpe
-        FROM activities a
-        WHERE a.type IN {RUNNING_TYPES_SQL} AND a.aerobic_te IS NOT NULL
-        
-        ORDER BY a.date
-    """).fetchall()
-    if len(rpe_data) >= 3:
-        datasets = [
-            {"label": "Garmin Effort (TE×2)", "data": [r["garmin_rpe"] for r in rpe_data],
-             "borderColor": Z2, "borderWidth": 1.5, "borderDash": [4, 2], "pointRadius": 2, "fill": False},
-        ]
-        # Add actual RPE line if any check-in RPE data exists
-        actual_rpes = [r["actual_rpe"] for r in rpe_data]
-        if any(v is not None for v in actual_rpes):
-            datasets.append({"label": "Your RPE", "data": actual_rpes,
-                             "borderColor": Z4, "borderWidth": 2, "pointRadius": 4, "fill": False,
-                             "spanGaps": True})
-        charts.append({"id": "chart-rpe", "config": json.dumps({
-            "type": "line",
-            "data": {"labels": [r["date"] for r in rpe_data],
-                     "datasets": datasets},
-            "options": {"responsive": True, "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}}},
-                        "scales": {"y": {"min": 1, "max": 10, "grid": {"color": "rgba(255,255,255,0.03)"},
-                                         "title": {"display": True, "text": "RPE (gap = fatigue)"}},
-                                   "x": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
-        })})
-
     # Race prediction trend (Fitness tab) — VDOT line + Riegel race points
     # Get target race distance for adaptive prediction
     try:

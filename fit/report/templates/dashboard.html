@@ -456,11 +456,7 @@
   <div class="chart-box"><canvas id="chart-effort-gap" height="160"></canvas></div>
   <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">When RPE exceeds TE, the run felt harder than Garmin thinks — possible fatigue accumulation.</div>
 
-  <!-- 12. RPE Trend — raw 1-10 view -->
-  <div class="sec"><h2>RPE Trend (1-10)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.rpe }}</div><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-rpe" height="160"></canvas></div>
-
-  <!-- 13. Marathon prediction trend — Daniels VDOT × Riegel race-based -->
+  <!-- 12. Marathon prediction trend — Daniels VDOT × Riegel race-based -->
   <div class="sec"><h2>Marathon Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">VDOT-derived predictions over time (Daniels formula) plus Riegel projections from actual race results, scaled to your target distance. Y-axis is reverse-scaled — lower = faster.</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-marathon-pred" height="180"></canvas></div>
 
@@ -851,12 +847,12 @@ function resolveAnnotationCollisions(annotations) {
   }
   return annotations;
 }
-const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-stress','chart-efficiency','chart-cadence','chart-rpe','chart-acwr','chart-pacecv','chart-effort-gap','chart-vo2','chart-zones','chart-drift-trend','chart-volume','chart-compliance']);
+const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-stress','chart-efficiency','chart-cadence','chart-acwr','chart-pacecv','chart-effort-gap','chart-vo2','chart-zones','chart-drift-trend','chart-volume','chart-compliance']);
 const weeklyCharts = new Set(['chart-volume']);
 // chart-weight has its own time scale config (set in charts.py) — not in this set to avoid double-applying
 
 // Phase bar data + plugin for Profile time-series charts
-const phaseBarCharts = new Set(['chart-vo2','chart-efficiency','chart-cadence','chart-pacecv','chart-effort-gap','chart-rpe','chart-weight','chart-zones','chart-drift-trend','chart-volume']);
+const phaseBarCharts = new Set(['chart-vo2','chart-efficiency','chart-cadence','chart-pacecv','chart-effort-gap','chart-weight','chart-zones','chart-drift-trend','chart-volume']);
 {% if training_phases_json %}
 const trainingPhases = {{ training_phases_json | safe }};
 {% else %}
