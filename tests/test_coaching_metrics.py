@@ -137,52 +137,43 @@ class TestLongRunDualCondition:
 class TestSRPE:
     """Test sRPE join: checkin RPE * activity duration."""
 
-    def _insert_activity(self, conn, id, date, duration_min=45, training_load=100):
+    def _insert_activity(self, conn, id, date, duration_min=45, training_load=100, rpe=None):
         conn.execute("""
-            INSERT INTO activities (id, date, type, name, duration_min, training_load)
-            VALUES (?, ?, 'running', 'Run', ?, ?)
-        """, (id, date, duration_min, training_load))
-        conn.commit()
-
-    def _insert_checkin(self, conn, date, rpe):
-        conn.execute("""
-            INSERT INTO checkins (date, rpe) VALUES (?, ?)
-        """, (date, rpe))
+            INSERT INTO activities (id, date, type, name, duration_min, training_load, rpe)
+            VALUES (?, ?, 'running', 'Run', ?, ?, ?)
+        """, (id, date, duration_min, training_load, rpe))
         conn.commit()
 
     def test_single_run(self, db):
-        """Single run with checkin RPE should get sRPE = RPE * duration."""
-        self._insert_activity(db, "run1", "2026-04-01", duration_min=45)
-        self._insert_checkin(db, "2026-04-01", 7)
+        """Single run with activity RPE should get sRPE = RPE * duration."""
+        self._insert_activity(db, "run1", "2026-04-01", duration_min=45, rpe=7)
         count = compute_srpe(db)
         assert count == 1
         row = db.execute("SELECT srpe FROM activities WHERE id = 'run1'").fetchone()
         assert row["srpe"] == pytest.approx(7 * 45, abs=0.1)
 
     def test_two_runs_same_day(self, db):
-        """Two runs same day: RPE goes to the one with highest training_load."""
-        self._insert_activity(db, "run1", "2026-04-01", duration_min=30, training_load=80)
-        self._insert_activity(db, "run2", "2026-04-01", duration_min=60, training_load=200)
-        self._insert_checkin(db, "2026-04-01", 8)
+        """Two runs same day: each gets its own sRPE from its own RPE."""
+        self._insert_activity(db, "run1", "2026-04-01", duration_min=30, training_load=80, rpe=4)
+        self._insert_activity(db, "run2", "2026-04-01", duration_min=60, training_load=200, rpe=8)
         count = compute_srpe(db)
-        assert count == 1
-        # Should go to run2 (higher training_load)
+        assert count == 2
+        row1 = db.execute("SELECT srpe FROM activities WHERE id = 'run1'").fetchone()
+        assert row1["srpe"] == pytest.approx(4 * 30, abs=0.1)
         row2 = db.execute("SELECT srpe FROM activities WHERE id = 'run2'").fetchone()
         assert row2["srpe"] == pytest.approx(8 * 60, abs=0.1)
-        # run1 should NOT have sRPE
-        row1 = db.execute("SELECT srpe FROM activities WHERE id = 'run1'").fetchone()
-        assert row1["srpe"] is None
 
-    def test_no_checkin(self, db):
-        """No checkin RPE: no sRPE computed."""
+    def test_no_activity_rpe(self, db):
+        """Activity without RPE: no sRPE computed."""
         self._insert_activity(db, "run1", "2026-04-01")
         count = compute_srpe(db)
         assert count == 0
+        row = db.execute("SELECT srpe FROM activities WHERE id = 'run1'").fetchone()
+        assert row["srpe"] is None
 
     def test_already_computed(self, db):
         """Already has sRPE: should not recompute."""
-        self._insert_activity(db, "run1", "2026-04-01", duration_min=45)
-        self._insert_checkin(db, "2026-04-01", 7)
+        self._insert_activity(db, "run1", "2026-04-01", duration_min=45, rpe=7)
         compute_srpe(db)
         # Run again - should not update
         count = compute_srpe(db)

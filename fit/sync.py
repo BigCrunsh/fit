@@ -104,6 +104,51 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
                                 "garmin_estimate", "medium",
                                 date.fromisoformat(latest_vo2["date"]))
 
+        # 3b. RPE/feel/compliance from Garmin activity detail (running activities only).
+        # Refresh policy: re-fetch activities ≤14 days old; fill-NULL beyond.
+        running_in_window = conn.execute(
+            f"SELECT id, date, rpe, feel, compliance_score FROM activities "
+            f"WHERE date BETWEEN ? AND ? AND type IN {RUNNING_TYPES_SQL}",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+        recent_cutoff = (date.today() - timedelta(days=14)).isoformat()
+        candidates = [
+            r for r in running_in_window
+            if r["date"] >= recent_cutoff
+            or r["rpe"] is None or r["feel"] is None or r["compliance_score"] is None
+        ]
+        if candidates:
+            task_rpe = progress.add_task("RPE detail", total=len(candidates))
+            for r in candidates:
+                try:
+                    g = garmin.fetch_activity_rpe(api, r["id"])
+                except Exception as e:
+                    logger.debug("RPE fetch failed for %s: %s", r["id"], e)
+                    progress.advance(task_rpe)
+                    continue
+                # Recent: overwrite when Garmin has values; otherwise preserve.
+                # Old: fill only NULL fields.
+                if r["date"] >= recent_cutoff:
+                    conn.execute(
+                        "UPDATE activities SET "
+                        "rpe = COALESCE(?, rpe), "
+                        "feel = COALESCE(?, feel), "
+                        "compliance_score = COALESCE(?, compliance_score) "
+                        "WHERE id = ?",
+                        (g["rpe"], g["feel"], g["compliance_score"], r["id"]),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE activities SET "
+                        "rpe = COALESCE(rpe, ?), "
+                        "feel = COALESCE(feel, ?), "
+                        "compliance_score = COALESCE(compliance_score, ?) "
+                        "WHERE id = ?",
+                        (g["rpe"], g["feel"], g["compliance_score"], r["id"]),
+                    )
+                progress.advance(task_rpe)
+            conn.commit()
+
         # 4. SpO2
         task_s = progress.add_task("SpO2", total=total_days)
         spo2_data = garmin.fetch_spo2(api, start, end)

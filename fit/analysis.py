@@ -570,37 +570,26 @@ def _compute_prediction_confidence(conn: sqlite3.Connection | None,
 
 
 def compute_srpe(conn: sqlite3.Connection) -> int:
-    """Compute sRPE for activities that have checkin RPE but no sRPE yet.
+    """Compute sRPE per activity from activities.rpe directly.
 
-    Join strategy: for each date with a checkin RPE, find the activity with
-    the highest training_load on that date and compute srpe = rpe * duration_min.
+    sRPE = rpe × duration_min. Source is the per-activity RPE imported from
+    Garmin (directWorkoutRpe on summaryDTO), not the daily check-in.
 
     Returns count of updated activities.
     """
-    # Find dates with checkin RPE
-    checkin_rows = conn.execute("""
-        SELECT c.date, c.rpe FROM checkins c
-        WHERE c.rpe IS NOT NULL AND c.rpe > 0
+    rows = conn.execute("""
+        SELECT id, rpe, duration_min FROM activities
+        WHERE rpe IS NOT NULL AND rpe > 0
+          AND duration_min IS NOT NULL
+          AND srpe IS NULL
     """).fetchall()
 
     count = 0
-    for row in checkin_rows:
-        d = row["date"]
-        rpe = row["rpe"]
-
-        # Find the activity with highest training_load on that date that has no sRPE
-        activity = conn.execute("""
-            SELECT id, duration_min FROM activities
-            WHERE date = ? AND srpe IS NULL AND duration_min IS NOT NULL
-            ORDER BY training_load DESC NULLS LAST
-            LIMIT 1
-        """, (d,)).fetchone()
-
-        if activity and activity["duration_min"]:
-            srpe = rpe * activity["duration_min"]
-            conn.execute("UPDATE activities SET srpe = ? WHERE id = ?",
-                         (round(srpe, 1), activity["id"]))
-            count += 1
+    for r in rows:
+        srpe = r["rpe"] * r["duration_min"]
+        conn.execute("UPDATE activities SET srpe = ? WHERE id = ?",
+                     (round(srpe, 1), r["id"]))
+        count += 1
 
     if count > 0:
         conn.commit()
