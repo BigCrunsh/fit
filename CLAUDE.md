@@ -7,11 +7,12 @@ Personal fitness data platform. SQLite database, Python CLI, MCP server, HTML da
 ```bash
 pip install -e .                      # install
 pip install -e '.[analysis]'          # install with fitparse for .fit file analysis
-pytest tests/ -v                      # run tests (748 tests, in-memory SQLite)
+pytest tests/ -v                      # run tests (770 tests, in-memory SQLite)
 pytest tests/ -v --tb=short           # compact output
 fit sync --days 7                     # daily: pull Garmin + enrich + weather + aggregate
 fit sync --full && fit recompute      # init: pull all history + re-enrich
-fit checkin                           # daily check-in (RPE, sleep) + sRPE computation
+fit checkin                           # daily check-in (sleep, hydration, alcohol — RPE comes from Garmin)
+fit backfill rpe                      # one-shot: import directWorkoutRpe/Feel/ComplianceScore from Garmin for all running activities
 fit report                            # generate dashboard → ~/.fit/reports/dashboard.html
 fit status                            # quick overview: countdown, phase, ACWR, last 7 days
 fit doctor                            # validate pipeline health
@@ -30,7 +31,8 @@ fit doctor                            # validate pipeline health
 - **Monotony = mean/stdev** (Foster's formula), NOT stdev alone. Strain = weekly_load × monotony
 - **Objectives auto-derived only** — from target race via `derive_objectives()`. No manual CRUD.
 - **Goals = "objectives" in UI** — DB table stays `goals`, user-facing text says "objectives"
-- **sRPE dual-trigger** — computed from both sync and checkin paths
+- **RPE/Feel/Compliance source = Garmin** — `activities.rpe`, `activities.feel`, `activities.compliance_score` come from `summaryDTO.directWorkoutRpe/Feel/ComplianceScore` of the activity detail endpoint. Sync re-fetches the last 14 days every run; older activities are fill-NULL-only. Use `fit backfill rpe` to populate history. RPE is NOT collected via `fit checkin`.
+- **sRPE source = activities.rpe** — `compute_srpe()` reads per-activity RPE directly. Triggered from sync and backfill (no longer from checkin).
 - **Race calendar is manual** — not auto-detected from Garmin activity names
 
 ## Zone Model

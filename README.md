@@ -249,25 +249,100 @@ The coaching context explicitly includes configured zone boundaries so Claude ne
 
 ## Database
 
-SQLite at `~/.fit/fitness.db`. 16 tables, 2 views:
+SQLite at `~/.fit/fitness.db`. 17 tables, 2 views, 13 migrations.
 
-| Table | Key data |
-|-------|----------|
-| activities | All types (running, cycling, hiking), parallel zones, speed_per_bpm, run_type, RPE |
-| daily_health | RHR, sleep, HRV, readiness, stress, body battery, SpO2 |
-| checkins | Hydration, legs, eating, energy, sleep quality, RPE, weight |
-| body_comp | Weight measurements from Fitdays/Apple Health/check-ins |
-| weather | Daily weather data from Open-Meteo |
-| weekly_agg | Run metrics, cross-training, ACWR, monotony/strain, cycling_km, zone distribution, streak |
-| training_phases | Phased targets + actuals, phase lifecycle (planned → active → completed/revised) |
-| calibration | Max HR, LTHR, weight — with staleness tracking and retest prompts |
-| goals / goal_log | Active goals + append-only event history |
-| correlations | Spearman rank correlations between health/behavior/performance pairs |
-| alerts | Coaching alerts: volume ramp, zone compliance, readiness gate (adaptive), SpO2, deload overdue |
-| race_calendar | Race registry with results, target times, Garmin matching, garmin_time, activity_id FK |
-| activity_splits | Per-km splits from .fit files: pace, HR, cadence, zone time, elevation |
-| planned_workouts | Runna plan sync (from Garmin Calendar + CSV), plan adherence, versioning |
-| import_log | CSV import tracking (filename, hash, row counts) for deduplication |
-| schema_version | Migration version tracking (9 migrations) |
+### How the tables relate
 
-Views: `v_run_days` (activities + health + checkin + weather + body_comp joined), `v_all_training` (all activity types).
+Three primary axes of data, joined by date and/or activity ID:
+
+```
+                          ┌─ daily_health ─┐
+                          │ (one per date) │
+                          └────────┬───────┘
+                                   │ date
+       ┌─────────────┐  date  ┌────┴────┐  date  ┌──────────┐
+       │  checkins   │────────│  DATE   │────────│ weather  │
+       │ (subjective │        │  axis   │        │ (daily)  │
+       │   inputs)   │        └────┬────┘        └──────────┘
+       └─────────────┘             │ date
+                                   │
+                          ┌────────┴───────────┐  date  ┌────────────────┐
+                          │     activities     │────────│  body_comp     │
+                          │ (one per workout)  │        │ (weight, fat%) │
+                          └────┬───────────┬───┘        └────────────────┘
+                               │ id        │ id              ▲
+                               ▼           ▼                 │
+                     ┌──────────────┐  ┌──────────────────┐  │ date
+                     │ activity_    │  │ race_calendar    │  │
+                     │   splits     │  │ (activity_id FK) │  │
+                     │ (per-km)     │  └──────────────────┘  │
+                     └──────────────┘                         │
+                                                              │
+       ┌─────────────────┐   date   ┌────────────────────────────────┐
+       │ planned_        │──────────│       Aggregates & coaching    │
+       │   workouts      │          │  weekly_agg (per ISO week)     │
+       │ (Runna plans)   │          │  training_phases (date ranges) │
+       └─────────────────┘          │  goals / goal_log              │
+                                    │  correlations / alerts         │
+                                    │  calibration (max_hr, LTHR…)   │
+                                    └────────────────────────────────┘
+```
+
+Joins:
+- **By date**: most cross-domain queries (e.g., "did high stress correlate with low Z2 efficiency?") join `activities` ↔ `daily_health` ↔ `checkins` ↔ `weather` on the `date` column. The `v_run_days` view materializes this join.
+- **By activity ID**: `activity_splits.activity_id` and `race_calendar.activity_id` foreign-key into `activities.id`.
+- **Idempotent inserts**: every table uses `INSERT … ON CONFLICT DO UPDATE` so re-syncing preserves derived metrics (e.g., `activities.run_type`, `srpe`, `hr_zone`).
+
+### Per-table reference
+
+#### Core measurement tables
+
+| Table | Grain | Purpose |
+|-------|-------|---------|
+| **`activities`** | one per workout (id = Garmin activity ID) | The central training log. Stores every workout (running, cycling, hiking…). Garmin-sourced fields: distance, duration, pace, HR, cadence, power, vo2max, training_load, aerobic_te. Derived in pipeline: `hr_zone` (Z1-Z5), `effort_class`, `run_type` (auto-classified), `speed_per_bpm` / `speed_per_bpm_z2` (efficiency), `srpe` (RPE × duration). RPE/Feel/Compliance imported from Garmin (`directWorkoutRpe/Feel/ComplianceScore`). Race linkage: `run_type='race'` is set by `race_calendar` matching. |
+| **`daily_health`** | one per date | Daily Garmin health snapshot. Resting HR (`resting_heart_rate`), sleep stages (deep/light/REM hours), HRV (`hrv_weekly_avg`, `hrv_last_night`, status), training readiness (score + level), stress (avg, max), body battery (high/low), SpO2. Read by readiness alerts, dashboard cards, ACWR overlays. |
+| **`checkins`** | one per date | User-entered subjective inputs split across morning/run/evening. Morning: `sleep_quality`, `legs`, `energy`. Evening: `hydration`, `eating`, `alcohol`, `alcohol_detail`, `water_liters`. Run section currently captures `notes` only. Legacy `rpe`, `weight` columns retained for historical data — RPE is now sourced per-activity from Garmin (see `activities.rpe`); weight goes to `body_comp`. |
+| **`body_comp`** | one per measurement | Body composition history: `weight`, `body_fat_pct`, `muscle_mass`, `visceral_fat`, etc. Sources: Fitdays CSV, Apple Health export, manual entry. Joined to dashboard via latest-by-date. Used for weight trend, calibration adjustments. |
+| **`weather`** | one per date | Daily weather from Open-Meteo: temp, humidity, precipitation, wind, conditions. Activities additionally store `temp_at_start_c` / `humidity_at_start_pct` from the hourly endpoint. Used for heat-stress correlations and dashboard context. |
+| **`activity_splits`** | one per km per activity (FK → `activities.id`) | Per-km breakdown from .fit file or Garmin splits API: pace, HR (avg/max), cadence, elevation gain/loss, zone, intensity_type, wkt_step_index. Drives the splits chart in dashboard run cards. |
+
+#### Plans, phases, races
+
+| Table | Grain | Purpose |
+|-------|-------|---------|
+| **`planned_workouts`** | one per planned session per day | Runna plan sync from Garmin Calendar + CSV import. `workout_name`, `workout_type` (easy/tempo/intervals/long/race/recovery), `target_distance_km`, `target_zone`, `structure`, `plan_week`, `plan_day`, `garmin_workout_id` (links to `activities.id` when Garmin pushes the workout). `plan_version` + `sequence_ordinal` allow multiple plans per day with stable ordering. `status` ∈ {active, completed, skipped}. Used for plan adherence cards and activity-vs-plan matching. |
+| **`training_phases`** | one per phase (date range) | Phased training calendar: planned ranges, targets per phase (volume, long_run, z2_compliance, etc.), actual results, lifecycle status (planned → active → completed/revised). Drives phase-specific dashboard targets — comparisons use the **active** phase, not fixed thresholds. |
+| **`race_calendar`** | one per race | Manual race registry. `name`, `date`, `distance` / `distance_km`, `target_time`, `result_time` (official, manual entry), `garmin_time` (auto-set when matched), `result_pace`, `activity_id` (FK to `activities.id`), `status` ∈ {planned, registered, completed, dns, dnf}. Sync auto-completes registered races whose date has passed and matches them by closest distance to the day's activity. |
+
+#### Aggregates
+
+| Table | Grain | Purpose |
+|-------|-------|---------|
+| **`weekly_agg`** | one per ISO week | Pre-aggregated weekly metrics: `total_km`, `runs_count`, `cycling_km`, ACWR (`acwr_acute_load_7d`, `acwr_chronic_load`), monotony, strain, zone distribution by time (`z1_minutes`…`z5_minutes`), longest run, weekly load. Recomputed after every sync via `compute_weekly_agg()`. Used for trend charts, ACWR gauge, ramp-rate alerts, streaks. |
+
+#### Calibration & goals
+
+| Table | Grain | Purpose |
+|-------|-------|---------|
+| **`calibration`** | one row per (kind, version) | Tracks the active value of physiological constants: `max_hr`, `lthr`, `weight`, `vo2max`. Each entry has `value`, `confidence`, `source` (race_extract / garmin_estimate / manual / time_trial), `effective_date`, and `notes`. Staleness tracker fires retest prompts via alerts. Zone boundaries always derive from the active calibration row, never from defaults. |
+| **`goals`** | one per active objective | Current training objectives (auto-derived from target race via `derive_objectives()` — no manual CRUD). Examples: weekly_volume, long_run_km, z2_compliance, consistency_streak, vdot, etc. Each has `current_value`, `target_value`, `delta`, `status`. |
+| **`goal_log`** | append-only | Event history for objectives: every change (target adjustment, milestone hit, status change) is appended with timestamp + reason. Drives the journey timeline visualization. |
+
+#### Coaching signals
+
+| Table | Grain | Purpose |
+|-------|-------|---------|
+| **`correlations`** | one row per metric pair | Spearman rank correlations between health/behavior/performance metrics (e.g., sleep_hours × next_day_speed_per_bpm). Computed by `fit correlate`. Effect size + sample size filter is applied before display so only actionable correlations surface. |
+| **`alerts`** | one per fired alert | Real-time coaching alerts: volume ramp, zone compliance, adaptive readiness gate, low SpO2, deload overdue, calibration stale. Each has `kind`, `severity`, `message`, `fired_at`, `acknowledged`. Today tab shows unacknowledged alerts from the last 7 days. |
+
+#### Infrastructure
+
+| Table | Purpose |
+|-------|---------|
+| **`import_log`** | CSV import dedup. Stores `file_hash`, `row_counts`, `imported_at` to skip already-processed FitDays/Apple Health exports. |
+| **`schema_version`** | Migration tracking (currently 13 applied). Auto-applied on every `get_db()` call. Each row: `version` + `name`. |
+
+### Views
+
+- **`v_run_days`** — activities + daily_health + checkins + weather + body_comp joined by date. Convenience view for cross-domain queries (e.g., "what was sleep + RHR + weather like the morning of each long run?").
+- **`v_all_training`** — all activity types (not just running) flattened with the same shape as `v_run_days` for cross-training analysis.
