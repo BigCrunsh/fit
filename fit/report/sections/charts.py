@@ -1035,6 +1035,66 @@ def _all_charts(conn):
     except Exception:
         pass
 
+    # Plan compliance trend (Training tab) — directWorkoutComplianceScore from Garmin
+    # Per-run point colored by score (≥80 safe, 60-79 caution, <60 danger).
+    # Trend line is a 5-point moving average to smooth out single-run dips.
+    compliance_data = conn.execute(f"""
+        SELECT date, compliance_score
+        FROM activities
+        WHERE type IN {RUNNING_TYPES_SQL} AND compliance_score IS NOT NULL
+        ORDER BY date
+    """).fetchall()
+    if compliance_data and len(compliance_data) >= 3:
+        scores = [c["compliance_score"] for c in compliance_data]
+        point_colors = [
+            SAFE + "cc" if s >= 80
+            else CAUTION + "cc" if s >= 60
+            else DANGER + "cc"
+            for s in scores
+        ]
+        # 5-point moving average for the trend line
+        trend = []
+        for i in range(len(scores)):
+            window = scores[max(0, i - 4):i + 1]
+            trend.append(round(sum(window) / len(window), 1))
+
+        charts.append({"id": "chart-compliance", "config": json.dumps({
+            "type": "line",
+            "data": {
+                "labels": [c["date"] for c in compliance_data],
+                "datasets": [
+                    {"label": "Compliance %", "data": scores,
+                     "borderColor": "rgba(148,163,184,0.25)", "borderWidth": 1,
+                     "pointRadius": 4, "pointBackgroundColor": point_colors,
+                     "pointBorderColor": point_colors,
+                     "tension": 0.3, "fill": False, "spanGaps": False},
+                    {"label": "5-run trend", "data": trend,
+                     "borderColor": ACCENT + "cc", "borderWidth": 2,
+                     "pointRadius": 0, "tension": 0.4, "fill": False},
+                ],
+            },
+            "options": {
+                "responsive": True,
+                "plugins": {
+                    "legend": {"position": "bottom", "labels": {"boxWidth": 10, "padding": 12}},
+                    "annotation": {"annotations": {
+                        "target_line": {
+                            "type": "line", "yMin": 80, "yMax": 80,
+                            "borderColor": SAFE + "60", "borderDash": [4, 3], "borderWidth": 1,
+                            "label": {"content": "Target ≥80%", "display": True,
+                                      "position": "end", "font": {"size": 8}, "color": SAFE + "90"},
+                        },
+                    }},
+                },
+                "scales": {
+                    "y": {"min": 0, "max": 100,
+                          "grid": {"color": "rgba(255,255,255,0.03)"},
+                          "title": {"display": True, "text": "Plan compliance %"}},
+                    "x": {"grid": {"display": False}, "ticks": {"maxRotation": 45}},
+                },
+            },
+        })})
+
     return charts
 
 

@@ -560,8 +560,16 @@
       {% if run.rpe is not none or run.feel is not none or run.compliance_score is not none %}
       <div style="display:flex;gap:12px;font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-top:2px">
         <span>RPE {{ run.rpe if run.rpe is not none else '—' }}</span>
-        <span>Feel {{ run.feel_label if run.feel_label else '—' }}</span>
-        <span>Compliance {{ run.compliance_score ~ '%' if run.compliance_score is not none else '—' }}</span>
+        {% if run.feel is not none %}
+        <span><span style="color:{% if run.feel >= 4 %}var(--safe){% elif run.feel == 3 %}var(--text-muted){% else %}var(--danger){% endif %}">●</span> Feel {{ run.feel_label }}</span>
+        {% else %}
+        <span>Feel —</span>
+        {% endif %}
+        {% if run.compliance_score is not none %}
+        <span style="color:{% if run.compliance_score >= 80 %}var(--safe){% elif run.compliance_score >= 60 %}var(--caution){% else %}var(--danger){% endif %}">Compliance {{ run.compliance_score }}%</span>
+        {% else %}
+        <span>Compliance —</span>
+        {% endif %}
       </div>
       {% endif %}
     </div>
@@ -659,6 +667,10 @@
   <!-- 5. Volume & Run Type Mix -->
   <div class="sec"><h2>Volume Trend</h2><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-volume" height="160"></canvas></div>
+
+  <!-- 6. Plan compliance trend (per-run, from Garmin) -->
+  <div class="sec"><h2>Plan Compliance Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">Garmin's per-run plan adherence score (0-100). Each dot is one run, colored by score (green ≥80, yellow 60-79, red &lt;60). The orange line is the 5-run rolling average — drift below 80 means you're consistently deviating from the planned workout.</div><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-compliance" height="150"></canvas></div>
 </div>
 
 <!-- BODY -->
@@ -827,7 +839,7 @@ function resolveAnnotationCollisions(annotations) {
   }
   return annotations;
 }
-const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-stress','chart-efficiency','chart-cadence','chart-rpe','chart-acwr','chart-pacecv','chart-effort-gap','chart-vo2','chart-zones','chart-drift-trend','chart-volume']);
+const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-stress','chart-efficiency','chart-cadence','chart-rpe','chart-acwr','chart-pacecv','chart-effort-gap','chart-vo2','chart-zones','chart-drift-trend','chart-volume','chart-compliance']);
 const weeklyCharts = new Set(['chart-volume']);
 // chart-weight has its own time scale config (set in charts.py) — not in this set to avoid double-applying
 
