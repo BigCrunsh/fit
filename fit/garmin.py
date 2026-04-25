@@ -314,6 +314,38 @@ def fetch_activity_splits(api: Garmin, activity_id: str) -> list[dict]:
     return splits
 
 
+def fetch_activity_rpe(api: Garmin, activity_id: str) -> dict:
+    """Fetch RPE, feel, and compliance score for an activity from Garmin.
+
+    Calls api.get_activity(id) and extracts directWorkoutRpe, directWorkoutFeel,
+    and directWorkoutComplianceScore from summaryDTO. These fields are populated
+    when the user has entered them on the watch or in Garmin Connect.
+
+    Mapping:
+        directWorkoutRpe (10/20/.../100) → rpe (1-10)
+        directWorkoutFeel (0/25/50/75/100) → feel (1-5)
+        directWorkoutComplianceScore (0-100) → compliance_score (0-100)
+
+    Returns dict with keys 'rpe', 'feel', 'compliance_score'. Each value is an
+    int when Garmin has the field set, otherwise None.
+    """
+    data = _request_with_retry(
+        lambda: api.get_activity(str(activity_id)),
+        description=f"Activity detail for {activity_id}",
+    )
+    summary = (data or {}).get("summaryDTO") or {}
+
+    raw_rpe = summary.get("directWorkoutRpe")
+    raw_feel = summary.get("directWorkoutFeel")
+    raw_compliance = summary.get("directWorkoutComplianceScore")
+
+    return {
+        "rpe": int(raw_rpe / 10) if raw_rpe is not None else None,
+        "feel": int(raw_feel / 25) + 1 if raw_feel is not None else None,
+        "compliance_score": int(raw_compliance) if raw_compliance is not None else None,
+    }
+
+
 def fetch_spo2(api: Garmin, start: date, end: date) -> dict[str, float | None]:
     """Fetch SpO2 data for a date range.
 

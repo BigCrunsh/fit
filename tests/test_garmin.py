@@ -8,6 +8,7 @@ import pytest
 from fit.garmin import (
     fetch_health,
     fetch_activities,
+    fetch_activity_rpe,
     fetch_spo2,
     _request_with_retry,
 )
@@ -319,3 +320,78 @@ class TestFetchSpo2:
         assert results["2025-01-01"] == 97
         assert results["2025-01-02"] == 96
         assert results["2025-01-03"] is None
+
+
+# ════════════════════════════════════════════════════════════════
+# fetch_activity_rpe
+# ════════════════════════════════════════════════════════════════
+
+
+class TestFetchActivityRpe:
+    """Tests for extracting per-activity RPE/feel/compliance from Garmin."""
+
+    def test_extracts_all_three_fields(self):
+        api = MagicMock()
+        api.get_activity.return_value = {
+            "summaryDTO": {
+                "directWorkoutRpe": 30,
+                "directWorkoutFeel": 50,
+                "directWorkoutComplianceScore": 100,
+            }
+        }
+        result = fetch_activity_rpe(api, "act-1")
+        assert result == {"rpe": 3, "feel": 3, "compliance_score": 100}
+
+    def test_garmin_rpe_70_maps_to_7(self):
+        api = MagicMock()
+        api.get_activity.return_value = {
+            "summaryDTO": {
+                "directWorkoutRpe": 70,
+                "directWorkoutFeel": 100,
+                "directWorkoutComplianceScore": 85,
+            }
+        }
+        result = fetch_activity_rpe(api, "act-1")
+        assert result == {"rpe": 7, "feel": 5, "compliance_score": 85}
+
+    def test_missing_summarydto_returns_all_none(self):
+        api = MagicMock()
+        api.get_activity.return_value = {}
+        result = fetch_activity_rpe(api, "act-1")
+        assert result == {"rpe": None, "feel": None, "compliance_score": None}
+
+    def test_missing_keys_return_none(self):
+        """summaryDTO present but no RPE keys → all None."""
+        api = MagicMock()
+        api.get_activity.return_value = {
+            "summaryDTO": {"distance": 1000, "duration": 600}
+        }
+        result = fetch_activity_rpe(api, "act-1")
+        assert result == {"rpe": None, "feel": None, "compliance_score": None}
+
+    def test_partial_only_rpe(self):
+        api = MagicMock()
+        api.get_activity.return_value = {
+            "summaryDTO": {"directWorkoutRpe": 50}
+        }
+        result = fetch_activity_rpe(api, "act-1")
+        assert result == {"rpe": 5, "feel": None, "compliance_score": None}
+
+    def test_explicit_null_values(self):
+        api = MagicMock()
+        api.get_activity.return_value = {
+            "summaryDTO": {
+                "directWorkoutRpe": None,
+                "directWorkoutFeel": None,
+                "directWorkoutComplianceScore": None,
+            }
+        }
+        result = fetch_activity_rpe(api, "act-1")
+        assert result == {"rpe": None, "feel": None, "compliance_score": None}
+
+    def test_api_returning_none(self):
+        """When the underlying API call returns None entirely."""
+        api = MagicMock()
+        api.get_activity.return_value = None
+        result = fetch_activity_rpe(api, "act-1")
+        assert result == {"rpe": None, "feel": None, "compliance_score": None}
