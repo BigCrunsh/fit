@@ -72,8 +72,8 @@
 ## 9. Integration & Cleanup
 
 - [x] 9.1 Run full test suite, fix any regressions from rolling window refactor
-- [ ] 9.2 Generate dashboard with test data, visual review of all 6 Training tab sections (manual)
+- [x] 9.2 Generate dashboard with test data, visual review of all 6 Training tab sections (manual)
 - [x] 9.3 Verify `fit status` shows "Last 7 days" with rolling data
-- [x] 9.4 Verify `fit sync` still populates `weekly_agg` correctly (no regression — all 748 tests pass)
+- [x] 9.4 Verify `fit sync` still populates `weekly_agg` correctly (no regression — full test suite passes, 773 tests)
 - [x] 9.5 Verify Coach tab staleness works on 7-day cadence
 - [x] 9.6 Update CLAUDE.md: document rolling window design decision, update Training tab description, remove `fit goal` references

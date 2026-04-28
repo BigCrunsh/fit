@@ -12,10 +12,11 @@
 - **THEN** it calls `compute_rolling_week(conn)` which queries `activities` for the last 7 days and returns volume, run count, zone distribution, and ACWR — not `weekly_agg` for the current ISO week
 
 #### Scenario: Historical queries still use weekly_agg
-- **WHEN** the Volume Trend chart needs 12 weeks of history
-- **THEN** it reads completed ISO weeks from `weekly_agg` (fast, pre-materialized) and appends the rolling window for the current period
+- **WHEN** consumers need historical weekly trends (e.g., ACWR chronic baseline)
+- **THEN** they read completed ISO weeks from `weekly_agg` (fast, pre-materialized). The Volume Trend chart aggregates ISO-week-grouped totals from `activities` directly; "now" totals are surfaced by the hero card via `compute_rolling_week()`
 
 ### Requirement: Bug fixes
+The sync pipeline SHALL include the following correctness fixes:
 - ACWR year-boundary: ISO week 53 handling (prev_week += 52 wrong for 53-week years). Use `datetime.date.fromisocalendar()` for correct week arithmetic.
 - Alert SQL: `all_runs_too_hard` query `WHERE >= MAX()` returns only 1 week. Fix to actually average 2 weeks.
 - SpO2 threshold: change from <93% to <95% for sea-level. Make configurable via config.yaml.

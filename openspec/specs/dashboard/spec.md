@@ -125,23 +125,35 @@ The Today tab SHALL include a collapsible calibration + data health panel. Colla
 - **THEN** collapsed panel shows "All healthy ✓" in green
 
 ### Requirement: Training tab shows training structure (smart date range)
-The Training tab SHALL display the current training cycle (from Phase 1 start date or last significant gap, with zoom toggle: 3mo / 6mo / 1yr / all). Charts: (1) weekly volume bars with longest run highlighted (primary chart), (2) **run type breakdown** (stacked weekly: easy/long/tempo/intervals/recovery/race — using intensity palette), (3) training load per run (intensity-colored bars), (4) **run timeline** visualization (replaces traditional table).
+The Training tab SHALL display purpose-driven sections in this order: (1) **Last 7 Days hero card** (from `training-week-summary` capability), (2) **Objectives row** (from `training-week-summary` capability), (3) **Last 7 Days** per-run detail cards (from `run-detail-analysis` capability), (4) **Plan Adherence** multi-week summary (from `training-week-summary` capability), (4b) **Planned vs Actual (per day)** mirrored bars, (5) **Volume Trend** stacked-by-run-type chart (Volume Trend and Run Type Mix are merged into a single stacked bar chart `chart-volume`, with phase target as shaded band using box annotation matching established chart style, gap annotations for breaks >14 days), (6) **Plan Compliance Trend** scatter (per-run Garmin adherence score with rolling average). Training Load per Run chart is removed — per-run load data is folded into Last 7 Days card headers. The smart date range and zoom toggle apply to the Volume Trend chart.
 
-#### Scenario: Run type breakdown
-- **WHEN** last 8 weeks have classified runs
-- **THEN** stacked bars show easy/long/tempo/intervals/recovery per week, colored by intensity palette
+#### Scenario: Training tab section order
+- **WHEN** the Training tab is opened with sufficient data
+- **THEN** sections render top-to-bottom: Last 7 Days hero, Objectives, Last 7 Days, Plan Adherence, Planned vs Actual, Volume Trend, Plan Compliance Trend
 
-#### Scenario: Run timeline instead of table
-- **WHEN** last 10 runs exist
-- **THEN** a horizontal bar timeline shows each run: bar length = distance, color = intensity zone, label = run_type + RPE. This replaces the traditional number table.
+#### Scenario: Volume chart smart range default
+- **WHEN** 20+ ISO weeks of data exist
+- **THEN** the Volume Trend chart defaults to a recent window via the JS smart-range / zoom toggle (`timeScaleCharts`), not all-time
+
+#### Scenario: Phase target band on volume chart
+- **WHEN** active phase has weekly_km target [30, 40]
+- **THEN** a shaded band (box annotation, 40+ hex opacity) marks the 30-40km target range on the volume chart
+
+#### Scenario: Stacked run-type breakdown on volume chart
+- **WHEN** the Volume Trend chart renders
+- **THEN** each weekly bar is stacked by run type (easy, long, tempo, progression, intervals, recovery, race) — fulfilling the Run Type Mix requirement within the same chart
 
 #### Scenario: Smart date range default
 - **WHEN** Phase 1 started Apr 1 and current date is Jun 15
 - **THEN** the default view starts from Apr 1 (current cycle), not from all-time
 
 #### Scenario: Zoom toggle
-- **WHEN** user clicks "1yr" zoom toggle
-- **THEN** all charts on the Training tab rescale to show 1 year of data
+- **WHEN** user clicks a zoom toggle
+- **THEN** the Volume Trend chart rescales to the selected range
+
+#### Scenario: Training Load per Run chart removed
+- **WHEN** the Training tab renders
+- **THEN** there is no standalone Training Load per Run chart; load data appears in Last 7 Days card headers
 
 ### Requirement: Event annotations on time-series charts
 All time-series charts (VO2max, weight, training load, volume, speed_per_bpm, cadence) SHALL display event annotations as vertical markers at key dates. Event sources: races (from `run_type = 'race'`), training gaps (> 7 days no activity), phase transitions (from `training_phases`), calibration changes (from `calibration`), goal milestones (from `goal_log`). Markers are subtle (thin vertical line) with labels on hover via Chart.js annotation plugin.
@@ -200,15 +212,15 @@ The ACWR gauge SHALL appear on BOTH the Today tab and the Body tab. It uses the 
 - **THEN** gauge shows red with: "Training spike detected. Reduce load this week."
 
 ### Requirement: Coach tab displays stored coaching insights
-The Coach tab SHALL read from `reports/coaching.json` and render insight boxes (type/title/body), generation timestamp, and stale indicator. Insight types use the safety palette for color-coding.
+The Coach tab SHALL read from `reports/coaching.json` and render insight boxes (type/title/body), generation timestamp, and stale indicator. Coaching operates on a **weekly cadence** — it is a structured weekly review artifact, not a reactive post-sync output. Staleness SHALL be determined by age: coaching notes are stale when `report_date` is more than 7 days ago, NOT when `report_date` is before the last sync. This reflects the coaching model: most Claude interactions are ephemeral conversations (pre-run go/no-go, post-run questions); coaching notes are the weekly summary.
 
-#### Scenario: Current coaching
-- **WHEN** coaching.json exists and report_date matches last sync
-- **THEN** insight boxes rendered with timestamp
+#### Scenario: Current coaching (within 7 days)
+- **WHEN** coaching.json exists and report_date is 3 days ago
+- **THEN** insight boxes rendered with timestamp, no stale indicator — even if sync has run since
 
-#### Scenario: Stale coaching
-- **WHEN** coaching.json report_date is before last sync
-- **THEN** stale warning shown with regeneration instructions
+#### Scenario: Stale coaching (older than 7 days)
+- **WHEN** coaching.json report_date is 9 days ago
+- **THEN** stale warning shown: "Last coaching review was 9 days ago. Ask Claude for a weekly review."
 
 #### Scenario: No coaching
 - **WHEN** coaching.json does not exist
@@ -226,15 +238,15 @@ Metric definitions SHALL be collapsed by default, shown via a small `ⓘ` icon n
 - **THEN** a contextual definition appears referencing the user's current VO2max, peak, and what the number means for their specific goal
 
 ### Requirement: Week-over-week comparison
-The Training tab SHALL include a **week-over-week summary card** showing the current (or most recent complete) week vs the previous week: delta in total km, run count, longest run, zone compliance, ACWR change, and a one-line verdict (e.g., "Volume up 12%, zone compliance improved, ACWR stable").
+The week-over-week comparison SHALL be absorbed into the Last 7 Days hero card as a subtitle sentence generated by `generate_wow_sentence()`. There SHALL NOT be a standalone WoW section or card on the Training tab. The comparison SHALL use **rolling 7-day windows**: the last 7 days vs the prior 7 days (days -13 to -7). This eliminates the ISO-week boundary problem where Monday resets the comparison to zero. The narrative sentence shows: delta in total km, run count change, zone compliance change, and ACWR status.
 
-#### Scenario: Week-over-week with improvement
-- **WHEN** this week: 28km, 4 runs, z12_pct 82% vs last week: 22km, 3 runs, z12_pct 75%
-- **THEN** summary shows: "+6km (+27%), +1 run, zone compliance 75%→82% ↑, ACWR 1.1 (safe)"
+#### Scenario: WoW as hero card subtitle (rolling)
+- **WHEN** last 7 days: 28km, 4 runs, z12_pct 82% vs prior 7 days: 22km, 3 runs, z12_pct 75%
+- **THEN** the hero card subtitle reads: "Volume up 27% to 28km, zone compliance improved from 75% to 82%."
 
-#### Scenario: Incomplete current week
-- **WHEN** it's Wednesday (week not complete)
-- **THEN** summary shows current week so far vs full previous week, labeled "Week in progress"
+#### Scenario: Monday is not a reset
+- **WHEN** today is Monday, with a long run Saturday and easy run Sunday in the 7-day window
+- **THEN** the subtitle includes those weekend runs in the current 7-day total, not a fresh-start comparison
 
 ### Requirement: Training phase progress display
 The Today tab SHALL display the active training phase with: phase name, date range, targets vs current actuals as a multi-dimensional mini-scorecard (on/off track per dimension, safety-colored), and the journey timeline. The Training tab SHALL show phase-specific context on charts (phase boundary annotations).
@@ -266,9 +278,6 @@ The Body tab SHALL display a dual-line chart showing average stress level and bo
 
 ### Requirement: ACWR trend chart on Body tab
 The Body tab SHALL display an ACWR bar chart over all weeks with data. Each bar is safety-colored (green 0.8-1.3, yellow 1.3-1.5, red >1.5). Horizontal annotation lines mark the safe range (0.8, 1.3) and danger threshold (1.5).
-
-### Requirement: Run type breakdown stacked chart on Training tab
-The Training tab SHALL display a stacked bar chart of run types per week (last 12 weeks): easy, long, tempo, intervals, recovery, race. Colors use the intensity palette (Z12 for easy/recovery, Z3 for tempo, Z45 for intervals/race).
 
 ### Requirement: Marathon prediction trend on Fitness tab
 The Fitness tab SHALL display a monthly marathon prediction trend line using VDOT estimates from monthly average VO2max. Y-axis is reversed (lower = faster). A horizontal annotation line marks the sub-4:00 target (240 minutes).
@@ -345,18 +354,26 @@ Training charts SHALL show an annotation marker on the date of the first Z2 run 
 - **THEN** a vertical annotation "First Z2 run" appears on training charts at that date
 
 ### Requirement: Run Timeline gap markers
-The Run Timeline visualization SHALL show gap markers between runs that are more than 14 days apart. Format: "-- 100d gap --" displayed inline in the timeline.
+The Run Timeline visualization is replaced by the Last 7 Days per-run detail cards. Gap markers for training breaks (>14 days) SHALL appear as annotations on the Volume Trend chart instead of inline in a timeline. The Volume Trend chart SHALL show a shaded region labeled with the gap duration (e.g., "100d gap") for any break exceeding 14 days.
 
-#### Scenario: Long training gap
-- **WHEN** there is a 100-day gap between runs
-- **THEN** Run Timeline shows "-- 100d gap --" marker between the two runs
+#### Scenario: Long training gap on volume chart
+- **WHEN** there is a 100-day gap between training weeks
+- **THEN** the Volume Trend chart shows a shaded region spanning the gap, labeled "100d gap"
+
+#### Scenario: No standalone run timeline
+- **WHEN** the Training tab renders
+- **THEN** there is no horizontal bar timeline; recent runs appear as Last 7 Days cards
 
 ### Requirement: WoW as narrative sentence
-Week-over-week comparison SHALL be rendered as a narrative sentence generated by `generate_wow_sentence()`, not as a raw data dump. Example: "Volume up 12% to 28km, added a long run, zone compliance improved from 75% to 82%."
+The week-over-week narrative sentence generated by `generate_wow_sentence()` SHALL be updated to accept rolling 7-day window data instead of ISO-week data, and rendered as the subtitle of the Last 7 Days hero card. There SHALL NOT be a standalone WoW card or section.
 
-#### Scenario: WoW narrative
-- **WHEN** WoW data shows volume +12%, z12_pct 75%->82%
-- **THEN** rendered as: "Volume up 12% to 28km, zone compliance improved from 75% to 82%."
+#### Scenario: WoW narrative in hero card (rolling)
+- **WHEN** rolling 7d data shows volume +27%, z12_pct 75%->82%
+- **THEN** the hero card subtitle reads: "Volume up 27% to 28km, zone compliance improved from 75% to 82%."
+
+#### Scenario: First 7 days of training
+- **WHEN** no prior 7-day data exists for comparison (fewer than 14 days of history)
+- **THEN** the hero card subtitle reads "First tracked week" or is omitted
 
 ### Requirement: Body tab opening narrative
 The Body tab SHALL have an opening narrative paragraph generated by `generate_body_summary()` that connects recovery signals: sleep, HRV, readiness, weight trends. Example: "Recovery signals mixed: HRV trending up but sleep quality dropped this week. Weight stable at 76.2kg."
@@ -373,11 +390,15 @@ The race prediction SHALL show the prediction range prominently (e.g., "3:48-4:0
 - **THEN** range "3:48-4:05" is prominent, detail table is collapsed
 
 ### Requirement: Stale coaching banner
-When coaching notes are stale (older than last sync), the Coach tab SHALL show a full-width banner, not just a small badge. The banner includes regeneration instructions.
+When coaching notes are stale (older than 7 days), the Coach tab SHALL show a full-width banner. The banner message SHALL reflect weekly cadence, not sync freshness. The banner includes regeneration instructions referencing the weekly coaching workflow.
 
-#### Scenario: Stale coaching
-- **WHEN** coaching.json report_date is before last sync
-- **THEN** full-width banner: "Coaching notes are stale. Ask Claude to regenerate or run the coaching workflow."
+#### Scenario: Stale coaching banner
+- **WHEN** coaching.json report_date is more than 7 days ago
+- **THEN** full-width banner: "Last coaching review was 9 days ago. Time for a weekly check-in — ask Claude to review your week."
+
+#### Scenario: Recent coaching after multiple syncs
+- **WHEN** coaching.json report_date is 2 days ago but 3 syncs have occurred since
+- **THEN** no stale banner — coaching is fresh on a weekly cadence
 
 ### Requirement: Correlation empty state with progress bar
 When insufficient check-in data exists for correlations, the correlation section SHALL show a progress bar toward the 20 check-in threshold, not just a text message.

@@ -1,27 +1,31 @@
 ## MODIFIED Requirements
 
 ### Requirement: Training tab shows training structure (smart date range)
-The Training tab SHALL display 6 purpose-driven sections in this order: (1) **Last 7 Days hero card** (from `training-week-summary` capability), (2) **Objectives row** (from `training-week-summary` capability), (3) **Last 7 Days** per-run detail cards (from `run-detail-analysis` capability), (4) **Plan Adherence** multi-week summary (from `training-week-summary` capability), (5) **Volume Trend** chart (weekly volume bars, default 12 weeks, with phase target as shaded band using box annotation matching established chart style, longest run highlighted), (6) **Run Type Mix** stacked breakdown. Training Load per Run chart is removed — per-run load data is folded into Last 7 Days card headers. The smart date range and zoom toggle apply to the Volume Trend and Run Type Mix charts.
+The Training tab SHALL display purpose-driven sections in this order: (1) **Last 7 Days hero card** (from `training-week-summary` capability), (2) **Objectives row** (from `training-week-summary` capability), (3) **Last 7 Days** per-run detail cards (from `run-detail-analysis` capability), (4) **Plan Adherence** multi-week summary (from `training-week-summary` capability), (4b) **Planned vs Actual (per day)** mirrored bars, (5) **Volume Trend** stacked-by-run-type chart (Volume Trend and Run Type Mix are merged into a single stacked bar chart `chart-volume`, with phase target as shaded band using box annotation matching established chart style, gap annotations for breaks >14 days), (6) **Plan Compliance Trend** scatter (per-run Garmin adherence score with rolling average). Training Load per Run chart is removed — per-run load data is folded into Last 7 Days card headers. The smart date range and zoom toggle apply to the Volume Trend chart.
 
 #### Scenario: Training tab section order
 - **WHEN** the Training tab is opened with sufficient data
-- **THEN** sections render top-to-bottom: Last 7 Days hero, Objectives, Last 7 Days, Plan Adherence, Volume Trend, Run Type Mix
+- **THEN** sections render top-to-bottom: Last 7 Days hero, Objectives, Last 7 Days, Plan Adherence, Planned vs Actual, Volume Trend, Plan Compliance Trend
 
-#### Scenario: Volume chart defaults to 12 weeks
-- **WHEN** 20+ weeks of data exist
-- **THEN** the Volume Trend chart defaults to showing the last 12 weeks, not all-time
+#### Scenario: Volume chart smart range default
+- **WHEN** 20+ ISO weeks of data exist
+- **THEN** the Volume Trend chart defaults to a recent window via the JS smart-range / zoom toggle (`timeScaleCharts`), not all-time
 
 #### Scenario: Phase target band on volume chart
 - **WHEN** active phase has weekly_km target [30, 40]
 - **THEN** a shaded band (box annotation, 40+ hex opacity) marks the 30-40km target range on the volume chart
+
+#### Scenario: Stacked run-type breakdown on volume chart
+- **WHEN** the Volume Trend chart renders
+- **THEN** each weekly bar is stacked by run type (easy, long, tempo, progression, intervals, recovery, race) — fulfilling the Run Type Mix requirement within the same chart
 
 #### Scenario: Smart date range default
 - **WHEN** Phase 1 started Apr 1 and current date is Jun 15
 - **THEN** the default view starts from Apr 1 (current cycle), not from all-time
 
 #### Scenario: Zoom toggle
-- **WHEN** user clicks "1yr" zoom toggle
-- **THEN** Volume Trend and Run Type Mix charts rescale to show 1 year of data
+- **WHEN** user clicks a zoom toggle
+- **THEN** the Volume Trend chart rescales to the selected range
 
 #### Scenario: Training Load per Run chart removed
 - **WHEN** the Training tab renders

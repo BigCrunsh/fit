@@ -1,4 +1,10 @@
-## ADDED Requirements
+# rolling-window
+
+## Purpose
+
+Define how the dashboard, CLI, alerts, and coaching context use a rolling 7-day window (today minus 6 days through today) as the primary "week" concept, replacing ISO-week boundaries (Monday–Sunday) for "current week" metrics. The `weekly_agg` table remains the materialization layer for historical trends and ISO-week-aligned charts; rolling 7-day data is computed on-demand from raw `activities` via `compute_rolling_week()`.
+
+## Requirements
 
 ### Requirement: Rolling 7-day window as the primary "week" concept
 All dashboard sections, CLI output, alerts, and coaching context that reference "last 7 days" or "weekly" metrics SHALL use a rolling 7-day window (today minus 6 days through today) instead of ISO week boundaries (Monday-Sunday). Metrics and alerts SHALL NOT depend on a specific cutoff day. The rolling window ensures that: (1) Monday is not a dead dashboard — weekend training carries forward, (2) mid-week comparisons are always apples-to-apples, (3) no partial-week guards are needed in alert logic.
@@ -16,15 +22,15 @@ All dashboard sections, CLI output, alerts, and coaching context that reference 
 - **THEN** both windows are exactly 7 days, always comparable regardless of what day it is
 
 ### Requirement: Rolling window for dashboard charts
-All dashboard charts that currently group by ISO week SHALL query by date range instead. The Volume Trend chart SHALL use 7-day bins anchored to today (not Monday-aligned). The Run Type Mix chart SHALL use the same binning. Chart x-axis labels SHALL show the bin end date (e.g., "Apr 12") rather than ISO week labels (e.g., "W15").
+The Volume Trend chart (which absorbs the Run Type Mix as a stacked-by-run-type breakdown) is the one chart exception to the rolling-window principle: it remains ISO-week aligned because per-run-type aggregation across overlapping rolling windows is expensive and offers little visual benefit. Chart x-axis labels SHALL show the ISO week's Sunday date (e.g., "Apr 12") rather than ISO week labels (e.g., "W15"). All non-chart "current week" surfaces (hero card, objectives, alerts, CLI, MCP) still use the rolling 7-day window — only the chart bins remain calendar-aligned.
 
-#### Scenario: Volume chart bins
+#### Scenario: Volume chart bins are ISO-week aligned
 - **WHEN** the Volume Trend chart renders on a Wednesday
-- **THEN** each bar represents a 7-day window ending on successive days (not Mon-Sun weeks), with the rightmost bar ending today
+- **THEN** each bar represents an ISO week (Mon-Sun); the current week's bar shows partial data (Mon-Wed) — the hero card above already shows the rolling 7-day total for "now" purposes
 
-#### Scenario: No week-boundary artifacts
-- **WHEN** a runner does 3 runs on Sat-Sun-Mon spanning an ISO week boundary
-- **THEN** the volume chart shows them in the same 7-day bin (if within window), not split across two bars
+#### Scenario: X-axis labels are ISO dates, not week strings
+- **WHEN** the Volume Trend chart renders
+- **THEN** x-axis labels show the Sunday end date of each ISO week (e.g., "Apr 12"), not "W15"
 
 ### Requirement: Rolling window for CLI output
 The `fit status` command SHALL display "Last 7 days" metrics (volume, run count, ACWR, zone distribution) using the rolling window. The label SHALL say "Last 7 days" not "Last 7 days". The `fit plan` command SHALL continue to show calendar-week aligned plan data since training plans are authored per calendar week.
@@ -63,8 +69,8 @@ The `weekly_agg` table SHALL continue to exist and be populated by ISO week for 
 - **THEN** it calls `compute_rolling_week()` which queries `activities` for the last 7 days, not `weekly_agg` for the current ISO week
 
 #### Scenario: Historical trends still use weekly_agg
-- **WHEN** the Volume Trend chart needs 12 weeks of history
-- **THEN** it reads from `weekly_agg` for past weeks (materialized, fast) and appends the rolling window for the current period
+- **WHEN** consumers need historical weekly trends (e.g., ACWR chronic baseline, weekly_agg-backed reports)
+- **THEN** they read from `weekly_agg` for past ISO weeks (materialized, fast). The Volume Trend chart queries `activities` directly grouped by ISO week (equivalent result for completed weeks), and the current ISO week bar shows partial data — "now" totals are surfaced separately by the hero card via `compute_rolling_week()`
 
 #### Scenario: weekly_agg still populated on sync
 - **WHEN** `fit sync` runs

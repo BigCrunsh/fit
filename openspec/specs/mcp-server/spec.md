@@ -55,9 +55,9 @@ The server SHALL expose a `get_run_context(date)` tool that returns the full `v_
 ### Requirement: Coaching workflow via 3 focused tools
 The coaching workflow SHALL be split into 3 separate MCP tools with clear responsibilities:
 
-**`check_dashboard_freshness()`** — returns last sync date, last report date, and last coaching date. Simple status check, no side effects.
+**`check_dashboard_freshness()`** — returns last sync date, last report date, and coaching age. Coaching freshness SHALL be evaluated on a **weekly cadence**: coaching is fresh if `report_date` is within the last 7 days, stale if older than 7 days. The comparison against last sync date is removed — syncs do not invalidate coaching notes. This reflects the coaching model: Claude conversations are on-demand (pre-run, post-run, ad-hoc), but coaching notes are a weekly review artifact.
 
-**`get_coaching_context()`** — queries the DB and returns a structured data summary for Claude to reason about: ACWR + safety status, calibration staleness, data source health, active phase targets vs actuals (compliance), zone distribution by time, run type breakdown, speed_per_bpm trends, cadence trends, RPE predicted vs actual patterns, sleep quality mismatches, race predictions, consistency streak. Does NOT generate insights — Claude does the analysis after reading this context.
+**`get_coaching_context()`** — queries the DB and returns a structured data summary for Claude to reason about: ACWR + safety status, calibration staleness, data source health, active phase targets vs actuals (compliance), zone distribution by time, run type breakdown, speed_per_bpm trends, cadence trends, RPE predicted vs actual patterns, sleep quality mismatches, race predictions, consistency streak. Does NOT generate insights — Claude does the analysis after reading this context. The partial-week ACWR flag SHALL be removed (replaced by rolling 7-day window from the `rolling-window` capability — ACWR is always based on a full 7-day window).
 
 **`save_coaching_notes(insights_json)`** — accepts a JSON string of insights and writes to `reports/coaching.json`. JSON format: `{"generated_at": "ISO8601", "report_date": "YYYY-MM-DD", "insights": [{"type": "warning|critical|positive|info|target", "title": "...", "body": "..."}]}`. Writes atomically (write to temp file, then rename). This is the only tool with a filesystem side effect.
 
@@ -65,9 +65,17 @@ The coaching workflow SHALL be split into 3 separate MCP tools with clear respon
 - **WHEN** user asks Claude Chat for coaching analysis
 - **THEN** Claude calls `check_dashboard_freshness()`, then `get_coaching_context()`, reasons about the data, optionally calls `execute_sql_query()` for deeper investigation, then calls `save_coaching_notes()` with its analysis
 
-#### Scenario: Stale dashboard detected
-- **WHEN** Claude calls `check_dashboard_freshness()` and report is older than last sync
-- **THEN** Claude recommends running `fit report` first before generating coaching notes
+#### Scenario: Freshness check reflects weekly cadence
+- **WHEN** Claude calls `check_dashboard_freshness()` and coaching notes are 3 days old but 2 syncs have occurred since
+- **THEN** response reports coaching as "fresh (3 days ago)" — NOT stale
+
+#### Scenario: Stale coaching prompts weekly review
+- **WHEN** Claude calls `check_dashboard_freshness()` and coaching notes are 9 days old
+- **THEN** response reports coaching as "stale (9 days ago — weekly review recommended)"
+
+#### Scenario: No partial-week ACWR flag
+- **WHEN** Claude calls `get_coaching_context()` on a Tuesday
+- **THEN** ACWR is computed from the rolling 7-day window and reported without a "partial week" caveat
 
 #### Scenario: Coaching notes written atomically
 - **WHEN** Claude calls `save_coaching_notes()` with valid JSON
@@ -113,19 +121,15 @@ The `get_coaching_context()` tool SHALL include 5 sections: (1) **Profile** — 
 ## Post-Phase 2 Additions
 
 ### Requirement: get_coaching_context() includes today's run and plan
-`get_coaching_context()` SHALL include: (1) today's completed run (if any) with distance, pace, HR, zone, run_type, (2) the full week's Runna plan (next 10 days of planned_workouts), (3) a partial-week ACWR flag indicating whether ACWR is based on incomplete week data, (4) previous coaching summary (titles from last session's coaching.json for continuity).
+`get_coaching_context()` SHALL include: (1) today's completed run (if any) with distance, pace, HR, zone, run_type, (2) the full week's plan (next 10 days of planned_workouts), (3) previous coaching summary (titles from last session's coaching.json for continuity). The partial-week ACWR flag is removed — ACWR uses a rolling 7-day window and is always based on complete data.
 
-#### Scenario: Today's run in context
+#### Scenario: Today's run included
 - **WHEN** Claude calls `get_coaching_context()` and a run was completed today
-- **THEN** context includes: "Today's run: 8.2km, 5:42/km, HR 142, Z2, easy"
+- **THEN** context includes today's run details (distance, pace, HR, zone, run_type)
 
-#### Scenario: Runna plan in context
+#### Scenario: Plan included
 - **WHEN** Claude calls `get_coaching_context()` and planned_workouts exist for next 10 days
-- **THEN** context includes the full plan: dates, workout types, target distances, target zones
-
-#### Scenario: Partial-week ACWR flag
-- **WHEN** it is Wednesday and ACWR is computed from 3 days of data
-- **THEN** context includes: "ACWR note: partial week (3/7 days), current value may not reflect full week"
+- **THEN** context includes each planned workout (date, type, target distance, target zone)
 
 #### Scenario: Previous coaching summary
 - **WHEN** coaching.json exists from a prior session
