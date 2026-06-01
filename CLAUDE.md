@@ -7,7 +7,7 @@ Personal fitness data platform. SQLite database, Python CLI, MCP server, HTML da
 ```bash
 pip install -e .                      # install
 pip install -e '.[analysis]'          # install with fitparse for .fit file analysis
-pytest tests/ -v                      # run tests (896 tests, in-memory SQLite)
+pytest tests/ -v                      # run tests (903 tests, in-memory SQLite)
 pytest tests/ -v --tb=short           # compact output
 fit sync --days 7                     # daily: pull Garmin + enrich + weather + aggregate
 fit sync --full && fit recompute      # init: pull all history + re-enrich
@@ -21,6 +21,7 @@ fit mcp install                       # register MCP server with Claude Desktop 
 
 ## Design Decisions That Prevent Mistakes
 
+- **Keep the MCP and the coaching skill in sync** — `mcp/server.py` (`get_coaching_context` et al.) and `.claude/skills/fit-coach/SKILL.md` consume the same zone model, metrics, calibrations, phases, and analysis semantics. Whenever you change any of those (or rename a metric, flip the default zone model, alter a calibration/anchor rule, etc.), check whether the coaching context **and** the skill need updating too — otherwise coaching silently drifts from the dashboard. They are a contract, not independent files.
 - **INSERT ON CONFLICT**, not INSERT OR REPLACE — derived metrics are preserved on re-sync
 - **Rolling 7-day window, not ISO weeks** — `compute_rolling_week()` (today-6 → today). ACWR is hybrid: rolling 7d acute + ISO-week chronic. Streaks stay ISO-week.
 - **Phase-specific targets** — compare against active training phase targets, not fixed 80/20

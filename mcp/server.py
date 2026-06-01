@@ -238,24 +238,75 @@ def check_dashboard_freshness() -> str:
 
 
 def _ctx_profile(conn) -> list[str]:
-    """Zone boundaries, calibrations, thresholds."""
+    """Zone boundaries, calibrations, thresholds — anchored to the ACTIVE model.
+
+    The "easy ceiling" coaching keys off MUST be the active model's Z2 upper
+    bound. When zone_model is 'lthr' that's the LTHR Z2 ceiling (~153 at
+    LTHR 172), NOT the stricter max-HR diagnostic ceiling (134) — emitting
+    the wrong one makes coaching flag legitimate Z2 easy runs as too hard.
+    All boundaries are read from config (zones_lthr / zones_max_hr), never
+    from hardcoded multipliers.
+    """
     s = []
-    max_hr = config.get("profile", {}).get("max_hr")
-    zones_maxhr = config.get("profile", {}).get("zones_max_hr", {})
-    zone_model = config.get("profile", {}).get("zone_model", "max_hr")
+    profile = config.get("profile", {})
+    max_hr = profile.get("max_hr")
+    zone_model = profile.get("zone_model", "max_hr")
+    zones_maxhr = profile.get("zones_max_hr", {})
     s.append(f"Profile: max_hr={max_hr}, zone_model={zone_model}")
-    z2_bounds = zones_maxhr.get("z2", [115, 134])
-    z4_bounds = zones_maxhr.get("z4", [154, 173])
-    s.append(f"Zone boundaries (max HR model): Z2 (Easy)={z2_bounds[0]}-{z2_bounds[1]} bpm, "
-             f"Z3 (Moderate)={zones_maxhr.get('z3', [134, 154])[0]}-{zones_maxhr.get('z3', [134, 154])[1]}, "
-             f"Z4 (Hard)={z4_bounds[0]}-{z4_bounds[1]}")
-    s.append(f"IMPORTANT: Easy runs must stay below {z2_bounds[1]} bpm (Z2 ceiling), NOT 150 bpm")
+
     from fit.calibration import get_active_calibration as _get_cal, get_calibration_status
     lthr_cal = _get_cal(conn, "lthr")
+
+    # Max-HR boundaries (diagnostic unless zone_model == 'max_hr')
+    z2_max = zones_maxhr.get("z2", [115, 134])
+    maxhr_ceiling = z2_max[1]
+    s.append(f"Zone boundaries (max HR model): Z2 (Easy)={z2_max[0]}-{z2_max[1]} bpm, "
+             f"Z3 (Moderate)={zones_maxhr.get('z3', [134, 154])[0]}-{zones_maxhr.get('z3', [134, 154])[1]}, "
+             f"Z4 (Hard)={zones_maxhr.get('z4', [154, 173])[0]}-{zones_maxhr.get('z4', [154, 173])[1]}")
+
+    # LTHR boundaries from config percentages (primary when zone_model == 'lthr')
+    lthr_ceiling = None
     if lthr_cal:
-        s.append(f"LTHR: {lthr_cal['value']} bpm ({lthr_cal['method']}, {lthr_cal['date']})")
-        s.append(f"Zone boundaries (LTHR model): Z2={round(lthr_cal['value']*0.85)}-{round(lthr_cal['value']*0.89)}, "
-                 f"Z4={round(lthr_cal['value']*0.95)}-{round(lthr_cal['value']*0.99)}")
+        lthr = lthr_cal["value"]
+        zl = profile.get("zones_lthr", {})
+        z2_pct = zl.get("z2_pct", [85, 89])
+        z4_pct = zl.get("z4_pct", [95, 99])
+        lthr_ceiling = round(lthr * z2_pct[1] / 100)
+        s.append(f"LTHR: {lthr} bpm ({lthr_cal['method']}, {lthr_cal['date']})")
+        s.append(f"Zone boundaries (LTHR model): Z2={round(lthr * z2_pct[0] / 100)}-{lthr_ceiling}, "
+                 f"Z4={round(lthr * z4_pct[0] / 100)}-{round(lthr * z4_pct[1] / 100)}")
+
+    # The binding easy ceiling is the ACTIVE model's — this is what coaching must use.
+    if zone_model == "lthr" and lthr_ceiling is not None:
+        s.append(f"IMPORTANT: zone_model is LTHR — easy runs must stay below {lthr_ceiling} bpm "
+                 f"(LTHR Z2 ceiling), NOT the max-HR ceiling ({maxhr_ceiling}) and NOT 150 bpm")
+    else:
+        s.append(f"IMPORTANT: easy runs must stay below {maxhr_ceiling} bpm (Z2 ceiling), NOT 150 bpm")
+
+    # Fitness anchor — latest qualifying effort (training or race) vs Garmin VO2max.
+    # The GAP is the signal: a large positive gap means Garmin's wrist-HR estimate
+    # is optimistic and prediction should trust the anchor (see dashboard VDOT Trend).
+    try:
+        from fit.fitness import get_fitness_anchors
+        anchors = get_fitness_anchors(conn, days=365)
+        garmin_row = conn.execute(
+            "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        garmin_vo2 = float(garmin_row["vo2max"]) if garmin_row and garmin_row["vo2max"] else None
+        if anchors:
+            latest = sorted(anchors, key=lambda a: a["date"], reverse=True)[0]
+            line = (f"Fitness anchor (latest qualifying effort): VDOT {latest['vdot']} from "
+                    f"{latest['date']} ({latest['distance_km']:g}km @ avg HR {latest['avg_hr']})")
+            if garmin_vo2:
+                gap = garmin_vo2 - latest["vdot"]
+                line += f"; Garmin VO2max {garmin_vo2:.0f} (gap {gap:+.0f} — trust the anchor)"
+            s.append(line)
+        elif garmin_vo2:
+            s.append(f"Fitness anchor: none in last 365d; Garmin VO2max {garmin_vo2:.0f} only "
+                     "(schedule a 5-10k effort at ≥LTHR to anchor VDOT)")
+    except Exception:
+        pass
+
     stale_cals = [c for c in get_calibration_status(conn) if c["stale"]]
     if stale_cals:
         s.append("Stale calibrations: " + ", ".join(f"{c['metric']} ({c['retest_prompt']})" for c in stale_cals))
@@ -330,21 +381,29 @@ def _ctx_training(conn) -> list[str]:
     """).fetchall()
     if types:
         s.append("Run types (4wk): " + ", ".join(f"{r['run_type']}:{r['n']}" for r in types))
-    spb = conn.execute(f"""
-        SELECT ROUND(AVG(speed_per_bpm), 3) as recent FROM activities
-        WHERE type IN {RUNNING_TYPES_SQL} AND speed_per_bpm IS NOT NULL AND date >= date('now', '-28 days')
-    """).fetchone()
-    spb_prev = conn.execute(f"""
-        SELECT ROUND(AVG(speed_per_bpm), 3) as prev FROM activities
-        WHERE type IN {RUNNING_TYPES_SQL} AND speed_per_bpm IS NOT NULL
-        AND date BETWEEN date('now', '-56 days') AND date('now', '-29 days')
-    """).fetchone()
-    if spb and spb["recent"]:
+    # Aerobic efficiency: prefer the Z2-gated speed/bpm (pure-aerobic signal, matches
+    # the dashboard's "Aerobic Efficiency (Z2 speed/bpm)"); fall back to all-runs
+    # speed/bpm when the window has no Z2-classified runs.
+    def _avg_spb(col: str, start_mod: str, end_mod: str):
+        row = conn.execute(f"""
+            SELECT ROUND(AVG({col}), 3) as v FROM activities
+            WHERE type IN {RUNNING_TYPES_SQL} AND {col} IS NOT NULL
+            AND date BETWEEN date('now', ?) AND date('now', ?)
+        """, (start_mod, end_mod)).fetchone()
+        return row["v"] if row else None
+
+    col, label = "speed_per_bpm_z2", "Z2 speed/bpm"
+    recent = _avg_spb(col, "-28 days", "+1 day")
+    if recent is None:
+        col, label = "speed_per_bpm", "speed/bpm (all runs)"
+        recent = _avg_spb(col, "-28 days", "+1 day")
+    if recent:
+        prev = _avg_spb(col, "-56 days", "-29 days")
         trend = ""
-        if spb_prev and spb_prev["prev"]:
-            diff = spb["recent"] - spb_prev["prev"]
+        if prev:
+            diff = recent - prev
             trend = f" (vs prev 4wk: {'↑' if diff > 0 else '↓'}{abs(diff):.3f})"
-        s.append(f"Speed/BPM (4wk avg): {spb['recent']}{trend}")
+        s.append(f"{label} (4wk avg): {recent}{trend}")
     return s
 
 
