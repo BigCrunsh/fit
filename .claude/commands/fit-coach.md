@@ -1,6 +1,27 @@
 Generate coaching insights for the fit platform.
 
+**Requires the `fit` MCP server.** This skill cannot run without it — there is
+no fallback path. The MCP exposes the analysis context, schema, and the
+persistence target. Manually querying the database does NOT replace it
+because the `save_coaching_notes` tool validates the insight shape before
+write, archives the previous notes to `coaching_history.json`, and writes
+atomically.
+
 **Steps:**
+
+0. **Preflight — verify MCP availability.** Confirm the following tools exist
+   in the current session: `check_dashboard_freshness`, `get_coaching_context`,
+   `execute_sql_query`, `save_coaching_notes`. If any are missing, STOP and
+   tell the user:
+
+   > The fit MCP server is not connected to this Claude Code session.
+   > Fix: ensure `.mcp.json` exists at the project root and registers the
+   > `fit` server (`python mcp/server.py`). Restart the Claude Code session
+   > so the server is spawned. Do NOT try to work around this by reading
+   > the database directly — the persistence and validation live in the
+   > MCP server.
+
+   Do not proceed to step 1 until all four tools are available.
 
 1. Call the `check_dashboard_freshness()` MCP tool to see if data is current.
    - If the dashboard hasn't been generated recently, suggest running `fit report` first.

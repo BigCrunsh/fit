@@ -21,3 +21,8 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# Claude Code: track entire .claude/ for this project (overrides global ~/.gitignore).
+# settings.local.json auto-accumulates local allowlist entries; never share.
+!.claude/
+.claude/settings.local.json
