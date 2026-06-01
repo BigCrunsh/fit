@@ -557,6 +557,40 @@ _VDOT_TABLE = [
 ]
 
 
+def compute_daniels_paces(vo2max: float | None, lthr: int | None = None) -> dict | None:
+    """Compute Daniels training paces (E/M/T/I/R) in seconds per km.
+
+    Anchored on VDOT (= vo2max) — marathon time is derived from the table
+    above, and the five paces are computed as offsets from M pace using
+    Daniels' typical spreads:
+
+      E (Easy)        — M + 45 sec/km to M + 60 sec/km
+      M (Marathon)    — from VDOT table
+      T (Threshold)   — M − 15 sec/km (~1-hour all-out)
+      I (Interval)    — T − 10 sec/km (~3-5 min at vVO2max)
+      R (Repetition)  — I − 8 sec/km (faster than vVO2max, 30s-2min reps)
+
+    Returns dict keyed by pace name with `{lo, hi}` range in sec/km (single
+    value paces have lo == hi). `None` when vo2max is missing.
+
+    `lthr` is accepted but not currently used in the derivation — Daniels
+    anchors on VDOT, not LTHR. It's part of the signature so future
+    refinements (e.g., adjusting T pace when LTHR-derived speed diverges
+    from VDOT-derived) have a slot.
+    """
+    if vo2max is None or vo2max <= 0:
+        return None
+    marathon_secs = _vdot_to_marathon_seconds(vo2max)
+    m_pace = marathon_secs / 42.195  # sec/km at marathon pace
+    return {
+        "E": {"lo": m_pace + 45, "hi": m_pace + 60},   # easy range
+        "M": {"lo": m_pace, "hi": m_pace},
+        "T": {"lo": m_pace - 15, "hi": m_pace - 15},
+        "I": {"lo": m_pace - 25, "hi": m_pace - 20},
+        "R": {"lo": m_pace - 33, "hi": m_pace - 28},
+    }
+
+
 def _vdot_to_marathon_seconds(vo2max: float) -> float:
     """Interpolate marathon time from Daniels VDOT table.
 

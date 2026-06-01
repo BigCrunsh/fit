@@ -68,6 +68,36 @@ h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
 .tab-btn.active { background:rgba(255,255,255,0.1); color:var(--text); }
 .tab-content { display:none; } .tab-content.active { display:block; }
 
+/* Your Physiology card (Overview tab) — four anchors side-by-side */
+.physiology-card { background:rgba(129,140,248,0.03); border:1px solid rgba(129,140,248,0.08); border-radius:14px; padding:14px 16px 16px; margin:14px 0; }
+.physiology-grid { display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; margin-top:8px; }
+.physiology-anchor { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 12px; position:relative; }
+.physiology-anchor.is-primary { border-color:rgba(129,140,248,0.30); background:rgba(129,140,248,0.05); }
+.physiology-anchor .primary-pill { position:absolute; top:8px; right:8px; font-size:8px; font-weight:700; color:var(--accent); text-transform:uppercase; letter-spacing:0.06em; padding:1px 5px; border:1px solid rgba(129,140,248,0.30); border-radius:6px; }
+.physiology-anchor .anchor-label { font-size:10px; font-weight:700; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.08em; }
+.physiology-anchor .anchor-value { font-size:22px; font-weight:700; font-family:var(--mono); line-height:1.1; margin-top:4px; }
+.physiology-anchor .anchor-unit { font-size:10px; color:var(--text-dim); font-weight:400; margin-left:2px; }
+.physiology-anchor .anchor-desc { font-size:10px; color:var(--text-muted); line-height:1.4; margin-top:6px; }
+.physiology-anchor .anchor-trend { font-size:9px; color:var(--text-dim); margin-top:4px; }
+.physiology-anchor .anchor-missing { font-size:10px; color:var(--caution); line-height:1.4; margin-top:6px; }
+.physiology-anchor .anchor-missing a { color:var(--caution); text-decoration:underline; }
+
+/* Daniels pace zones (Profile tab) */
+.pace-zone-row { display:flex; align-items:center; gap:12px; padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.04); font-size:12px; }
+.pace-zone-row:last-child { border-bottom:none; }
+.pace-zone-key { font-family:var(--mono); font-size:14px; font-weight:700; width:24px; text-align:center; }
+.pace-zone-label { width:80px; font-weight:600; color:var(--text); }
+.pace-zone-range { font-family:var(--mono); width:90px; color:var(--text); }
+.pace-zone-desc { flex:1; color:var(--text-muted); font-size:11px; }
+
+/* Concepts glossary (Overview tab, collapsible) */
+.concepts { margin-top:24px; }
+.concepts > summary { cursor:pointer; font-size:11px; font-weight:700; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.12em; padding:8px 0; list-style:none; }
+.concepts > summary::-webkit-details-marker { display:none; }
+.concepts-grid { display:grid; grid-template-columns:repeat(2, 1fr); gap:10px 18px; padding:12px 0; }
+.concept-term { font-weight:700; color:var(--text); font-size:12px; margin-bottom:2px; }
+.concept-body { font-size:11px; color:var(--text-muted); line-height:1.5; }
+
 /* In-tab anchor nav — used on the dense Profile tab to jump between chart
    sections. Sticks to viewport top so it stays reachable while scrolling
    past a wall of charts. Horizontal scroll on narrow screens. */

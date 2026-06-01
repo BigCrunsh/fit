@@ -299,6 +299,173 @@ def _run_timeline(conn):
 
 
 
+def _physiology(conn):
+    """Build the "Your Physiology" card data for the Overview tab.
+
+    Returns a list of 4 anchor dicts (LTHR, MaxHR, AeT, VO2max), each with:
+      - key: short identifier
+      - label: display name
+      - value: current value or None
+      - unit: 'bpm' / '' etc.
+      - description: one-line concept blurb
+      - date: ISO date of last calibration (or None)
+      - days_ago: int (or None)
+      - trend: 'stable' | '+N bpm in M weeks' | None
+      - is_primary: bool (anchor that drives current zones)
+      - missing_action: dict {message, link_anchor} when not yet calibrated
+
+    Order: primary first, then by physiological hierarchy (LTHR, MaxHR, AeT,
+    VO2max). When AeT is implemented (aet-anchored-zones) it should slide
+    into the primary slot above LTHR.
+    """
+    from fit.calibration import get_active_calibration
+    from fit.config import get_config
+
+    config = get_config()
+    zone_model = config.get("profile", {}).get("zone_model")
+    today = date.today()
+
+    def _entry(metric, label, unit, desc, missing_msg=None, missing_link=None):
+        cal = get_active_calibration(conn, metric)
+        if not cal:
+            return {
+                "key": metric, "label": label, "unit": unit,
+                "value": None, "description": desc,
+                "date": None, "days_ago": None, "trend": None,
+                "is_primary": False,
+                "missing_action": {
+                    "message": missing_msg or f"Calibrate via `fit calibrate {metric} <value>`",
+                    "link_anchor": missing_link,
+                } if missing_msg else None,
+            }
+        cal_date = date.fromisoformat(cal["date"]) if cal.get("date") else None
+        days_ago = (today - cal_date).days if cal_date else None
+
+        # Trend computation: compare current value to prior calibration rows
+        # for the same metric over the last ~180 days. "Stable" if all
+        # readings within ±2 bpm of current; otherwise show signed delta.
+        prior = conn.execute("""
+            SELECT value, date FROM calibration
+            WHERE metric = ? AND date >= date('now', '-180 days') AND active = 0
+            ORDER BY date DESC LIMIT 5
+        """, (metric,)).fetchall()
+        trend = None
+        if prior:
+            current_val = cal["value"]
+            tol = 2.0 if metric in ("max_hr", "lthr", "aet") else 0.5
+            within_tol = all(abs(current_val - p["value"]) <= tol for p in prior)
+            if within_tol:
+                trend = "stable"
+            else:
+                # signed delta vs the oldest reading in window
+                oldest = prior[-1]
+                delta = current_val - oldest["value"]
+                older_date = date.fromisoformat(oldest["date"])
+                weeks = max(1, (cal_date - older_date).days // 7) if cal_date else 1
+                sign = "+" if delta >= 0 else ""
+                trend = f"{sign}{delta:.0f} {unit or 'bpm'} in {weeks}w"
+
+        return {
+            "key": metric, "label": label, "unit": unit,
+            "value": cal["value"], "description": desc,
+            "date": cal["date"], "days_ago": days_ago,
+            "trend": trend, "is_primary": False,
+            "missing_action": None,
+        }
+
+    entries = [
+        _entry(
+            "lthr", "LTHR", "bpm",
+            "Lactate threshold. Sustainable hard-effort ceiling — anchors your training zones.",
+        ),
+        _entry(
+            "max_hr", "MaxHR", "bpm",
+            "Peak HR observed. Hardware ceiling. Auto-updates from race data.",
+        ),
+        _entry(
+            "aet", "AeT", "bpm",
+            "Aerobic threshold. The boundary that matters most for marathon endurance.",
+            missing_msg="Run a 15+ km steady-pace effort to derive AeT from HR drift.",
+            missing_link="aet-instructions",
+        ),
+        _entry(
+            "vo2max", "VO2max", "",
+            "Aerobic capacity. Predicts race times via VDOT (Daniels).",
+        ),
+    ]
+
+    # Mark primary anchor per the active zone model. The default (`lthr`) puts
+    # LTHR first; an explicit zone_model=max_hr override moves the primary tag.
+    primary_key = "max_hr" if zone_model == "max_hr" else "lthr"
+    for e in entries:
+        if e["key"] == primary_key and e["value"] is not None:
+            e["is_primary"] = True
+            break
+
+    return entries
+
+
+def _pace_zones(conn):
+    """Daniels training paces (E/M/T/I/R) derived from active VDOT calibration.
+
+    Each pace returned as a min:sec/km string range (e.g. "5:24" or
+    "6:09-6:24" for the easy range). Returns dict with `available` flag and,
+    when False, a hint pointing at the calibration that's missing.
+    """
+    from fit.analysis import compute_daniels_paces
+    from fit.calibration import get_active_calibration
+
+    vo2_cal = get_active_calibration(conn, "vo2max")
+    if not vo2_cal or not vo2_cal.get("value"):
+        return {"available": False, "missing": "Calibrate VO2max (sync a Garmin running activity)."}
+
+    paces = compute_daniels_paces(vo2max=vo2_cal["value"])
+    if not paces:
+        return {"available": False, "missing": "VO2max value out of derivation range."}
+
+    def _fmt(s):
+        m, sec = divmod(int(round(s)), 60)
+        return f"{m}:{sec:02d}"
+
+    def _row(name, lo, hi):
+        return {"lo": _fmt(lo), "hi": _fmt(hi), "range": _fmt(lo) if lo == hi else f"{_fmt(lo)}-{_fmt(hi)}"}
+
+    return {
+        "available": True,
+        "vo2max": vo2_cal["value"],
+        "rows": [
+            {"key": "E", "label": "Easy", "desc": "Conversational. The bulk of weekly volume.", **_row("E", paces["E"]["lo"], paces["E"]["hi"])},
+            {"key": "M", "label": "Marathon", "desc": "Goal race pace. Sustainable for ~3-4 h.", **_row("M", paces["M"]["lo"], paces["M"]["hi"])},
+            {"key": "T", "label": "Threshold", "desc": "~1-hour all-out (tempo). At LTHR.", **_row("T", paces["T"]["lo"], paces["T"]["hi"])},
+            {"key": "I", "label": "Interval", "desc": "3-5 min at vVO2max. Critical-power zone.", **_row("I", paces["I"]["lo"], paces["I"]["hi"])},
+            {"key": "R", "label": "Repetition", "desc": "30s-2min reps. Above vVO2max, neuromuscular.", **_row("R", paces["R"]["lo"], paces["R"]["hi"])},
+        ],
+    }
+
+
+def _concepts():
+    """Glossary entries for the Overview tab's collapsible Concepts section.
+
+    Static text — values stay generic so the glossary doesn't grow stale.
+    Per-metric live values still appear in the chart-level `def-toggle`
+    popovers (contextual quick-reference).
+    """
+    return [
+        {"term": "MaxHR", "body": "Peak observed heart rate. Hardware ceiling. Drops ~1 bpm/year with age."},
+        {"term": "LTHR", "body": "Lactate threshold HR. The sustainable hard-effort ceiling, derivable from a 30-min time trial or any 10K+ race result."},
+        {"term": "AeT", "body": "Aerobic threshold. Upper edge of fat-oxidation territory. The Z2 ceiling for marathon base building. Measured via HR-drift on a steady-pace long run."},
+        {"term": "VO2max", "body": "Maximum oxygen uptake (ml/kg/min). Aerobic capacity ceiling. Garmin estimates from outdoor running data; race results give a more reliable VDOT."},
+        {"term": "VDOT", "body": "Daniels' running-equivalent VO2max. Translates race results to predicted times at any distance."},
+        {"term": "ACWR", "body": "Acute:Chronic Workload Ratio. This week's load / 4-week avg. 0.8–1.3 safe, >1.5 injury-risk spike."},
+        {"term": "Monotony", "body": "Foster's mean(load) / stdev(load). >2.0 = same effort every day, recovery-starved."},
+        {"term": "Strain", "body": "weekly_load × monotony. Combines volume and variation into one fatigue number."},
+        {"term": "Cardiac drift", "body": "HR rising at constant pace. Caused by glycogen depletion, core temp, plasma loss. Drift onset km is a resilience signal."},
+        {"term": "Z2 ceiling", "body": "Upper bound of true easy aerobic. Under %LTHR (Friel): 89% × LTHR. Under %MaxHR: 70% × MaxHR."},
+        {"term": "Effort class", "body": "5-level classification (Recovery/Easy/Moderate/Hard/Very Hard) derived from the primary HR zone."},
+        {"term": "Run type", "body": "Auto-classified per activity: easy / long / tempo / intervals / progression / recovery / race. Race tag comes from race_calendar matching."},
+    ]
+
+
 def _definitions(conn):
     vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
     vo2_val = vo2["vo2max"] if vo2 else "?"

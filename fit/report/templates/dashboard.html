@@ -35,6 +35,32 @@
   {% endfor %}
   {% endif %}
 
+  <!-- 1b. YOUR PHYSIOLOGY — the four anchors everything else derives from -->
+  {% if physiology %}
+  <div class="physiology-card">
+    <div class="status-group-title">Your Physiology</div>
+    <div class="physiology-grid">
+      {% for a in physiology %}
+      <div class="physiology-anchor{% if a.is_primary %} is-primary{% endif %}">
+        {% if a.is_primary %}<span class="primary-pill">primary</span>{% endif %}
+        <div class="anchor-label">{{ a.label }}</div>
+        {% if a.value is not none %}
+        <div class="anchor-value">{{ a.value | round(0) | int if a.unit == 'bpm' else a.value }}<span class="anchor-unit">{% if a.unit %} {{ a.unit }}{% endif %}</span></div>
+        <div class="anchor-desc">{{ a.description }}</div>
+        {% if a.trend %}<div class="anchor-trend">{{ a.trend }}{% if a.days_ago is not none %} · {{ a.days_ago }}d ago{% endif %}</div>{% endif %}
+        {% else %}
+        <div class="anchor-value" style="color:var(--text-dim)">—</div>
+        <div class="anchor-desc">{{ a.description }}</div>
+        {% if a.missing_action %}
+        <div class="anchor-missing">{% if a.missing_action.link_anchor %}<a href="#{{ a.missing_action.link_anchor }}">{{ a.missing_action.message }}</a>{% else %}{{ a.missing_action.message }}{% endif %}</div>
+        {% endif %}
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   <!-- 2. RACE CARD -->
   {% if race_countdown %}
   <div class="race-countdown-card">
@@ -282,6 +308,21 @@
       {% endfor %}
     </div>
   </details>
+
+  <!-- CONCEPTS GLOSSARY — what these terms mean -->
+  {% if concepts %}
+  <details class="concepts">
+    <summary>Concepts</summary>
+    <div class="concepts-grid">
+      {% for c in concepts %}
+      <div>
+        <div class="concept-term">{{ c.term }}</div>
+        <div class="concept-body">{{ c.body }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
 </div>
 
 <!-- PROFILE — "Am I fit enough? What can I run today?" -->
@@ -349,6 +390,7 @@
   <nav class="anchor-nav" aria-label="Profile sections">
     <a class="anchor-link" href="#prof-today">Today</a>
     <a class="anchor-link" href="#prof-dimensions">Dimensions</a>
+    <a class="anchor-link" href="#prof-pace-zones">Pace Zones</a>
     <a class="anchor-link" href="#prof-vo2max">VO2max</a>
     <a class="anchor-link" href="#prof-aerobic">Aerobic</a>
     <a class="anchor-link" href="#prof-drift">Drift</a>
@@ -411,6 +453,26 @@
     <div style="font-size:10px;color:var(--text-dim);margin-top:8px">
       Aerobic = VO2max/VDOT · Threshold = Z2 pace · Economy = speed per bpm (Z2) · Resilience = cardiac drift onset km
     </div>
+  </div>
+  {% endif %}
+
+  <!-- 3b. Daniels Pace Zones — workout target paces derived from VDOT -->
+  {% if pace_zones %}
+  <div id="prof-pace-zones" class="sec"><h2>Pace Zones (Daniels)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">Training paces derived from VDOT via Daniels' Running Formula. E (easy) is the bulk of weekly volume. M (marathon) is goal-race pace. T (threshold) is sustainable for ~1 hour all-out. I (interval) at vVO2max for 3-5 min reps. R (repetition) for fast 30s-2min neuromuscular reps.</div><div class="line"></div></div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:8px 14px;margin:10px 0">
+    {% if pace_zones.available %}
+    {% for r in pace_zones.rows %}
+    <div class="pace-zone-row">
+      <div class="pace-zone-key">{{ r.key }}</div>
+      <div class="pace-zone-label">{{ r.label }}</div>
+      <div class="pace-zone-range">{{ r.range }}/km</div>
+      <div class="pace-zone-desc">{{ r.desc }}</div>
+    </div>
+    {% endfor %}
+    <div style="font-size:10px;color:var(--text-dim);padding:8px 10px 4px">Anchored on VDOT {{ pace_zones.vo2max }}. Recalibrate by syncing a recent race.</div>
+    {% else %}
+    <div class="empty-row">{{ pace_zones.missing }}</div>
+    {% endif %}
   </div>
   {% endif %}
 

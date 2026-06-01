@@ -10,6 +10,7 @@ from fit.analysis import (
     compute_effort_class,
     compute_speed_per_bpm,
     compute_speed_per_bpm_z2,
+    compute_daniels_paces,
     classify_run_type,
     predict_race_time,
     compute_weekly_agg,
@@ -1275,3 +1276,45 @@ class TestRollingACWR:
             self._insert_run(db, f"2026-04-{20+i}", id=f"r{i}", training_load=100)
         result = compute_rolling_acwr(db, end_date=date(2026, 4, 25))
         assert result is None
+
+
+# ════════════════════════════════════════════════════════════════
+# Daniels training paces
+# ════════════════════════════════════════════════════════════════
+
+
+class TestDanielsPaces:
+    def test_returns_five_paces(self):
+        paces = compute_daniels_paces(vo2max=48)
+        assert set(paces.keys()) == {"E", "M", "T", "I", "R"}
+
+    def test_paces_are_ordered_fastest_to_slowest(self):
+        """R < I < T < M < E (lower sec/km = faster)."""
+        p = compute_daniels_paces(vo2max=48)
+        # Use lo bounds (fastest end of each range)
+        assert p["R"]["lo"] < p["I"]["lo"] < p["T"]["lo"] < p["M"]["lo"] < p["E"]["lo"]
+
+    def test_marathon_pace_matches_vdot_table(self):
+        """M pace = marathon_secs / 42.195, with M's lo == hi (single pace)."""
+        # VDOT=48 → 3:48 marathon → 13680/42.195 ≈ 324 sec/km (~5:24/km)
+        p = compute_daniels_paces(vo2max=48)
+        assert p["M"]["lo"] == p["M"]["hi"]
+        assert 322 <= p["M"]["lo"] <= 326
+
+    def test_easy_pace_is_a_range(self):
+        """Easy pace is a range (lo < hi), not a single value."""
+        p = compute_daniels_paces(vo2max=48)
+        assert p["E"]["lo"] < p["E"]["hi"]
+
+    def test_none_vo2max(self):
+        assert compute_daniels_paces(vo2max=None) is None
+
+    def test_zero_or_negative_vo2max(self):
+        assert compute_daniels_paces(vo2max=0) is None
+        assert compute_daniels_paces(vo2max=-5) is None
+
+    def test_lthr_is_accepted_but_doesnt_affect_paces(self):
+        """LTHR is part of the signature but Daniels anchors on VDOT only."""
+        p_no_lthr = compute_daniels_paces(vo2max=48)
+        p_with_lthr = compute_daniels_paces(vo2max=48, lthr=172)
+        assert p_no_lthr == p_with_lthr
