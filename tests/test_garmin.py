@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from fit.garmin import (
+    connect,
     fetch_health,
     fetch_activities,
     fetch_activity_rpe,
@@ -41,6 +42,32 @@ class TestRequestWithRetry:
             _request_with_retry(func, max_retries=3, description="test")
         assert func.call_count == 1  # no retries on 401
 
+    def test_not_authenticated_string_raises_runtime_error(self):
+        # The Garmin SDK can raise plain "Not authenticated" exceptions without
+        # an HTTP code — those used to slip past the retry layer and produce
+        # silent zero-row syncs. Treat them the same as a 401.
+        func = MagicMock(side_effect=Exception("Not authenticated"))
+        with pytest.raises(RuntimeError, match="Garmin auth expired"):
+            _request_with_retry(func, max_retries=3, description="test")
+        assert func.call_count == 1
+
+    def test_authentication_failed_string_raises_runtime_error(self):
+        # garminconnect raises "Authentication failed: ..." messages that
+        # didn't match the old "401" / "not authenticated" substrings.
+        func = MagicMock(side_effect=Exception("Authentication failed: bad creds"))
+        with pytest.raises(RuntimeError, match="Garmin auth expired"):
+            _request_with_retry(func, max_retries=3, description="test")
+        assert func.call_count == 1
+
+    def test_garmin_connect_authentication_error_class_raises(self):
+        # If the SDK raises its dedicated class (no helpful substring in str()),
+        # we still want to short-circuit to the re-auth hint.
+        from garminconnect import GarminConnectAuthenticationError
+        func = MagicMock(side_effect=GarminConnectAuthenticationError("anything"))
+        with pytest.raises(RuntimeError, match="Garmin auth expired"):
+            _request_with_retry(func, max_retries=3, description="test")
+        assert func.call_count == 1
+
     @patch("fit.garmin.time.sleep")
     def test_500_retries_with_exponential_backoff(self, mock_sleep):
         func = MagicMock(side_effect=[
@@ -66,6 +93,90 @@ class TestRequestWithRetry:
         with pytest.raises(ValueError, match="unexpected"):
             _request_with_retry(func, max_retries=3, description="test")
         assert func.call_count == 3
+
+
+# ════════════════════════════════════════════════════════════════
+# connect — auth validation
+# ════════════════════════════════════════════════════════════════
+
+
+class TestConnect:
+    """Tests for connect() — ensures missing/rejected tokens fail loud
+    instead of returning an api object that silently fetches zero rows."""
+
+    def _write_tokens(self, token_dir):
+        import json
+        from fit.garmin import TOKEN_FILENAME
+        (token_dir / TOKEN_FILENAME).write_text(json.dumps({
+            "di_token": "a.b.c",
+            "di_refresh_token": "refresh",
+            "di_client_id": "client",
+        }))
+
+    def test_missing_token_file_raises(self, tmp_path):
+        with pytest.raises(RuntimeError, match="tokens not found"):
+            connect(str(tmp_path))
+
+    def test_failing_auth_probe_raises(self, tmp_path):
+        self._write_tokens(tmp_path)
+        with patch("fit.garmin.Garmin") as mock_garmin_cls:
+            api = MagicMock()
+            api.connectapi.side_effect = Exception("Not authenticated")
+            mock_garmin_cls.return_value = api
+            with pytest.raises(RuntimeError, match="auth probe failed"):
+                connect(str(tmp_path))
+
+    def test_successful_probe_sets_display_name(self, tmp_path):
+        self._write_tokens(tmp_path)
+        with patch("fit.garmin.Garmin") as mock_garmin_cls:
+            api = MagicMock()
+            api.connectapi.return_value = {
+                "displayName": "runner123", "fullName": "Test Runner",
+            }
+            mock_garmin_cls.return_value = api
+            result = connect(str(tmp_path))
+            assert result.display_name == "runner123"
+            assert result.full_name == "Test Runner"
+
+    @patch("fit.garmin.time.sleep")
+    def test_non_dict_probe_response_retries_then_raises(self, mock_sleep, tmp_path):
+        """Persistent non-dict response (e.g. Cloudflare HTML) raises with a
+        transient-blip message after retrying once — NOT a re-auth prompt."""
+        self._write_tokens(tmp_path)
+        with patch("fit.garmin.Garmin") as mock_garmin_cls:
+            api = MagicMock()
+            api.connectapi.return_value = "<html>login</html>"
+            mock_garmin_cls.return_value = api
+            with pytest.raises(RuntimeError, match="non-JSON after retry"):
+                connect(str(tmp_path))
+            # Should have retried exactly once before giving up
+            assert api.connectapi.call_count == 2
+            mock_sleep.assert_called_once_with(2)
+
+    @patch("fit.garmin.time.sleep")
+    def test_transient_non_dict_recovers_on_retry(self, mock_sleep, tmp_path):
+        """A transient non-dict followed by a dict response should succeed —
+        a momentary Cloudflare blip shouldn't trigger a re-auth prompt."""
+        self._write_tokens(tmp_path)
+        with patch("fit.garmin.Garmin") as mock_garmin_cls:
+            api = MagicMock()
+            api.connectapi.side_effect = [
+                "<html>cloudflare challenge</html>",  # first call: transient
+                {"displayName": "runner123", "fullName": "Test Runner"},  # retry: real
+            ]
+            mock_garmin_cls.return_value = api
+            result = connect(str(tmp_path))
+            assert result.display_name == "runner123"
+            assert api.connectapi.call_count == 2
+
+    def test_tokenstore_load_failure_raises(self, tmp_path):
+        self._write_tokens(tmp_path)
+        with patch("fit.garmin.Garmin") as mock_garmin_cls:
+            api = MagicMock()
+            api.client.load.side_effect = Exception("structurally failed")
+            mock_garmin_cls.return_value = api
+            with pytest.raises(RuntimeError, match="could not be loaded"):
+                connect(str(tmp_path))
 
 
 # ════════════════════════════════════════════════════════════════

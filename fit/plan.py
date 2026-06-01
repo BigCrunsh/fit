@@ -67,7 +67,7 @@ def sync_planned_workouts(api, conn, months=2):
             target = _month_offset(today, month_offset)
             try:
                 # Garmin Calendar API uses 0-indexed months (0=Jan, 3=Apr)
-                items = api.garth.connectapi(
+                items = api.connectapi(
                     f"/calendar-service/year/{target.year}"
                     f"/month/{target.month - 1}"
                 )

@@ -65,6 +65,116 @@ def sync(days: int, full: bool, splits: bool):
         conn.close()
 
 
+@main.group(invoke_without_command=True)
+@click.pass_context
+def auth(ctx):
+    """Manage Garmin authentication."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(auth_status)
+
+
+@auth.command("login")
+def auth_login():
+    """Log in to Garmin Connect and save tokens (interactive)."""
+    from garminconnect import Garmin
+    from fit.config import get_config
+    from fit.garmin import TOKEN_FILENAME
+
+    config = get_config()
+    token_dir = Path(config["sync"]["garmin_token_dir"]).expanduser()
+    token_dir.mkdir(parents=True, exist_ok=True)
+    token_file = token_dir / TOKEN_FILENAME
+
+    email = click.prompt("Garmin email")
+    password = click.prompt("Garmin password", hide_input=True)
+
+    # garminconnect's login uses curl_cffi TLS fingerprint rotation to dodge
+    # Cloudflare blocks that broke the older garth flow. MFA is prompted via
+    # input() inside the library when the account requires it.
+    api = Garmin(email=email, password=password)
+    try:
+        api.login()
+        api.client.dump(str(token_file))
+    except Exception as e:
+        console.print(f"[bold red]Login failed:[/bold red] {e}")
+        raise SystemExit(1)
+
+    # Lock down the token file — it contains the refresh token, which is the
+    # equivalent of a long-lived password for the Garmin account. Default
+    # umask (0o022) would leave it group/world-readable on shared hosts.
+    try:
+        token_file.chmod(0o600)
+    except OSError as e:
+        console.print(f"[yellow]⚠[/yellow] Could not chmod {token_file}: {e}")
+
+    console.print(f"[green]✓[/green] Saved Garmin tokens to {token_file}")
+    console.print("Run [bold]fit sync[/bold] to pull data.")
+
+
+@auth.command("status")
+def auth_status():
+    """Check whether saved Garmin tokens are valid."""
+    import base64
+    import json
+    import time
+    from datetime import datetime
+    from fit.config import get_config
+    from fit.garmin import TOKEN_FILENAME
+
+    config = get_config()
+    token_dir = Path(config["sync"]["garmin_token_dir"]).expanduser()
+    token_file = token_dir / TOKEN_FILENAME
+
+    if not token_file.exists():
+        console.print(f"[yellow]No tokens at {token_file}[/yellow]")
+        console.print("Run [bold]fit auth login[/bold] to authenticate.")
+        raise SystemExit(1)
+
+    try:
+        data = json.loads(token_file.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        console.print(f"[bold red]Token file unreadable:[/bold red] {e}")
+        console.print(f"Path: {token_file}")
+        console.print("Run [bold]fit auth login[/bold] to re-create it.")
+        raise SystemExit(1)
+    di_token = data.get("di_token")
+    di_refresh = data.get("di_refresh_token")
+    now = int(time.time())
+
+    # The access token is a JWT; its `exp` claim gives us a real expiry.
+    # The refresh token is opaque, so we can only say "present" or "missing".
+    # Decode failures get reported as "unknown" rather than masquerading as
+    # "expired" — a usable refresh token is still usable even if the access
+    # JWT parses weirdly.
+    access_exp = 0
+    decode_error: str | None = None
+    if isinstance(di_token, str):
+        try:
+            payload_b64 = di_token.split(".")[1]
+            payload_b64 += "=" * (-len(payload_b64) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(payload_b64).decode())
+            access_exp = int(payload.get("exp") or 0)
+        except Exception as e:
+            decode_error = f"{type(e).__name__}: {e}"
+
+    def _fmt(ts: int) -> str:
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "?"
+
+    console.print(f"Token file:    {token_file}")
+    if decode_error:
+        console.print(f"Access token:  [yellow]unknown[/yellow] (could not decode JWT: {decode_error})")
+        access_ok = False
+    else:
+        access_ok = access_exp > now
+        console.print(f"Access token:  {'[green]valid[/green]' if access_ok else '[red]expired[/red]'} "
+                      f"(expires {_fmt(access_exp)})")
+    console.print(f"Refresh token: {'[green]present[/green]' if di_refresh else '[red]missing[/red]'}")
+
+    if not access_ok and not di_refresh:
+        console.print("\n[yellow]Tokens unusable — run [bold]fit auth login[/bold].[/yellow]")
+        raise SystemExit(1)
+
+
 @main.command("splits")
 @click.option("--backfill", is_flag=True, help="Process all running activities missing splits.")
 @click.option("--activity-id", default=None, help="Process a single activity by ID.")

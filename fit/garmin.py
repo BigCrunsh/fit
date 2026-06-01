@@ -5,16 +5,39 @@ import time
 from datetime import date, timedelta
 from pathlib import Path
 
-import garth
 from garminconnect import Garmin
 
 logger = logging.getLogger(__name__)
+
+_REAUTH_HINT = "Run `fit auth login` to re-authenticate."
+TOKEN_FILENAME = "garmin_tokens.json"
+
+
+def _is_auth_error(exc: Exception) -> bool:
+    """Detect every flavor of Garmin auth failure.
+
+    garminconnect can surface auth failures three different ways:
+      1. GarminConnectAuthenticationError (its own class)
+      2. requests exceptions with "401" in str(exc)
+      3. plain "Not authenticated" / "Authentication failed" strings
+    The retry layer needs to catch all three or it wastes retries on a
+    non-retryable error and never produces the friendly re-auth hint.
+    """
+    try:
+        from garminconnect import GarminConnectAuthenticationError
+        if isinstance(exc, GarminConnectAuthenticationError):
+            return True
+    except ImportError:
+        pass
+    msg = str(exc).lower()
+    return "401" in msg or "not authenticated" in msg or "authentication failed" in msg
 
 
 def _request_with_retry(func, max_retries=3, description="API call"):
     """Execute a Garmin API call with retry/backoff for transient errors.
 
-    Handles: 429 (rate limit, wait 60s), 401 (auth expired), 5xx (exponential backoff).
+    Handles: 429 (rate limit, wait 60s), auth failures (re-raise with hint),
+    5xx (exponential backoff).
     """
     for attempt in range(max_retries):
         try:
@@ -26,12 +49,8 @@ def _request_with_retry(func, max_retries=3, description="API call"):
                 logger.warning("%s rate limited (429). Waiting %ds...", description, wait)
                 time.sleep(wait)
                 continue
-            elif "401" in err_str:
-                raise RuntimeError(
-                    "Garmin auth expired. Re-authenticate with:\n"
-                    "  python -c \"import garth; garth.login(input('Email: '), input('Password: ')); "
-                    "garth.save('~/.fit/garmin-tokens/')\""
-                ) from e
+            elif _is_auth_error(e):
+                raise RuntimeError(f"Garmin auth expired. {_REAUTH_HINT}") from e
             elif any(code in err_str for code in ("500", "502", "503", "504")):
                 wait = 2 ** attempt
                 logger.warning("%s server error (attempt %d/%d). Retrying in %ds...",
@@ -46,48 +65,74 @@ def _request_with_retry(func, max_retries=3, description="API call"):
     return None
 
 
+def _token_file(token_dir: str | Path) -> Path:
+    """Resolve the tokenstore JSON file path inside a directory."""
+    return Path(token_dir).expanduser() / TOKEN_FILENAME
+
+
 def connect(token_dir: str) -> Garmin:
-    """Connect to Garmin using saved garth tokens.
+    """Connect to Garmin Connect using saved tokens.
 
     Args:
-        token_dir: Path to directory containing garth tokens.
+        token_dir: Directory containing `garmin_tokens.json` written by
+            `fit auth login`.
 
     Returns:
         Authenticated Garmin API client.
 
     Raises:
-        RuntimeError: If auth tokens are missing or expired, with re-auth instructions.
+        RuntimeError: If tokens are missing, malformed, or rejected by the
+            Garmin API, with a hint to run `fit auth login`. We fail loud here
+            rather than returning a client that produces silent zero-row syncs.
     """
-    token_path = Path(token_dir).expanduser()
+    token_file = _token_file(token_dir)
+    if not token_file.exists():
+        raise RuntimeError(f"Garmin tokens not found at {token_file}. {_REAUTH_HINT}")
+
+    api = Garmin()
     try:
-        garth.resume(str(token_path))
+        api.client.load(str(token_file))
     except Exception as e:
         raise RuntimeError(
-            f"Garmin auth failed: {e}\n"
-            f"Token dir: {token_path}\n"
-            f"Re-authenticate with:\n"
-            f"  python -c \"import garth; garth.login(input('Email: '), input('Password: ')); "
-            f"garth.save('{token_path}')\""
+            f"Garmin tokens at {token_file} could not be loaded: {e}. {_REAUTH_HINT}"
         ) from e
-    api = Garmin()
-    api.garth = garth.client
 
-    # Load profile for display_name (needed by some API calls)
-    try:
-        profile = api.garth.connectapi("/userprofile-service/userprofile/social-profile")
-        if isinstance(profile, dict):
-            api.display_name = profile.get("displayName")
-            api.full_name = profile.get("fullName")
-    except Exception:
+    # Auth probe: fetch profile. A failure here means the saved tokens are
+    # not actually usable (refresh failed server-side, account locked, etc.) —
+    # raise rather than letting every downstream call return "Not authenticated".
+    # Endpoint matches what garminconnect uses internally (socialProfile).
+    #
+    # Non-dict responses (e.g., a transient Cloudflare HTML interstitial) are
+    # NOT auth failures. We retry once with a short backoff before giving up
+    # so a momentary infrastructure blip doesn't tell the user to re-auth.
+    profile = None
+    last_non_dict = None
+    for attempt in range(2):
         try:
-            profile = api.garth.profile
-            if isinstance(profile, dict):
-                api.display_name = profile.get("displayName")
-                api.full_name = profile.get("fullName")
-        except Exception:
-            pass
+            profile = api.connectapi("/userprofile-service/socialProfile")
+        except Exception as e:
+            if _is_auth_error(e):
+                raise RuntimeError(f"Garmin auth probe failed: {e}. {_REAUTH_HINT}") from e
+            raise RuntimeError(
+                f"Garmin auth probe error (likely transient): {e}. "
+                f"If this persists, run `fit auth login`."
+            ) from e
+        if isinstance(profile, dict):
+            break
+        last_non_dict = profile
+        if attempt == 0:
+            logger.warning("Garmin auth probe returned non-dict (%r); retrying once", profile)
+            time.sleep(2)
+    if not isinstance(profile, dict):
+        raise RuntimeError(
+            f"Garmin auth probe returned non-JSON after retry: {last_non_dict!r}. "
+            f"This usually means Garmin returned a Cloudflare/maintenance page. "
+            f"Wait a few minutes and retry; if it persists, run `fit auth login`."
+        )
+    api.display_name = profile.get("displayName")
+    api.full_name = profile.get("fullName")
 
-    name = getattr(api, "display_name", None) or getattr(api, "full_name", None) or "unknown"
+    name = api.display_name or api.full_name or "unknown"
     logger.info("Authenticated as %s", name)
     return api
 
