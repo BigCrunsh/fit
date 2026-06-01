@@ -514,7 +514,7 @@
   <!-- VDOT Trend — Anchor (training+race effort) vs Garmin source comparison -->
   <div id="prof-vo2max" class="sec"><h2>VDOT Trend — Anchor vs Garmin</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Two estimates of aerobic capacity. <strong>Anchor VDOT</strong> (solid line) is performance-anchored — derived from any running activity (training or race) that meets the criteria: 5–25 km, avg HR ≥ LTHR, consistent pacing. Larger dots = race-day efforts. <strong>Garmin VO2max</strong> (dashed) is a physiology estimate from wrist HR — less reliable, shown for comparison. When they disagree, trust the anchor VDOT.</div><div class="line"></div></div>
   <div class="sec-sub">Where is my aerobic engine, in performance terms? Anchor VDOT (solid) comes from any race-effort run; Garmin (dashed) is a reference.</div>
-  <div class="chart-box"><canvas id="chart-vo2" height="200"></canvas></div>
+  <div class="chart-box"><canvas id="chart-vo2" class="chart-canvas-xl" height="200"></canvas></div>
   {% if vdot_comparison %}
   <div class="vdot-compare-card">
     {% if vdot_comparison.race %}
@@ -551,23 +551,23 @@
   <!-- Aerobic Efficiency (speed/bpm) — economy over time -->
   <div id="prof-aerobic" class="sec"><h2>Aerobic Efficiency (Z2 speed/bpm)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.speed_per_bpm }}</div><div class="line"></div></div>
   <div class="sec-sub">Am I faster at the same heart rate? Higher = more efficient aerobic engine.</div>
-  <div class="chart-box"><canvas id="chart-efficiency" height="180"></canvas></div>
+  <div class="chart-box"><canvas id="chart-efficiency" class="chart-canvas-lg" height="180"></canvas></div>
 
   <!-- Long-Run Resilience (cardiac drift) — when does HR start rising? -->
   <div id="prof-drift" class="sec"><h2>Long-Run Resilience</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.cardiac_drift }}</div><div class="line"></div></div>
   <div class="sec-sub">Does my HR drift up as the run goes on? Flat = aerobic durability; rising = early fatigue. The later the rise, the better the base.</div>
-  <div class="chart-box"><canvas id="chart-drift" height="200"></canvas></div>
+  <div class="chart-box"><canvas id="chart-drift" class="chart-canvas-xl" height="200"></canvas></div>
   {% set drift_chart = charts | selectattr('id', 'equalto', 'chart-drift') | first %}
   {% if drift_chart and drift_chart.n_runs is defined %}
   <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">Averaged over {{ drift_chart.n_runs }} run{{ 's' if drift_chart.n_runs != 1 else '' }} from last 4 weeks. Individual runs shown as thin lines.{% if split_data and split_data.drift and split_data.drift.drift_onset_km %} Drift onset at km {{ split_data.drift.drift_onset_km }}.{% endif %}</div>
   {% endif %}
-  <div class="chart-box"><canvas id="chart-drift-trend" height="160"></canvas></div>
+  <div class="chart-box"><canvas id="chart-drift-trend" class="chart-canvas-md" height="160"></canvas></div>
   <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">Drift onset = first km where HR exceeds first-half average + 5 bpm. Higher = better aerobic endurance. Green band = onset after km 15 (good base).</div>
 
   <!-- Zone Distribution — training mix -->
   <div id="prof-zones" class="sec"><h2>Zone Distribution</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.zones }}</div><div class="line"></div></div>
   <div class="sec-sub">How is weekly time split across intensities? Polarized base = mostly Z1/Z2 with some Z4/Z5; aim for the phase-target band.</div>
-  <div class="chart-box"><canvas id="chart-zones" height="180"></canvas></div>
+  <div class="chart-box"><canvas id="chart-zones" class="chart-canvas-lg" height="180"></canvas></div>
 
   <!-- ════════════════════════════════════════════════════════════════
        ACT 3 — Body & form (secondary axes)
@@ -598,18 +598,18 @@
     </div>
     {% endif %}
   </div>
-  <div class="chart-box"><canvas id="chart-weight" height="180"></canvas></div>
+  <div class="chart-box"><canvas id="chart-weight" class="chart-canvas-lg" height="180"></canvas></div>
   {% endif %}
 
   <!-- Cadence — form indicator -->
   <div id="prof-cadence" class="sec"><h2>Cadence Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.cadence }}</div><div class="line"></div></div>
   <div class="sec-sub">Steps per minute. Drifting higher with experience usually means better running economy.</div>
-  <div class="chart-box"><canvas id="chart-cadence" height="160"></canvas></div>
+  <div class="chart-box"><canvas id="chart-cadence" class="chart-canvas-md" height="160"></canvas></div>
 
   <!-- Pace Consistency (CV%) — pacing form indicator -->
   <div id="prof-pacecv" class="sec"><h2>Pace Consistency (CV%)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.pacecv }}</div><div class="line"></div></div>
   <div class="sec-sub">How even are my splits within a run? Lower = better pacing discipline; spikes mean uneven effort or terrain.</div>
-  <div class="chart-box"><canvas id="chart-pacecv" height="160"></canvas></div>
+  <div class="chart-box"><canvas id="chart-pacecv" class="chart-canvas-md" height="160"></canvas></div>
 
   <!-- ════════════════════════════════════════════════════════════════
        ACT 4 — What does this mean for race day?  (caveat + forecast)
@@ -618,13 +618,13 @@
   <!-- Effort Gap — comes BEFORE the prediction as its caveat -->
   <div id="prof-effort-gap" class="sec"><h2>Effort Gap — Hidden Fatigue Signal</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.effort_gap }}</div><div class="line"></div></div>
   <div class="sec-sub">Did the run feel harder than the watch thinks? Bars above zero = my RPE exceeds Garmin's Training Effect — a hidden-fatigue signal the prediction can't see.</div>
-  <div class="chart-box"><canvas id="chart-effort-gap" height="160"></canvas></div>
+  <div class="chart-box"><canvas id="chart-effort-gap" class="chart-canvas-md" height="160"></canvas></div>
   <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">A run or two above zero is normal. Three or more consecutive = check sleep, recovery, accumulated load before the next hard session.</div>
 
   <!-- Marathon Prediction — the forecast with target annotation -->
   <div id="prof-prediction" class="sec"><h2>Marathon Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">VDOT-derived predictions over time (Daniels formula) plus Riegel projections from actual race results, scaled to your target distance. Y-axis is reverse-scaled — lower = faster.</div><div class="line"></div></div>
   <div class="sec-sub">What time would my current fitness deliver? Lower line = faster prediction. Race dots are anchors; the line is Garmin VO2max-derived.</div>
-  <div class="chart-box"><canvas id="chart-marathon-pred" height="180"></canvas></div>
+  <div class="chart-box"><canvas id="chart-marathon-pred" class="chart-canvas-lg" height="180"></canvas></div>
   {% if race_countdown and race_countdown.prediction_mid and race_countdown.target_time %}
   <div class="forecast-closing">
     <span class="forecast-closing-label">Forecast:</span>
@@ -878,15 +878,15 @@
 
   <!-- 4b. Per-day plan adherence (mirrored bars: planned vs actual) -->
   <div class="sec"><h2>Planned vs Actual (per day)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Each day shows planned distance (top) and actual distance (bottom). Bar color: green = right zone, red = planned easy but ran hard, yellow = wrong zone, gray = missed, blue = unplanned extra run.</div><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-plan-adherence" height="160"></canvas></div>
+  <div class="chart-box"><canvas id="chart-plan-adherence" class="chart-canvas-md" height="160"></canvas></div>
 
   <!-- 5. Volume & Run Type Mix -->
   <div class="sec"><h2>Volume Trend</h2><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-volume" height="160"></canvas></div>
+  <div class="chart-box"><canvas id="chart-volume" class="chart-canvas-md" height="160"></canvas></div>
 
   <!-- 6. Plan compliance trend (per-run, from Garmin) -->
   <div class="sec"><h2>Plan Compliance Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Garmin's per-run plan adherence score (0-100). Each dot is one run, colored by score (green ≥80, yellow 60-79, red &lt;60). The orange line is the 5-run rolling average — drift below 80 means you're consistently deviating from the planned workout.</div><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-compliance" height="150"></canvas></div>
+  <div class="chart-box"><canvas id="chart-compliance" class="chart-canvas-md" height="160"></canvas></div>
 </div>
 
 <!-- BODY -->
@@ -895,19 +895,19 @@
   <div style="font-size:12px;color:#94a3b8;line-height:1.6;padding:8px 0;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.04)">{{ body_summary }}</div>
   {% endif %}
   <div class="sec"><h2>Readiness</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.readiness | safe }}</div><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-readiness" height="160"></canvas></div>
+  <div class="chart-box"><canvas id="chart-readiness" class="chart-canvas-md" height="160"></canvas></div>
 
   <div class="sec"><h2>RHR + HRV</h2><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-rhr-hrv" height="140"></canvas></div>
+  <div class="chart-box"><canvas id="chart-rhr-hrv" class="chart-canvas-sm" height="140"></canvas></div>
 
   <div class="sec"><h2>Sleep</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.sleep | safe }}</div><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-sleep" height="150"></canvas></div>
+  <div class="chart-box"><canvas id="chart-sleep" class="chart-canvas-md" height="160"></canvas></div>
 
   <div class="sec"><h2>Stress vs Body Battery</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.stress_battery | safe }}</div><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-stress" height="130"></canvas></div>
+  <div class="chart-box"><canvas id="chart-stress" class="chart-canvas-sm" height="140"></canvas></div>
 
   <div class="sec"><h2>ACWR Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.acwr | safe }}</div><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-acwr" height="140"></canvas></div>
+  <div class="chart-box"><canvas id="chart-acwr" class="chart-canvas-sm" height="140"></canvas></div>
 
   <div class="sec"><h2>Sleep Quality Mismatches</h2><div class="line"></div></div>
   {% if sleep_mismatches %}

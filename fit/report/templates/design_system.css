@@ -226,6 +226,19 @@ td:last-child { border-radius:0 6px 6px 0; }
 .chart-box { background:rgba(255,255,255,0.018); border:1px solid rgba(255,255,255,0.05); border-radius:14px; padding:16px 14px 8px; margin-bottom:18px; }
 .chart-box canvas { width:100% !important; }
 
+/* Chart canvas size tiers. The inline `height` attribute drives Chart.js's
+   aspect ratio at init; the class sets a min-height fallback so the
+   container doesn't collapse on first paint or when JS fails. Use:
+     .chart-canvas-sm (140px) — diagnostic / supporting charts
+     .chart-canvas-md (160px) — default
+     .chart-canvas-lg (180px) — primary trend charts
+     .chart-canvas-xl (200px) — hero charts that need extra y-room
+*/
+.chart-canvas-sm { min-height:140px; }
+.chart-canvas-md { min-height:160px; }
+.chart-canvas-lg { min-height:180px; }
+.chart-canvas-xl { min-height:200px; }
+
 /* Headline */
 .headline { background:rgba(129,140,248,0.05); border:1px solid rgba(129,140,248,0.12); border-radius:12px; padding:16px 20px; margin:14px 0; font-size:14px; line-height:1.6; color:#c4b5fd; }
 
