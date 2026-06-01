@@ -9,10 +9,12 @@ from fit.analysis import detect_training_gap
 
 logger = logging.getLogger(__name__)
 
-# Severity mapping per alert rule. Severity is a property of the *rule*,
-# not derived at render time. Anything not listed defaults to 'info'.
-# Renderers (dashboard, MCP) order by severity (critical → warning → info)
-# then by date desc within a tier.
+# Severity tiers from most-urgent to least-urgent. The order here is also
+# the render order — dashboard and MCP iterate critical → warning → info.
+_SEVERITY_TIERS = ("critical", "warning", "info")
+_SEVERITY_ORDER = {sev: i for i, sev in enumerate(_SEVERITY_TIERS)}
+
+# Severity mapping per alert rule. Anything not listed defaults to 'info'.
 ALERT_SEVERITY: dict[str, str] = {
     # Critical — immediate physiological / injury-risk signal
     "acwr_spike_danger": "critical",
@@ -25,16 +27,13 @@ ALERT_SEVERITY: dict[str, str] = {
     "undertraining": "warning",
     "deload_overdue": "warning",
     "spo2_low": "warning",
-    # info — context signal, no action required immediately
+    # info — context signal (anything not listed)
 }
 
 
 def severity_of(alert_type: str) -> str:
     """Return the severity tier for an alert type. Defaults to 'info'."""
     return ALERT_SEVERITY.get(alert_type, "info")
-
-
-_SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
 
 
 def run_alerts(conn: sqlite3.Connection, config: dict) -> list[dict]:
@@ -226,11 +225,9 @@ def get_recent_alerts(conn: sqlite3.Connection, days: int = 7) -> list[dict]:
             conn.execute("UPDATE alerts SET acknowledged = 1 WHERE rowid = ?", (r["id"],))
     conn.commit()
     # Order by severity (critical → warning → info), then most-recent within
-    # tier. Two-stage sort because Python's sort is stable: sort by date desc
-    # first, then by severity asc — keeps the "most recent within severity"
-    # behavior the dashboard expects.
-    result.sort(key=lambda a: a["date"], reverse=True)
-    result.sort(key=lambda a: _SEVERITY_ORDER.get(a["severity"], 99))
+    # tier. Single tuple key — second component is negated date string, which
+    # is a valid sort proxy because ISO dates compare lexicographically.
+    result.sort(key=lambda a: (_SEVERITY_ORDER.get(a["severity"], 99), -date.fromisoformat(a["date"]).toordinal()))
     return result
 
 

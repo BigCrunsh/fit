@@ -154,36 +154,27 @@ def get_active_calibration(conn: sqlite3.Connection, metric: str) -> dict | None
     earlier. Falls back to pure date if no rows are within the staleness
     window.
     """
-    rows = conn.execute("""
-        SELECT * FROM calibration
-        WHERE metric = ?
-        ORDER BY date DESC
-    """, (metric,)).fetchall()
+    rows = conn.execute(
+        "SELECT * FROM calibration WHERE metric = ?", (metric,),
+    ).fetchall()
     if not rows:
         return None
 
     threshold = STALENESS_THRESHOLDS.get(metric, timedelta(days=365))
     today = date.today()
 
-    def _is_stale(r):
+    def _key(r):
+        # Compound key: (stale flag, confidence rank, -ordinal). min() picks
+        # non-stale before stale, then high → medium → low, then most recent.
         try:
-            return (today - date.fromisoformat(r["date"])) > threshold
+            day = date.fromisoformat(r["date"])
+            stale_flag = 1 if (today - day) > threshold else 0
+            day_neg = -day.toordinal()
         except (ValueError, TypeError):
-            return True
+            stale_flag, day_neg = 1, 0
+        return (stale_flag, _CONFIDENCE_RANK.get(r["confidence"] or "low", 2), day_neg)
 
-    def _sort_key(r):
-        # Confidence rank ascending (lower = better), then date desc.
-        # Using negative-day offset so SORT ASC keeps newer first.
-        try:
-            day_offset = -date.fromisoformat(r["date"]).toordinal()
-        except (ValueError, TypeError):
-            day_offset = 0
-        return (_CONFIDENCE_RANK.get(r["confidence"] or "low", 2), day_offset)
-
-    non_stale = [r for r in rows if not _is_stale(r)]
-    pool = non_stale if non_stale else rows
-    chosen = min(pool, key=_sort_key)
-    return dict(chosen)
+    return dict(min(rows, key=_key))
 
 
 def add_calibration(conn: sqlite3.Connection, metric: str, value: float,

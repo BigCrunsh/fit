@@ -311,11 +311,8 @@ def _calibration_history(conn):
     indicators (solid dot=high, hollow=medium, red ring=low) and a
     staleness flag.
     """
-    from fit.calibration import (
-        STALENESS_THRESHOLDS,
-        get_active_calibration,
-        get_calibration_history,
-    )
+    import json as _json
+    from fit.calibration import STALENESS_THRESHOLDS, get_active_calibration
 
     metric_labels = {
         "lthr": "LTHR (Lactate Threshold)",
@@ -325,40 +322,49 @@ def _calibration_history(conn):
         "weight": "Weight",
     }
 
+    # One SELECT for all 5 metrics; group in Python. Active row is still
+    # resolved per metric via get_active_calibration's confidence-aware rule
+    # — that's the only call we keep, since reproducing the selection logic
+    # in two places would be the worse simplification.
+    all_rows = conn.execute(
+        "SELECT id, metric, value, method, confidence, date, "
+        "source_activity_id, notes, flags FROM calibration ORDER BY metric, date ASC"
+    ).fetchall()
+    by_metric: dict[str, list[dict]] = {m: [] for m in metric_labels}
+    for r in all_rows:
+        if r["metric"] in by_metric:
+            d = dict(r)
+            try:
+                d["flags"] = _json.loads(d["flags"] or "[]")
+            except (ValueError, TypeError):
+                d["flags"] = []
+            by_metric[r["metric"]].append(d)
+
     today = date.today()
     out = []
     for metric, label in metric_labels.items():
-        history = get_calibration_history(conn, metric)
+        history = by_metric[metric]
         if not history:
-            # Show the metric as a "no data" entry — surfaces the gap.
-            out.append({
-                "metric": metric, "label": label,
-                "rows": [],
-                "missing": True,
-            })
+            out.append({"metric": metric, "label": label, "rows": [], "missing": True})
             continue
 
         active = get_active_calibration(conn, metric)
         active_id = active["id"] if active else None
-        threshold_days = STALENESS_THRESHOLDS.get(metric)
-        threshold_days = threshold_days.days if threshold_days else None
+        threshold = STALENESS_THRESHOLDS.get(metric)
+        threshold_days = threshold.days if threshold else None
 
         rendered = []
         for r in history:
             try:
-                row_date = date.fromisoformat(r["date"])
-                days_ago = (today - row_date).days
+                days_ago = (today - date.fromisoformat(r["date"])).days
             except (ValueError, TypeError):
                 days_ago = None
-            stale = (threshold_days is not None and days_ago is not None
-                     and days_ago > threshold_days)
+            stale = threshold_days is not None and days_ago is not None and days_ago > threshold_days
             rendered.append({
-                "value": r["value"],
-                "date": r["date"],
-                "days_ago": days_ago,
+                "value": r["value"], "date": r["date"], "days_ago": days_ago,
                 "method": r["method"],
                 "confidence": r["confidence"] or "medium",
-                "flags": r.get("flags") or [],
+                "flags": r["flags"],
                 "source_activity_id": r.get("source_activity_id"),
                 "notes": r.get("notes"),
                 "is_active": r["id"] == active_id,
@@ -366,12 +372,41 @@ def _calibration_history(conn):
             })
 
         out.append({
-            "metric": metric, "label": label,
-            "rows": rendered,
-            "missing": False,
-            "threshold_days": threshold_days,
+            "metric": metric, "label": label, "rows": rendered,
+            "missing": False, "threshold_days": threshold_days,
         })
     return out
+
+
+# Severity levels are mainly defined by alerts.ALERT_SEVERITY; mirrored here
+# for non-alert attention items (which don't go through the alert rule path).
+_SEVERITY_FOR_CALIBRATION = {"lthr": "warning", "max_hr": "warning", "weight": "info",
+                              "vo2max": "info", "aet": "info"}
+
+# Stale-data rules: (source_name, min_days, severity, headline_fn, command, detail, source_fn).
+# `headline_fn(days)` and `source_fn(days)` produce the user-visible text.
+_DATA_HEALTH_STALE_RULES = [
+    ("checkins", 3, "info",
+     lambda d: f"No checkin for {d} days",
+     "fit checkin",
+     "Log sleep, hydration, and (optionally) alcohol.",
+     lambda d: f"checkins table: last entry {d}d ago."),
+    ("weight", 14, "warning",
+     lambda d: f"Weight last logged {d}d ago",
+     "fit import-health ~/Downloads/Export.zip",
+     "Re-export from the Apple Health app on iPhone, then import.",
+     lambda d: f"body_comp table: last weight row {d}d ago."),
+    ("garmin_health", 0, "warning",
+     lambda d: f"Garmin health {d}d behind",
+     "fit sync",
+     None,
+     lambda d: f"data_health: last garmin_health row {d}d ago."),
+    ("garmin_activities", 0, "warning",
+     lambda d: f"Garmin activities {d}d behind",
+     "fit sync",
+     None,
+     lambda d: f"data_health: last garmin_activities row {d}d ago."),
+]
 
 
 def _attention_items(conn):
@@ -392,65 +427,52 @@ def _attention_items(conn):
     from fit.calibration import get_calibration_status
 
     items: list[dict] = []
-    seen_tags: set[str] = set()
+    seen: set[str] = set()
 
-    def _add(severity, message, *, tag, command=None, detail=None, source=None):
-        if tag in seen_tags:
+    def _add(*, severity, message, tag, command=None, detail=None, source=None):
+        if tag in seen:
             return
-        seen_tags.add(tag)
+        seen.add(tag)
         items.append({"severity": severity, "message": message, "tag": tag,
                       "command": command, "detail": detail, "source": source})
 
-    # Calibration staleness — first, so data_health doesn't duplicate.
+    # Calibration: missing LTHR is the only "missing → action" case worth nudging.
+    # Stale calibrations dispatch through the same code path regardless of metric.
     for c in get_calibration_status(conn):
         if c["missing"] and c["metric"] == "lthr":
-            _add("warning",
-                 "Calibrate LTHR — anchors your training zones.",
+            _add(severity="warning",
+                 message="Calibrate LTHR — anchors your training zones.",
                  tag="cal_missing_lthr",
                  command="fit calibrate lthr",
                  detail="Or wait for a 10K+ race; sync auto-extracts from the race result.",
                  source="No row in the calibration table for metric=lthr.")
         elif c["stale"] and not c["missing"]:
             days = (date.today() - date.fromisoformat(c["date"])).days if c.get("date") else None
-            sev = "warning" if c["metric"] in ("lthr", "max_hr") else "info"
-            _add(sev,
-                 f"{c['metric'].upper()} last calibrated {days}d ago",
+            _add(severity=_SEVERITY_FOR_CALIBRATION.get(c["metric"], "info"),
+                 message=f"{c['metric'].upper()} last calibrated {days}d ago",
                  tag=f"cal_stale_{c['metric']}",
                  command=f"fit calibrate {c['metric']}",
                  detail=c.get("retest_prompt"),
                  source=f"calibration row dated {c['date']} · staleness threshold {c.get('threshold_days')}d.")
 
-    # Data freshness — Garmin streams, SpO2, weight, checkins.
-    for src in check_data_sources(conn):
+    # Data freshness — table-driven dispatch.
+    sources_by_name = {s["source"]: s for s in check_data_sources(conn)}
+    for src in sources_by_name.values():
         if src["status"] == "missing":
-            _add("info",
-                 f"{src['source'].replace('_', ' ').title()} not flowing",
+            _add(severity="info",
+                 message=f"{src['source'].replace('_', ' ').title()} not flowing",
                  tag=f"missing_{src['source']}",
                  detail=src.get("instruction") or f"Enable {src['source']}",
                  source=f"data_health: 0 readings for {src['source']} in the last 14 days.")
-        elif src["status"] == "stale":
-            days = src.get("days_ago")
-            if src["source"] == "checkins" and days and days >= 3:
-                _add("info",
-                     f"No checkin for {days} days",
-                     tag="checkin_gap",
-                     command="fit checkin",
-                     detail="Log sleep, hydration, and (optionally) alcohol.",
-                     source=f"checkins table: last entry {days}d ago.")
-            elif src["source"] == "weight" and days and days >= 14:
-                _add("warning",
-                     f"Weight last logged {days}d ago",
-                     tag="weight_stale",
-                     command="fit import-health ~/Downloads/Export.zip",
-                     detail="Re-export from the Apple Health app on iPhone, then import.",
-                     source=f"body_comp table: last weight row {days}d ago.")
-            elif src["source"] in ("garmin_health", "garmin_activities"):
-                stream = src["source"].split("_", 1)[1]
-                _add("warning",
-                     f"Garmin {stream} {days}d behind",
-                     tag=f"sync_lag_{src['source']}",
-                     command="fit sync",
-                     source=f"data_health: last {src['source']} row {days}d ago.")
+    for name, min_days, sev, headline, cmd, detail, source_fn in _DATA_HEALTH_STALE_RULES:
+        src = sources_by_name.get(name)
+        if not src or src["status"] != "stale":
+            continue
+        days = src.get("days_ago")
+        if days is None or days < min_days:
+            continue
+        _add(severity=sev, message=headline(days),
+             tag=f"stale_{name}", command=cmd, detail=detail, source=source_fn(days))
 
     # Coaching review staleness.
     try:
@@ -462,8 +484,8 @@ def _attention_items(conn):
             if rd:
                 age = (date.today() - date.fromisoformat(rd)).days
                 if age > 7:
-                    _add("info",
-                         f"Coaching review is {age}d old",
+                    _add(severity="info",
+                         message=f"Coaching review is {age}d old",
                          tag="coaching_stale",
                          command="/fit-coach",
                          detail="Run the coaching skill in Claude Code to refresh insights.",
@@ -479,36 +501,30 @@ def _attention_items(conn):
 def _prediction_confidence(conn):
     """Race-prediction confidence — fresh anchors give a sharper forecast.
 
-    Returns dict with `level` (high/medium/low) and `reason` (short string,
-    empty when level == high).
+    Maps reason-count → level: 0 = high, 1 = medium, 2+ = low. Same
+    semantics as the prior branchy version with consistent reason wording.
     """
     from fit.calibration import is_stale as cal_is_stale, get_active_calibration
 
-    lthr_cal = get_active_calibration(conn, "lthr")
-    vo2_cal = get_active_calibration(conn, "vo2max")
-    lthr_stale = (lthr_cal is None) or cal_is_stale(conn, "lthr")
-    vo2_stale = (vo2_cal is None) or cal_is_stale(conn, "vo2max")
+    lthr_stale = get_active_calibration(conn, "lthr") is None or cal_is_stale(conn, "lthr")
+    vo2_stale = get_active_calibration(conn, "vo2max") is None or cal_is_stale(conn, "vo2max")
     race_count = conn.execute(
         "SELECT COUNT(*) FROM race_calendar WHERE result_time IS NOT NULL "
         "AND date >= date('now', '-365 days')"
     ).fetchone()[0]
 
-    if (race_count == 0 and lthr_stale and vo2_stale):
-        return {"level": "low", "reason": "no race data, LTHR + VO2max stale"}
-    if lthr_stale and vo2_stale:
-        return {"level": "low", "reason": "LTHR + VO2max both stale"}
+    reasons = []
+    if lthr_stale:
+        reasons.append("LTHR stale")
+    if vo2_stale:
+        reasons.append("VO2max stale")
     if race_count == 0:
-        return {"level": "low", "reason": "no race data in last 12 months"}
-    if lthr_stale or vo2_stale or race_count < 2:
-        reasons = []
-        if lthr_stale:
-            reasons.append("LTHR stale")
-        if vo2_stale:
-            reasons.append("VO2max stale")
-        if race_count < 2:
-            reasons.append(f"only {race_count} recent race")
-        return {"level": "medium", "reason": ", ".join(reasons)}
-    return {"level": "high", "reason": ""}
+        reasons.append("no recent race data")
+    elif race_count == 1:
+        reasons.append("only 1 recent race")
+
+    level = "high" if not reasons else "medium" if len(reasons) == 1 else "low"
+    return {"level": level, "reason": ", ".join(reasons)}
 
 
 def _physiology(conn):

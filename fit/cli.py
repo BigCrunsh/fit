@@ -23,6 +23,26 @@ def _conn():
     return get_db(get_config(), migrations_dir=MIGRATIONS_DIR)
 
 
+_SPARKLINE_BARS = "▁▂▃▄▅▆▇█"
+
+
+def _sparkline(values: list[float]) -> str:
+    """Render a list of values as a single-line block-character sparkline.
+
+    Returns an empty string when there are <2 values or all values are
+    equal (no shape to show). Used by `fit calibrate-history` and any
+    other terminal command that wants a tiny inline trend.
+    """
+    if len(values) < 2:
+        return ""
+    vmin, vmax = min(values), max(values)
+    span = vmax - vmin
+    if span == 0:
+        return _SPARKLINE_BARS[0] * len(values)
+    last_bar = len(_SPARKLINE_BARS) - 1
+    return "".join(_SPARKLINE_BARS[int((v - vmin) / span * last_bar)] for v in values)
+
+
 @click.group()
 @click.version_option(version="0.1.0", prog_name="fit")
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug logging to console.")
@@ -1480,10 +1500,7 @@ def calibrate_history(metric: str):
         values = [r["value"] for r in rows]
         if len(values) >= 2:
             vmin, vmax = min(values), max(values)
-            span = (vmax - vmin) or 1
-            bars = "▁▂▃▄▅▆▇█"
-            sparkline = "".join(bars[int((v - vmin) / span * (len(bars) - 1))] for v in values)
-            console.print(f"\n[bold]{metric}[/bold] {sparkline}  "
+            console.print(f"\n[bold]{metric}[/bold] {_sparkline(values)}  "
                           f"[dim]{vmin:.1f} → {vmax:.1f}, {len(rows)} readings[/dim]")
 
         table = Table(show_header=True, header_style="bold")
