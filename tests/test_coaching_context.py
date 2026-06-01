@@ -130,6 +130,53 @@ class TestZoneCeilingModelAware:
         assert "stay below 134 bpm" in important
 
 
+class TestZoneDistributionWindow:
+    """The 'last 4 wks' zone line must average only the 4 most recent weeks —
+    an ISO-week-string vs date('now') comparison used to silently widen this
+    to ~6 months and inflate the Z4+Z5 share with old race/interval weeks.
+    """
+
+    def _conn(self):
+        c = sqlite3.connect(":memory:")
+        c.row_factory = sqlite3.Row
+        c.executescript("""
+            CREATE TABLE weekly_agg (week TEXT, z12_pct REAL, z45_pct REAL);
+            CREATE TABLE training_phases (
+                phase TEXT, name TEXT, start_date TEXT, end_date TEXT,
+                status TEXT, z12_pct_target REAL);
+            CREATE TABLE activities (
+                id TEXT, date DATE, type TEXT, run_type TEXT,
+                speed_per_bpm REAL, speed_per_bpm_z2 REAL);
+        """)
+        return c
+
+    def test_window_excludes_old_high_hard_zone_weeks(self, server):
+        c = self._conn()
+        # 4 most recent weeks — almost no hard-zone time
+        for wk, z12, z45 in [("2026-W20", 70, 0), ("2026-W21", 48, 0),
+                             ("2026-W22", 75, 0), ("2026-W23", 100, 0)]:
+            c.execute("INSERT INTO weekly_agg VALUES (?, ?, ?)", (wk, z12, z45))
+        # Older race-season weeks heavy on Z4+Z5 — must NOT enter the average
+        for wk in ["2025-W50", "2025-W51", "2025-W52", "2026-W01", "2026-W02"]:
+            c.execute("INSERT INTO weekly_agg VALUES (?, 40, 40)", (wk,))
+        c.commit()
+        line = [l for l in server._ctx_training(c) if "Zone distribution" in l][0]
+        assert "Z4+Z5=0.0%" in line       # recent reality
+        assert "Z4+Z5=40" not in line     # not the 6-month artifact
+
+    def test_skips_empty_current_week(self, server):
+        """A null-zone current week shouldn't blank the average."""
+        c = self._conn()
+        c.execute("INSERT INTO weekly_agg VALUES ('2026-W23', NULL, NULL)")
+        for wk, z12, z45 in [("2026-W19", 80, 5), ("2026-W20", 70, 10),
+                             ("2026-W21", 60, 8), ("2026-W22", 72, 6)]:
+            c.execute("INSERT INTO weekly_agg VALUES (?, ?, ?)", (wk, z12, z45))
+        c.commit()
+        line = [l for l in server._ctx_training(c) if "Zone distribution" in l][0]
+        # avg of the 4 non-null weeks: z45 = (5+10+8+6)/4 = 7.25
+        assert "Z4+Z5=7.2" in line or "Z4+Z5=7.3" in line
+
+
 class TestFitnessAnchorLine:
     def test_anchor_line_present_with_gap(self, server, conn, monkeypatch):
         """A qualifying effort + Garmin VO2max → anchor line with the gap."""

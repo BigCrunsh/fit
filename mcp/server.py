@@ -362,13 +362,23 @@ def _ctx_health(conn) -> list[str]:
 def _ctx_training(conn) -> list[str]:
     """Zone distribution, run types, efficiency, active phase."""
     s = []
+    # Average the last 4 weeks that have zone data. ISO-week strings
+    # ('2026-W23') already sort chronologically, so ORDER BY week DESC LIMIT 4
+    # in a subquery IS the 4-week window. Do NOT compare week strings to
+    # date('now') — '2026-W..' > '2026-06-..' lexically, so that filter
+    # silently anchored on 2025-W52 and averaged ~6 months, inflating the
+    # Z4+Z5 share with old race/interval weeks (reported 24% vs ~0-12% actual).
     zones = conn.execute("""
         SELECT ROUND(AVG(z12_pct), 1) as avg_z12, ROUND(AVG(z45_pct), 1) as avg_z45
-        FROM weekly_agg WHERE week >= (SELECT MAX(week) FROM weekly_agg WHERE week <= date('now'))
-        ORDER BY week DESC LIMIT 4
+        FROM (
+            SELECT z12_pct, z45_pct FROM weekly_agg
+            WHERE z12_pct IS NOT NULL
+            ORDER BY week DESC LIMIT 4
+        )
     """).fetchone()
     if zones and zones["avg_z12"] is not None:
-        s.append(f"Zone distribution (4wk avg): Z1+Z2={zones['avg_z12']}%, Z4+Z5={zones['avg_z45']}%")
+        s.append(f"Zone distribution (last 4 wks w/ data): Z1+Z2={zones['avg_z12']}%, "
+                 f"Z4+Z5={zones['avg_z45']}%")
     phase = conn.execute("SELECT * FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
     if phase:
         s.append(f"Active phase: {phase['phase']} — {phase['name']} ({phase['start_date']} to {phase['end_date']})")

@@ -7,7 +7,7 @@ Personal fitness data platform. SQLite database, Python CLI, MCP server, HTML da
 ```bash
 pip install -e .                      # install
 pip install -e '.[analysis]'          # install with fitparse for .fit file analysis
-pytest tests/ -v                      # run tests (903 tests, in-memory SQLite)
+pytest tests/ -v                      # run tests (905 tests, in-memory SQLite)
 pytest tests/ -v --tb=short           # compact output
 fit sync --days 7                     # daily: pull Garmin + enrich + weather + aggregate
 fit sync --full && fit recompute      # init: pull all history + re-enrich
