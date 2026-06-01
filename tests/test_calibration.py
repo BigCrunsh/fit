@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from fit.calibration import (
     add_calibration,
     extract_lthr_from_race,
+    extract_max_hr_from_activity,
     get_active_calibration,
     get_calibration_status,
     is_stale,
@@ -311,6 +312,104 @@ class TestLTHRExtraction:
             "run_type": "race", "distance_km": 0, "avg_hr": 172,
         })
         assert lthr is None
+
+
+# ════════════════════════════════════════════════════════════════
+# Max HR Extraction from Activity
+# ════════════════════════════════════════════════════════════════
+
+
+class TestMaxHRExtraction:
+    """extract_max_hr_from_activity returns the observed peak when it raises
+    the current calibration — the body just showed a higher max."""
+
+    # Happy
+    def test_higher_than_current(self):
+        observed = extract_max_hr_from_activity(
+            {"type": "running", "max_hr": 195}, current_max_hr=192,
+        )
+        assert observed == 195.0
+
+    def test_no_prior_calibration(self):
+        """When current_max_hr is None, any plausible reading is accepted."""
+        observed = extract_max_hr_from_activity(
+            {"type": "running", "max_hr": 188}, current_max_hr=None,
+        )
+        assert observed == 188.0
+
+    # Unhappy — must NOT raise calibration on noise / non-improvements
+    def test_equal_to_current_no_update(self):
+        """Calibration should only move when there's a real improvement."""
+        observed = extract_max_hr_from_activity(
+            {"type": "running", "max_hr": 192}, current_max_hr=192,
+        )
+        assert observed is None
+
+    def test_one_bpm_above_ignored_as_noise(self):
+        """+1 bpm is treated as sensor noise, not a real new max."""
+        observed = extract_max_hr_from_activity(
+            {"type": "running", "max_hr": 193}, current_max_hr=192,
+        )
+        assert observed is None
+
+    def test_two_bpm_above_accepted(self):
+        observed = extract_max_hr_from_activity(
+            {"type": "running", "max_hr": 194}, current_max_hr=192,
+        )
+        assert observed == 194.0
+
+    def test_below_current_no_update(self):
+        observed = extract_max_hr_from_activity(
+            {"type": "running", "max_hr": 180}, current_max_hr=192,
+        )
+        assert observed is None
+
+    def test_implausibly_high_rejected(self):
+        """>215 bpm is almost always a strap glitch."""
+        observed = extract_max_hr_from_activity(
+            {"type": "running", "max_hr": 220}, current_max_hr=192,
+        )
+        assert observed is None
+
+    def test_implausibly_low_rejected(self):
+        """<140 bpm is too low to be a trained adult runner's max."""
+        observed = extract_max_hr_from_activity(
+            {"type": "running", "max_hr": 130}, current_max_hr=None,
+        )
+        assert observed is None
+
+    def test_cycling_ignored(self):
+        """HR-max derived from cycling has different physiology — skip."""
+        observed = extract_max_hr_from_activity(
+            {"type": "cycling", "max_hr": 200}, current_max_hr=192,
+        )
+        assert observed is None
+
+    def test_track_running_accepted(self):
+        """track_running is in RUNNING_TYPES; peaks there should auto-raise."""
+        observed = extract_max_hr_from_activity(
+            {"type": "track_running", "max_hr": 200}, current_max_hr=192,
+        )
+        assert observed == 200.0
+
+    def test_trail_running_accepted(self):
+        """trail_running is in RUNNING_TYPES; peaks there should auto-raise."""
+        observed = extract_max_hr_from_activity(
+            {"type": "trail_running", "max_hr": 198}, current_max_hr=192,
+        )
+        assert observed == 198.0
+
+    def test_missing_max_hr_field(self):
+        observed = extract_max_hr_from_activity(
+            {"type": "running"}, current_max_hr=192,
+        )
+        assert observed is None
+
+    def test_zero_max_hr(self):
+        observed = extract_max_hr_from_activity(
+            {"type": "running", "max_hr": 0}, current_max_hr=192,
+        )
+        assert observed is None
 
     def test_missing_run_type(self):
         lthr = extract_lthr_from_race({

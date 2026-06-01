@@ -85,6 +85,32 @@ def get_calibration_status(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+def extract_max_hr_from_activity(activity: dict, current_max_hr: float | None) -> float | None:
+    """Return the activity's max_hr if it raises the calibrated max above current.
+
+    The watch records peak HR per activity. When that peak exceeds the stored
+    max_hr calibration by >1 bpm and falls within a physiologically plausible
+    range, treat it as evidence that the calibration is out of date — the body
+    just demonstrated a higher max than we had on file.
+
+    Plausible range: 140–215 bpm for adults. Above 215 is almost always a strap
+    glitch; below 140 is too low to be a max for a trained runner. Returns
+    None when the activity gives us no new information.
+
+    Accepts any running-class activity (running, track_running, trail_running),
+    matching the broader RUNNING_TYPES convention used elsewhere.
+    """
+    from fit.analysis import RUNNING_TYPES
+    if activity.get("type") not in RUNNING_TYPES:
+        return None
+    observed = activity.get("max_hr")
+    if not observed or observed < 140 or observed > 215:
+        return None
+    if current_max_hr is not None and observed <= current_max_hr + 1:
+        return None
+    return float(observed)
+
+
 def extract_lthr_from_race(activity: dict) -> float | None:
     """Estimate LTHR from a race activity >= 10km.
 

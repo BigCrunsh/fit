@@ -519,8 +519,14 @@ def generate_z2_remediation(conn: sqlite3.Connection, config: dict) -> dict | No
     if low_weeks < 3:
         return None
 
-    # Get zone boundaries from config
-    zones = config.get("profile", {}).get("zones_max_hr", {})
+    # Zone boundaries must respect the active max_hr calibration — reading
+    # zones_max_hr directly would quote stale absolute bounds after a
+    # calibration change.
+    from fit.analysis import get_maxhr_zone_bounds
+    from fit.calibration import get_active_calibration
+    max_hr_cal = get_active_calibration(conn, "max_hr")
+    max_hr = int(max_hr_cal["value"]) if max_hr_cal else config["profile"].get("max_hr")
+    zones = get_maxhr_zone_bounds(config, max_hr)
     z2_bounds = zones.get("z2", [115, 134])
 
     avg_z12 = sum(

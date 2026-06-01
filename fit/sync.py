@@ -9,7 +9,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCo
 
 from fit import garmin, weather
 from fit.analysis import RUNNING_TYPES_SQL, enrich_activity, compute_weekly_agg
-from fit.calibration import get_active_calibration, extract_lthr_from_race
+from fit.calibration import get_active_calibration, extract_lthr_from_race, extract_max_hr_from_activity
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,13 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     lthr_cal = get_active_calibration(conn, "lthr")
     lthr = int(lthr_cal["value"]) if lthr_cal else None
 
+    # Active max_hr — calibration table wins over the config default. The
+    # config max_hr is treated as the initial value; once a higher reading is
+    # auto-extracted from an activity, the calibration row becomes the source
+    # of truth and zone boundaries scale up accordingly.
+    max_hr_cal = get_active_calibration(conn, "max_hr")
+    max_hr = int(max_hr_cal["value"]) if max_hr_cal else config["profile"].get("max_hr")
+
     total_days = (end - start).days + 1
 
     with Progress(
@@ -68,27 +75,68 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
         activities = garmin.fetch_activities(api, start, end)
         progress.update(task_a, total=len(activities), completed=0)
 
-        # 3. Enrich new activities
+        # 3a. Pass 1 — max_hr calibration refresh from raw activity data.
+        #
+        # We scan EVERY activity in the fetch window (new and previously-seen)
+        # before any enrichment runs. Three reasons:
+        #   (a) A re-uploaded activity with a corrected peak HR shouldn't be
+        #       skipped just because its row already has hr_zone (F2).
+        #   (b) If activity #5 in the batch raises max_hr, activities #0..#4
+        #       need to be enriched against the new value, not the old one
+        #       — which means the calibration must be finalized BEFORE we
+        #       enter the enrichment loop (F5).
+        #   (c) The activity that triggers the raise should itself enrich
+        #       with the new value (F3).
+        # extract_max_hr_from_activity only consults raw fields (type, max_hr)
+        # so it works fine on unenriched activity dicts.
+        from fit.calibration import add_calibration
+        for a in activities:
+            candidate_max = extract_max_hr_from_activity(a, max_hr)
+            if not candidate_max:
+                continue
+            try:
+                cal_date = date.fromisoformat(a.get("date") or "")
+            except ValueError:
+                logger.debug("Skipping max_hr extract for activity %s: missing/bad date %r",
+                             a.get("id"), a.get("date"))
+                continue
+            add_calibration(
+                conn, "max_hr", candidate_max, "activity_max", "medium",
+                cal_date,
+                source_activity_id=a.get("id"),
+                notes=f"Auto-extracted from {a.get('name')} ({a.get('distance_km', '?')}km)",
+            )
+            logger.info("max_hr auto-raised to %s bpm from %s",
+                        int(candidate_max), a.get("name"))
+            max_hr = int(candidate_max)
+
+        # 3b. Pass 2 — enrich new activities using the (possibly-raised) max_hr.
         for i, a in enumerate(activities):
             existing = conn.execute("SELECT hr_zone FROM activities WHERE id = ?", (a["id"],)).fetchone()
             if existing and existing["hr_zone"] is not None:
                 _upsert_activity(conn, a)
             else:
-                enriched = enrich_activity(a, config, lthr=lthr)
+                enriched = enrich_activity(a, config, lthr=lthr, max_hr=max_hr)
                 _upsert_enriched_activity(conn, enriched)
                 counts["enriched"] += 1
 
                 if enriched.get("run_type") == "race":
                     candidate_lthr = extract_lthr_from_race(enriched)
                     if candidate_lthr:
-                        from fit.calibration import add_calibration
-                        add_calibration(
-                            conn, "lthr", candidate_lthr, "race_extract", "medium",
-                            date.fromisoformat(enriched["date"]),
-                            source_activity_id=enriched["id"],
-                            notes=f"Auto-extracted from {enriched.get('name')} ({enriched.get('distance_km', '?')}km)",
-                        )
-                        logger.info("LTHR auto-saved from race %s: %d bpm", enriched.get("name"), candidate_lthr)
+                        try:
+                            cal_date = date.fromisoformat(enriched.get("date") or "")
+                        except ValueError:
+                            logger.debug("Skipping LTHR extract for activity %s: bad date",
+                                         enriched.get("id"))
+                        else:
+                            add_calibration(
+                                conn, "lthr", candidate_lthr, "race_extract", "medium",
+                                cal_date,
+                                source_activity_id=enriched["id"],
+                                notes=f"Auto-extracted from {enriched.get('name')} ({enriched.get('distance_km', '?')}km)",
+                            )
+                            logger.info("LTHR auto-saved from race %s: %d bpm",
+                                        enriched.get("name"), candidate_lthr)
             progress.advance(task_a)
         counts["activities"] = len(activities)
 
@@ -208,47 +256,32 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     # 7. Match activities to race calendar
     _match_race_calendar(conn)
 
-    # 8. Auto-import weight/body comp CSV
-    weight_csv = config.get("sync", {}).get("weight_csv_path", "")
-    if weight_csv:
-        csv_path = Path(weight_csv).expanduser()
-        if not csv_path.exists():
+    # 8. Body comp staleness check. The actual import is the manual
+    # `fit import-health <Export.zip>` workflow — parsing the ~1 GB XML on
+    # every sync would dominate run time, and Apple Health exports are
+    # user-initiated anyway. Here we just warn if body_comp is falling behind.
+    last_bc = conn.execute(
+        "SELECT MAX(date) FROM body_comp WHERE weight_kg IS NOT NULL"
+    ).fetchone()[0]
+    if last_bc:
+        days_old = (date.today() - date.fromisoformat(last_bc)).days
+        if days_old < 0:
+            # Future-dated body_comp row — typo or bad import. Surface it loudly:
+            # the row is "fresh" by the > 14 check but the data is bogus.
             warnings.append(
-                f"FitDays CSV not found at {csv_path}. "
-                f"Download from FitDays app → Export → CSV, save to {csv_path}"
+                f"Body comp has a future-dated row (last {last_bc}). "
+                f"Check the source — manual entry typo or bad timezone in an Apple Health import."
             )
-        else:
-            # Check staleness (warn if file >14 days old)
-            import os
-            mtime = date.fromtimestamp(os.path.getmtime(csv_path))
-            days_old = (date.today() - mtime).days
-            if days_old > 14:
-                warnings.append(
-                    f"FitDays CSV is {days_old} days old. "
-                    f"Re-export from FitDays app to get latest body comp data."
-                )
-            try:
-                _auto_import_weight(conn, csv_path)
-            except Exception as e:
-                logger.debug("Weight auto-import failed: %s", e)
+        elif days_old > 14:
+            warnings.append(
+                f"Body comp is {days_old} days old (last {last_bc}). "
+                f"Re-export Apple Health → Export.zip and run 'fit import-health ~/Downloads/Export.zip'."
+            )
     else:
-        # Check for Apple Health export as alternative
-        apple_health_path = config.get("sync", {}).get("apple_health_export", "")
-        if apple_health_path:
-            try:
-                from fit.apple_health import import_apple_health
-                result = import_apple_health(conn, Path(apple_health_path).expanduser())
-                if result.get("imported"):
-                    counts["body_comp"] = result["imported"]
-            except Exception as e:
-                logger.debug("Apple Health import failed: %s", e)
-        else:
-            warnings.append(
-                "No body comp data source configured. Options: "
-                "(1) 'fit import-health ~/Downloads/Export.zip' (Apple Health export), "
-                "(2) Add sync.apple_health_export or sync.weight_csv_path to config.local.yaml, "
-                "(3) Enter weight via 'fit checkin'."
-            )
+        warnings.append(
+            "No body comp data. Run 'fit import-health ~/Downloads/Export.zip' "
+            "after exporting from the Apple Health app, or enter weight via 'fit checkin'."
+        )
 
     # 8a. Compute sRPE (retroactively join checkin RPE to same-day activities)
     try:
@@ -391,119 +424,38 @@ def _match_race_calendar(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def _safe_float(value) -> float | None:
-    """Safely convert a value to float, returning None on failure."""
-    if value is None:
-        return None
-    try:
-        result = float(value)
-        return result if result == result else None  # NaN check
-    except (ValueError, TypeError):
-        return None
+def enrich_existing_activities(conn: sqlite3.Connection, config: dict,
+                                force: bool = False) -> int:
+    """Re-enrich activities with the current calibration.
 
-
-def _auto_import_weight(conn: sqlite3.Connection, csv_path: Path) -> None:
-    """Auto-import new weight measurements from configured CSV path."""
-    import csv
-    import hashlib
-
-    if not csv_path.exists():
-        logger.debug("Weight CSV not found at %s", csv_path)
-        return
-
-    file_hash = hashlib.md5(csv_path.read_bytes()).hexdigest()
-
-    # Check import_log for duplicate
-    existing = conn.execute("SELECT 1 FROM import_log WHERE file_hash = ?", (file_hash,)).fetchone()
-    if existing:
-        logger.debug("Weight CSV already imported (hash match)")
-        return
-
-    count = 0
-    with open(csv_path, newline="") as f:
-        reader = csv.DictReader(f)
-        # Validate header
-        headers = reader.fieldnames or []
-        # Case-insensitive column name matching
-        header_lower = {h.lower(): h for h in headers}
-        date_col = next((header_lower[k] for k in header_lower
-                         if k in ("date", "startdate")), None)
-        weight_col = next((header_lower[k] for k in header_lower
-                           if "weight" in k or k == "value"), None)
-        # Body composition columns (task 4.8)
-        body_fat_col = next((header_lower[k] for k in header_lower
-                             if "body" in k and "fat" in k), None)
-        muscle_col = next((header_lower[k] for k in header_lower
-                           if "muscle" in k and "mass" in k), None)
-        visceral_col = next((header_lower[k] for k in header_lower
-                             if "visceral" in k), None)
-
-        if not date_col or not weight_col:
-            logger.warning("Weight CSV has unexpected columns: %s. Expected Date + Weight column.", headers)
-            return
-
-        for row in reader:
-            d = str(row.get(date_col, ""))[:10]
-            try:
-                w = float(row.get(weight_col, ""))
-            except (ValueError, TypeError):
-                continue
-
-            # Parse body composition fields
-            body_fat = _safe_float(row.get(body_fat_col)) if body_fat_col else None
-            muscle_mass = _safe_float(row.get(muscle_col)) if muscle_col else None
-            visceral_fat = _safe_float(row.get(visceral_col)) if visceral_col else None
-
-            # Only insert if date not already in body_comp
-            existing_w = conn.execute("SELECT 1 FROM body_comp WHERE date = ?", (d,)).fetchone()
-            if not existing_w:
-                conn.execute("""
-                    INSERT INTO body_comp (date, weight_kg, body_fat_pct, muscle_mass_kg,
-                                           visceral_fat, source)
-                    VALUES (?, ?, ?, ?, ?, 'fitdays')
-                """, (d, w, body_fat, muscle_mass, visceral_fat))
-                count += 1
-
-    # Log the import
-    total_rows = count  # approximation
-    conn.execute("""
-        INSERT INTO import_log (filename, file_hash, row_count, rows_imported, source_type)
-        VALUES (?, ?, ?, ?, 'weight_csv')
-    """, (str(csv_path), file_hash, total_rows, count))
-
-    # Auto-update weight calibration
-    if count > 0:
-        latest = conn.execute("SELECT date, weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
-        if latest:
-            from fit.calibration import add_calibration
-            add_calibration(conn, "weight", latest["weight_kg"], "scale", "high",
-                            date.fromisoformat(latest["date"]))
-            logger.info("Weight calibration auto-updated: %s kg on %s", latest["weight_kg"], latest["date"])
-
-    conn.commit()
-    logger.info("Auto-imported %d new weight measurements from %s", count, csv_path)
-
-
-def enrich_existing_activities(conn: sqlite3.Connection, config: dict) -> int:
-    """Enrich all activities that have NULL hr_zone (e.g., from backfill migration).
+    Default (`force=False`) only re-enriches rows missing `hr_zone` — used
+    after sync to fill in any gaps. `force=True` re-enriches every activity,
+    which is what you want after a calibration change (e.g., max_hr just got
+    auto-raised by sync) so historical zones reflect the new physiology.
 
     Returns count of enriched activities.
     """
     lthr_cal = get_active_calibration(conn, "lthr")
     lthr = int(lthr_cal["value"]) if lthr_cal else None
+    max_hr_cal = get_active_calibration(conn, "max_hr")
+    max_hr = int(max_hr_cal["value"]) if max_hr_cal else config["profile"].get("max_hr")
 
-    rows = conn.execute("""
+    where_clause = "" if force else "WHERE hr_zone IS NULL"
+    # `run_type` is included so `enrich_activity` can preserve existing 'race'
+    # tags — they're written by `_match_race_calendar` (a separate sync stage)
+    # and classify_run_type never reproduces them.
+    rows = conn.execute(f"""
         SELECT id, date, type, subtype, name, distance_km, duration_min,
                pace_sec_per_km, avg_hr, max_hr, avg_cadence, elevation_gain_m,
                calories, vo2max, aerobic_te, training_load, avg_stride_m,
-               avg_speed, start_lat, start_lon
-        FROM activities WHERE hr_zone IS NULL
+               avg_speed, start_lat, start_lon, run_type
+        FROM activities {where_clause}
     """).fetchall()
 
     count = 0
     for row in rows:
         a = dict(row)
-        enriched = enrich_activity(a, config, lthr=lthr)
+        enriched = enrich_activity(a, config, lthr=lthr, max_hr=max_hr)
         conn.execute("""
             UPDATE activities SET
                 hr_zone_maxhr = ?, hr_zone_lthr = ?, hr_zone = ?,

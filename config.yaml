@@ -12,6 +12,12 @@ profile:
     z3: [134, 154]     # Moderate:   70-80%
     z4: [154, 173]     # Threshold:  80-90%
     z5: [173, 200]     # VO2max:     90-100%
+  zones_max_hr_pct:  # Preferred: % of max HR. Absolute bpm bounds re-derive on every enrich,
+    z1: [0, 60]      # so zone boundaries stay in sync with the active max_hr calibration.
+    z2: [60, 70]     # Falls back to zones_max_hr above when this key is absent.
+    z3: [70, 80]
+    z4: [80, 90]
+    z5: [90, 100]
   zones_lthr:  # Friel model (% of LTHR) — used when zone_model=lthr and lthr is set
     z1_pct: [0, 85]        # Recovery:   < 85% LTHR
     z2_pct: [85, 89]       # Aerobic:    85-89% LTHR

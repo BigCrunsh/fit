@@ -101,6 +101,109 @@ class TestHRZones:
         zones = compute_hr_zones(115, config)
         assert zones["hr_zone_maxhr"] == "Z2"
 
+    # ── Percentage-derived zones (zones_max_hr_pct + max_hr arg) ──
+
+    def test_pct_zones_derive_from_max_hr(self, config):
+        """When zones_max_hr_pct is set and max_hr is passed, boundaries scale."""
+        config["profile"]["zones_max_hr_pct"] = {
+            "z1": [0, 60], "z2": [60, 70], "z3": [70, 80], "z4": [80, 90], "z5": [90, 100],
+        }
+        # max_hr=195 → Z3 lower = int(0.70 * 195) = 136.
+        # avg_hr 135 is in Z2 (< 136), avg_hr 137 is in Z3 (≥ 136).
+        assert compute_hr_zones(135, config, max_hr=195)["hr_zone_maxhr"] == "Z2"
+        assert compute_hr_zones(137, config, max_hr=195)["hr_zone_maxhr"] == "Z3"
+
+    def test_pct_zones_track_calibration_change(self, config):
+        """Raising max_hr lifts the absolute Z2 ceiling proportionally."""
+        config["profile"]["zones_max_hr_pct"] = {
+            "z1": [0, 60], "z2": [60, 70], "z3": [70, 80], "z4": [80, 90], "z5": [90, 100],
+        }
+        # avg_hr=140: Z3 at max_hr=192 (Z3 lower 134), Z2 at max_hr=205 (Z3 lower 143)
+        assert compute_hr_zones(140, config, max_hr=192)["hr_zone_maxhr"] == "Z3"
+        assert compute_hr_zones(140, config, max_hr=205)["hr_zone_maxhr"] == "Z2"
+
+    def test_pct_zones_fallback_when_max_hr_missing(self, config):
+        """Without a max_hr arg, fall through to absolute zones_max_hr."""
+        config["profile"]["zones_max_hr_pct"] = {"z1": [0, 60], "z2": [60, 70], "z3": [70, 80], "z4": [80, 90], "z5": [90, 100]}
+        # No max_hr passed → use absolute boundaries from zones_max_hr (Z2 ceiling 134)
+        assert compute_hr_zones(140, config)["hr_zone_maxhr"] == "Z3"
+
+    def test_absolute_zones_only_legacy_config(self, config):
+        """Config without zones_max_hr_pct keeps legacy absolute behavior."""
+        # Default fixture has no zones_max_hr_pct
+        assert "zones_max_hr_pct" not in config["profile"]
+        # max_hr arg is ignored when no pct config
+        assert compute_hr_zones(140, config, max_hr=200)["hr_zone_maxhr"] == "Z3"
+
+    def test_max_hr_used_reflects_actual_basis_when_pct_active(self, config):
+        """max_hr_used returned alongside zones must reflect what informed
+        the boundaries — not whatever the caller hopefully passed."""
+        config["profile"]["zones_max_hr_pct"] = {
+            "z1": [0, 60], "z2": [60, 70], "z3": [70, 80], "z4": [80, 90], "z5": [90, 100],
+        }
+        result = compute_hr_zones(140, config, max_hr=200)
+        assert result["max_hr_used"] == 200
+
+    def test_max_hr_used_falls_back_to_config_when_pct_absent(self, config):
+        """When zones_max_hr_pct is missing, the boundaries come from the
+        absolute zones_max_hr dict (originally derived from config.profile.max_hr).
+        max_hr_used should report THAT value, not the calibrated max_hr the
+        caller passed — otherwise downstream consumers think zones updated
+        when they did not."""
+        # fixture has no zones_max_hr_pct, config['profile']['max_hr'] == 192
+        result = compute_hr_zones(140, config, max_hr=205)
+        assert result["max_hr_used"] == 192
+
+    def test_malformed_pct_bounds_raise(self, config):
+        """Malformed zones_max_hr_pct entry should raise, not silently skip."""
+        config["profile"]["zones_max_hr_pct"] = {
+            "z1": [0, 60], "z2": None, "z3": [70, 80], "z4": [80, 90], "z5": [90, 100],
+        }
+        with pytest.raises(ValueError, match="zones_max_hr_pct.*z2"):
+            compute_hr_zones(120, config, max_hr=195)
+
+    def test_single_element_pct_bounds_raise(self, config):
+        config["profile"]["zones_max_hr_pct"] = {
+            "z1": [0, 60], "z2": [60], "z3": [70, 80], "z4": [80, 90], "z5": [90, 100],
+        }
+        with pytest.raises(ValueError, match="zones_max_hr_pct.*z2"):
+            compute_hr_zones(120, config, max_hr=195)
+
+
+class TestEnrichActivityPreservesRace:
+    """enrich_activity should NOT overwrite run_type='race' on re-enrichment
+    (e.g., via `fit recompute --force`). Race tagging is done by a separate
+    sync stage and the classifier never reproduces it."""
+
+    def test_existing_race_tag_preserved(self, config):
+        activity = {
+            "type": "running", "name": "Berlin 10K", "distance_km": 10.0,
+            "duration_min": 42, "avg_hr": 170, "run_type": "race",
+        }
+        enriched = enrich_activity(activity, config)
+        assert enriched["run_type"] == "race"
+
+    def test_non_race_gets_classified(self, config):
+        activity = {
+            "type": "running", "name": "easy", "distance_km": 5.0,
+            "duration_min": 30, "avg_hr": 120,
+        }
+        enriched = enrich_activity(activity, config)
+        assert enriched["run_type"] != "race"  # classifier never returns 'race'
+
+    def test_existing_easy_can_be_reclassified(self, config):
+        """If the existing run_type is anything other than 'race', the
+        classifier's output should win — calibration changes can flip
+        e.g. 'easy' to 'tempo' as the zone boundaries shift."""
+        activity = {
+            "type": "running", "name": "tempo session",
+            "distance_km": 8.0, "duration_min": 35, "avg_hr": 160,
+            "run_type": "easy",  # stale prior classification
+        }
+        enriched = enrich_activity(activity, config)
+        # The point: the classifier ran, no race preservation kicked in
+        assert enriched["run_type"] != "race"
+
     def test_hr_exactly_at_z3_boundary(self, config):
         """HR exactly at Z3 boundary (134)."""
         zones = compute_hr_zones(134, config)

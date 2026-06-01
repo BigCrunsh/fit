@@ -1378,7 +1378,8 @@ def correlate():
 
 @main.command()
 @click.option("--all", "recompute_all", is_flag=True, help="Recompute all weeks, not just recent.")
-def recompute(recompute_all: bool):
+@click.option("--force", is_flag=True, help="Re-enrich every activity (use after a calibration change).")
+def recompute(recompute_all: bool, force: bool):
     """Recompute derived metrics and weekly aggregations."""
     from fit.config import get_config
     from fit.db import get_db
@@ -1388,8 +1389,11 @@ def recompute(recompute_all: bool):
     conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
 
     try:
-        console.print("[bold]Enriching activities with missing derived fields...[/bold]")
-        enriched = enrich_existing_activities(conn, config)
+        if force:
+            console.print("[bold]Re-enriching all activities with current calibration...[/bold]")
+        else:
+            console.print("[bold]Enriching activities with missing derived fields...[/bold]")
+        enriched = enrich_existing_activities(conn, config, force=force)
         console.print(f"  [green]✓[/green] Enriched {enriched} activities")
 
         console.print("[bold]Recomputing weekly aggregations...[/bold]")

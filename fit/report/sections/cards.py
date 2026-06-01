@@ -1799,6 +1799,11 @@ def _last_7_days_runs(conn):
     config = get_config()
     lthr_cal = get_active_calibration(conn, "lthr")
     lthr = int(lthr_cal["value"]) if lthr_cal else None
+    # Per-split zone classification must use the SAME max_hr that enriched
+    # the parent activity — otherwise splits and activity disagree on zone
+    # after a calibration change.
+    max_hr_cal = get_active_calibration(conn, "max_hr")
+    max_hr = int(max_hr_cal["value"]) if max_hr_cal else config["profile"].get("max_hr")
 
     runs = conn.execute(f"""
         SELECT id, date, name, run_type, distance_km, duration_min,
@@ -1940,7 +1945,7 @@ def _last_7_days_runs(conn):
                     "elevation": s["elevation_gain_m"],
                     "zone": compute_hr_zones(
                         int(s["avg_hr"]) if s["avg_hr"] else None,
-                        config, lthr=lthr,
+                        config, lthr=lthr, max_hr=max_hr,
                     )["hr_zone"] or "",
                     "intensity_type": s["intensity_type"],
                     "wkt_step_index": s["wkt_step_index"],

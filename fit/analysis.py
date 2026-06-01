@@ -14,17 +14,39 @@ RUNNING_TYPES_SQL = "('running','track_running','trail_running')"
 # ── HR Zone Computation (parallel models) ──
 
 
-def compute_hr_zones(avg_hr: int | None, config: dict, lthr: int | None = None) -> dict:
+def compute_hr_zones(avg_hr: int | None, config: dict,
+                     lthr: int | None = None,
+                     max_hr: int | None = None) -> dict:
     """Compute zones from BOTH max HR and LTHR models in parallel.
 
     Returns dict with hr_zone_maxhr, hr_zone_lthr (None if no LTHR),
-    hr_zone (alias for preferred model), and effort_class.
+    hr_zone (alias for preferred model), effort_class, and max_hr_used
+    (the value that actually informed the max-HR zone boundaries — may be
+    the config default if zones fell back to absolute boundaries).
+
+    Boundary source for the max-HR model:
+      1. If `zones_max_hr_pct` is in config AND `max_hr` is provided,
+         derive absolute bpm boundaries dynamically: bound = pct/100 * max_hr.
+         This is the preferred path — it keeps zones in sync with the active
+         max_hr calibration as it gets refreshed by sync.
+      2. Otherwise fall back to absolute `zones_max_hr` boundaries from config
+         (legacy behavior, kept for configs that have not migrated yet). In
+         this case `max_hr_used` reports `config.profile.max_hr` — the value
+         the static bounds were originally computed from — NOT the calibrated
+         max_hr, since the bounds did not actually scale with it.
     """
     if avg_hr is None:
-        return {"hr_zone_maxhr": None, "hr_zone_lthr": None, "hr_zone": None, "effort_class": None}
+        return {"hr_zone_maxhr": None, "hr_zone_lthr": None, "hr_zone": None,
+                "effort_class": None, "max_hr_used": None}
 
-    # Max HR model (always computed)
-    zones_maxhr = config["profile"].get("zones_max_hr", {})
+    # Max HR model — prefer percentage-derived boundaries when both are available
+    zones_pct = config["profile"].get("zones_max_hr_pct")
+    if zones_pct and max_hr:
+        zones_maxhr = _derive_maxhr_zones_from_pct(zones_pct, max_hr)
+        max_hr_used = max_hr
+    else:
+        zones_maxhr = config["profile"].get("zones_max_hr", {})
+        max_hr_used = config["profile"].get("max_hr")
     zone_maxhr = _classify_zone(avg_hr, zones_maxhr)
 
     # LTHR model (computed only if LTHR calibration exists)
@@ -42,6 +64,7 @@ def compute_hr_zones(avg_hr: int | None, config: dict, lthr: int | None = None) 
         "hr_zone_lthr": zone_lthr,
         "hr_zone": primary,
         "effort_class": compute_effort_class(primary),
+        "max_hr_used": max_hr_used,
     }
 
 
@@ -52,6 +75,46 @@ def _classify_zone(avg_hr: int, zones: dict) -> str:
         if bounds and avg_hr >= bounds[0]:
             return zone_name.upper()
     return "Z1"
+
+
+def get_maxhr_zone_bounds(config: dict, max_hr: int | None = None) -> dict:
+    """Return absolute bpm bounds per zone for the %MaxHR model.
+
+    Same boundary-derivation logic as `compute_hr_zones` uses internally —
+    callers that need the bounds (e.g., narratives quoting "Keep HR between
+    X and Y bpm") should use this helper instead of reading config directly,
+    so the bounds track the active max_hr calibration consistently.
+    """
+    zones_pct = config["profile"].get("zones_max_hr_pct")
+    if zones_pct and max_hr:
+        return _derive_maxhr_zones_from_pct(zones_pct, max_hr)
+    return config["profile"].get("zones_max_hr", {})
+
+
+def _derive_maxhr_zones_from_pct(zones_pct: dict, max_hr: int) -> dict:
+    """Convert %MaxHR thresholds to absolute bpm bounds for a given max_hr.
+
+    Input format (mirrors zones_lthr): {z1: [0, 60], z2: [60, 70], ...}
+    Output format (matches zones_max_hr): {z1: [0, 115], z2: [115, 134], ...}
+
+    Uses int() truncation to match the existing zones_max_hr convention
+    (int(0.70 * 192) = 134, not 135). Malformed entries raise ValueError
+    rather than being skipped — a silently-dropped Z2 entry would let HR
+    in that band fall through to Z1, masking a config error as recovery
+    runs. Fail loud here so the typo gets seen.
+    """
+    result = {}
+    for key, bounds in zones_pct.items():
+        if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+            raise ValueError(
+                f"zones_max_hr_pct[{key!r}] must be a 2-element list like [60, 70]; "
+                f"got {bounds!r}. Check config.local.yaml."
+            )
+        zone_key = key.replace("_pct", "")
+        lo = int(bounds[0] / 100 * max_hr)
+        hi = int(bounds[1] / 100 * max_hr)
+        result[zone_key] = [lo, hi]
+    return result
 
 
 def _classify_zone_lthr(avg_hr: int, lthr: int, zones_pct: dict) -> str:
@@ -159,13 +222,24 @@ def classify_run_type(activity: dict, config: dict = None, recent_long_run_avg: 
 
 
 def enrich_activity(activity: dict, config: dict, lthr: int | None = None,
-                    recent_long_run_avg: float = None) -> dict:
+                    recent_long_run_avg: float = None,
+                    max_hr: int | None = None) -> dict:
     """Apply all derived metrics to an activity dict.
 
     Adds: hr_zone_maxhr, hr_zone_lthr, hr_zone, effort_class,
     speed_per_bpm, speed_per_bpm_z2, run_type, max_hr_used, lthr_used.
+
+    `max_hr` overrides the config value — caller passes the active
+    calibration so zone boundaries track the user's current physiology
+    rather than a stale config default.
     """
-    zones = compute_hr_zones(activity.get("avg_hr"), config, lthr=lthr)
+    effective_max_hr = max_hr if max_hr is not None else config["profile"]["max_hr"]
+    zones = compute_hr_zones(activity.get("avg_hr"), config, lthr=lthr,
+                             max_hr=effective_max_hr)
+    # `max_hr_used` from compute_hr_zones reflects the value that *actually*
+    # informed the zone boundaries (which may differ from `effective_max_hr`
+    # if zones fell back to static `zones_max_hr` because zones_max_hr_pct
+    # is absent). Trust that over our local guess.
     activity.update(zones)
 
     z2_range = config.get("analysis", {}).get("speed_per_bpm_hr_range", [115, 134])
@@ -180,8 +254,19 @@ def enrich_activity(activity: dict, config: dict, lthr: int | None = None,
     else:
         activity["speed_per_bpm"] = None
         activity["speed_per_bpm_z2"] = None
-    activity["run_type"] = classify_run_type(activity, config, recent_long_run_avg)
-    activity["max_hr_used"] = config["profile"]["max_hr"]
+    # Preserve race tagging across re-enrichment: `run_type='race'` is set
+    # by `_match_race_calendar` (a separate sync stage), and `classify_run_type`
+    # never returns 'race' on its own. Without this guard, `fit recompute
+    # --force` would wipe every race tag in the database. The match runs once
+    # per sync and is not re-run on recompute, so we'd silently lose them.
+    new_run_type = classify_run_type(activity, config, recent_long_run_avg)
+    if activity.get("run_type") == "race":
+        activity["run_type"] = "race"
+    else:
+        activity["run_type"] = new_run_type
+    # zones dict already contains max_hr_used via update() above, but be
+    # explicit so the contract is obvious to readers.
+    activity["max_hr_used"] = zones.get("max_hr_used") or effective_max_hr
     activity["lthr_used"] = lthr
 
     return activity
