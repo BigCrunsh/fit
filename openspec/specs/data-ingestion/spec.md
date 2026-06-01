@@ -259,16 +259,16 @@ Migration `002_backfill_garmy.py` SHALL read from `~/.garmy/health.db` and impor
 - **WHEN** migration 002 runs and `~/.garmy/health.db` does not exist
 - **THEN** the migration completes with a warning (not an error), importing nothing
 
-### Requirement: Backfill migration from Apple Health weight CSV
-Migration `003_backfill_weight.py` SHALL read a weight CSV export from Apple Health (path configurable, default `~/Downloads/apple_health_weight.csv`) and import into the `body_comp` table with `source = 'fitdays'`.
+### Requirement: Body comp source defaults to 'apple_health'
+The `body_comp.source` column SHALL default to `'apple_health'`. Inserts that don't specify `source` are tagged accordingly, matching the only currently-supported ingest path (`fit import-health`). Migration `014_body_comp_source_default.sql` ALTERed the default away from the legacy `'fitdays'` when the FitDays CSV importer was removed.
 
-#### Scenario: Weight CSV backfill
-- **WHEN** migration 003 runs and the CSV file exists
-- **THEN** weight data is imported into `body_comp` with dates and weights
+#### Scenario: Insert without source
+- **WHEN** a body_comp row is inserted without specifying `source`
+- **THEN** the row's `source` is `'apple_health'`
 
-#### Scenario: Weight CSV not found
-- **WHEN** migration 003 runs and the CSV file does not exist
-- **THEN** the migration completes with a warning, importing nothing
+#### Scenario: Legacy backfill row preserved
+- **WHEN** the migration runs against a database that already has rows from the historical FitDays backfill (`source = 'fitdays'`)
+- **THEN** those rows keep their original `source` value — only the column default changes
 
 ### Requirement: Training phases track planned vs actual over time
 The `training_phases` table SHALL track phased milestones for each goal. Each phase has: a name (e.g., "Base Building"), date range, JSON targets (z2_pct, weekly_km_range, max_long_run_km, vo2max, weight_kg), JSON actuals (updated when phase ends), and a status (planned / active / completed / revised). Phases are never deleted — when a plan changes, the phase status is set to `revised` and a new phase is created, preserving the history of what was planned vs what happened.
@@ -464,12 +464,20 @@ The `import_log` table (migration 005) SHALL track file imports with: filename, 
 - **WHEN** a weight CSV is imported
 - **THEN** an import_log row records the filename, hash, row counts, and source_type 'weight_csv'
 
-### Requirement: Auto-import weight CSV on sync
-When `sync.weight_csv_path` is configured, `fit sync` SHALL check for the weight CSV file and import new rows into `body_comp`. The import_log table tracks which files have been processed to avoid duplicates.
+### Requirement: Body comp imported via `fit import-health`, not auto-imported on sync
+Body composition data SHALL be imported via the explicit `fit import-health <Export.zip>` command, NOT auto-parsed on every `fit sync`. Parsing the ~1 GB Apple Health XML on each daily sync would dominate run time, and exports are user-initiated anyway. `fit sync` SHALL emit a console warning if the latest body_comp row is missing or older than 14 days, prompting the user to re-export and re-run `fit import-health`.
 
-#### Scenario: Weight CSV configured and new data available
-- **WHEN** `fit sync` runs and `weight_csv_path` points to an existing CSV with new data
-- **THEN** new weight rows are imported into body_comp and an import_log entry is created
+#### Scenario: Sync warns when body_comp is stale
+- **WHEN** `fit sync` runs and the latest body_comp row with weight is older than 14 days
+- **THEN** the sync output includes a warning naming the staleness and the `fit import-health` remediation
+
+#### Scenario: Sync warns when body_comp is empty
+- **WHEN** `fit sync` runs and `body_comp` has no rows with weight
+- **THEN** the sync output includes a warning prompting the user to run `fit import-health` or enter weight via `fit checkin`
+
+#### Scenario: Sync flags future-dated body comp
+- **WHEN** `fit sync` runs and the latest body_comp row has a date in the future (typo, bad timezone import)
+- **THEN** the sync output includes a distinct warning about the future-dated row, separate from the "stale" warning — so the bogus row is not silently treated as fresh
 
 ## Post-Phase 2 Additions
 

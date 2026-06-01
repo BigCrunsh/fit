@@ -22,7 +22,7 @@ Goal-agnostic fitness data platform that ingests from Garmin, Fitdays, Apple Hea
 ## Data Sources
 - Garmin Connect API (health metrics, activities, SpO2)
 - Garmin Move IQ (auto-detected cycling/walking)
-- Apple Health (weight export via CSV, path in `weight_csv_path` config)
+- Apple Health (body composition via XML Export.zip, imported on-demand with `fit import-health <path>`)
 - Fitdays scale (body composition)
 - Open-Meteo (weather, free API)
 - Race calendar (manual registry with official results + Garmin activity matching)
@@ -34,7 +34,7 @@ Goal-agnostic fitness data platform that ingests from Garmin, Fitdays, Apple Hea
 - Rich (terminal UI, progress bars)
 - Jinja2 (dashboard templates)
 - Chart.js 4.4.7 + chartjs-plugin-annotation + chartjs-adapter-date-fns (vendored)
-- garminconnect + garth (Garmin API)
+- garminconnect (Garmin API, with curl_cffi TLS fingerprinting to dodge Cloudflare login blocks)
 - MCP SDK (Claude integration)
 
 ## Constraints

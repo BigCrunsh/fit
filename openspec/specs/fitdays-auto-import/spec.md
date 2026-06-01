@@ -1,53 +1,39 @@
 ## ADDED Requirements
 
-### Requirement: Full body composition import from FitDays CSV
-The weight CSV importer SHALL parse body_fat_pct, muscle_mass_kg, visceral_fat from FitDays CSV alongside weight_kg. Column name detection (case-insensitive matching). Skip BMI (derivable), bone mass, body water, metabolic age, protein, subcutaneous fat (BIA noise — not actionable for marathon training).
-
-#### Scenario: Full body comp parsed
-- **WHEN** FitDays CSV has columns Date, Weight(kg), Body Fat(%), Muscle(kg), Visceral Fat
-- **THEN** all values stored in body_comp table per row
-
-#### Scenario: Weight-only CSV
-- **WHEN** CSV only has Date and Weight columns
-- **THEN** weight imported, body comp fields remain NULL
-
-### Requirement: Body fat trend on dashboard
-Add body fat % as a second y-axis line on the Body tab weight chart (faint, different color from weight). Include body comp trend in `get_coaching_context()`: "fat trending down + muscle stable = healthy cut."
-
-#### Scenario: Body comp in coaching
-- **WHEN** body_fat_pct decreased from 20.5% to 19.2% over 8 weeks while muscle_mass_kg stable
-- **THEN** coaching context: "Body fat ↓1.3% with stable muscle — healthy composition change"
-
-### Requirement: Apple Health explicitly out of scope
-Do NOT build an Apple Health integration for body comp. The data originates from the FitDays scale — Apple Health is a middleman that loses data (no visceral fat in HealthKit). Apple Health has no API accessible from non-Apple platforms. Extending the FitDays CSV import directly gives more data with less effort.
-
-#### Scenario: Apple Health not proposed
-- **WHEN** evaluating body comp data sources
-- **THEN** FitDays CSV is the path, not Apple Health (decision recorded, prevents re-proposal)
-
-## Post-Phase 2 Additions
-
 ### Requirement: Apple Health XML import as primary body comp source
-The previous "Apple Health out of scope" decision is SUPERSEDED. FitDays CSV export proved unreliable in practice. Apple Health XML export (`Export.zip`) is now the recommended primary body comp source. A new module `fit/apple_health.py` SHALL parse the Apple Health XML export and extract weight, body fat, muscle mass, and visceral fat data.
+Apple Health XML export (`Export.zip`) is the body comp source. `fit/apple_health.py` parses the Apple Health XML and extracts weight, body fat percentage, lean body mass, and BMI into `body_comp` with `source = 'apple_health'`. Records with the same date upsert via `ON CONFLICT(date)`, preserving prior fields with `COALESCE`.
 
 #### Scenario: Apple Health import via CLI
 - **WHEN** user runs `fit import-health ~/Downloads/Export.zip`
-- **THEN** body comp data is parsed from the Apple Health XML and imported into the `body_comp` table
+- **THEN** body comp data is parsed from the Apple Health XML and imported into the `body_comp` table; calibration table receives a fresh `weight` row from the latest measurement
 
-#### Scenario: Auto-import during sync
-- **WHEN** `sync.apple_health_export` is configured in config.yaml with a path to Export.zip
-- **THEN** `fit sync` automatically imports new body comp data from that file
+#### Scenario: Re-import is idempotent on dates
+- **WHEN** the same Apple Health export is imported twice
+- **THEN** existing dates upsert with COALESCE — no duplicate rows, no NULLed fields
 
-### Requirement: Sync pipeline warns when no body comp source configured
-The sync pipeline SHALL check whether any body comp source is configured and warn if none is found. The warning SHALL list the 3 available options.
+### Requirement: Sync pipeline warns when body comp is stale
+The sync pipeline SHALL check the freshness of the latest body_comp row (>14 days = stale) and emit a console warning that points at the Apple Health re-export workflow. Sync itself does NOT auto-parse Apple Health on every run — the export is ~1 GB of XML, so parsing is on-demand via `fit import-health`.
 
-#### Scenario: No body comp source
-- **WHEN** `fit sync` runs and neither `sync.weight_csv_path` nor `sync.apple_health_export` is configured and no manual body_comp rows exist
-- **THEN** sync outputs a warning: "No body comp source configured. Options: (1) fit import-health ~/Downloads/Export.zip, (2) sync.apple_health_export in config, (3) sync.weight_csv_path for FitDays CSV"
+#### Scenario: No body comp data
+- **WHEN** `fit sync` runs and `body_comp` is empty
+- **THEN** sync outputs: "No body comp data. Run 'fit import-health ~/Downloads/Export.zip' after exporting from the Apple Health app, or enter weight via 'fit checkin'."
 
-### Requirement: FitDays CSV deprecated in favor of Apple Health
-FitDays CSV export is unreliable (inconsistent column names, manual export steps). Apple Health is the recommended path. FitDays CSV import continues to work but documentation and warnings guide users toward Apple Health.
+#### Scenario: Stale body comp
+- **WHEN** `fit sync` runs and latest body_comp row is >14 days old
+- **THEN** sync outputs: "Body comp is N days old (last YYYY-MM-DD). Re-export Apple Health → Export.zip and run 'fit import-health ~/Downloads/Export.zip'."
 
-#### Scenario: FitDays CSV still works
-- **WHEN** user has `sync.weight_csv_path` configured
-- **THEN** CSV import continues to function, but sync logs an info message: "Consider switching to Apple Health import for more reliable body comp data"
+### Requirement: Body fat trend on dashboard
+Body fat % is plotted as a second y-axis line on the Body tab weight chart (faint, different color from weight). `get_coaching_context()` includes body comp trend: "fat trending down + lean mass stable = healthy cut."
+
+#### Scenario: Body comp in coaching
+- **WHEN** body_fat_pct decreased from 20.5% to 19.2% over 8 weeks while lean_body_mass_kg stable
+- **THEN** coaching context: "Body fat ↓1.3% with stable lean mass — healthy composition change"
+
+## Historical Context
+
+### Decision: FitDays CSV import removed (2026-05-31)
+An earlier iteration of this capability accepted a FitDays scale CSV export (`sync.weight_csv_path`, `_auto_import_weight`). It proved unreliable — column names varied between FitDays app versions, the manual export step rarely got done, and Apple Health already aggregates the same scale data via HealthKit when the FitDays app is connected. The CSV importer and its config key were removed; Apple Health XML is now the only body comp ingest path.
+
+#### Scenario: FitDays config key rejected
+- **WHEN** legacy `sync.weight_csv_path` is present in `config.local.yaml`
+- **THEN** sync ignores it (no import path reads it) — the user is expected to migrate to `fit import-health`

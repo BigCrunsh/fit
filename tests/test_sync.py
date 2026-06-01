@@ -1,9 +1,6 @@
-"""Tests for fit/sync.py — upsert functions, race matching, weight import, week computation."""
+"""Tests for fit/sync.py — upsert functions, race matching, week computation."""
 
-import csv
-import tempfile
 from datetime import date
-from pathlib import Path
 
 
 from fit.sync import (
@@ -11,7 +8,6 @@ from fit.sync import (
     _upsert_activity,
     _upsert_enriched_activity,
     _match_race_calendar,
-    _auto_import_weight,
     _get_affected_weeks,
 )
 
@@ -228,78 +224,6 @@ class TestMatchRaceCalendar:
 
         rc = db.execute("SELECT activity_id FROM race_calendar WHERE name = 'Park Run'").fetchone()
         assert rc["activity_id"] == "act-close"
-
-
-# ════════════════════════════════════════════════════════════════
-# _auto_import_weight
-# ════════════════════════════════════════════════════════════════
-
-
-class TestAutoImportWeight:
-    """Tests for CSV weight import and deduplication via import_log."""
-
-    def test_imports_csv(self, db):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Date", "Weight"])
-            writer.writerow(["2025-01-10", "77.5"])
-            writer.writerow(["2025-01-11", "77.2"])
-            csv_path = Path(f.name)
-
-        _auto_import_weight(db, csv_path)
-
-        rows = db.execute("SELECT * FROM body_comp ORDER BY date").fetchall()
-        assert len(rows) == 2
-        assert rows[0]["weight_kg"] == 77.5
-
-    def test_skips_duplicate_import(self, db):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Date", "Weight"])
-            writer.writerow(["2025-01-10", "77.5"])
-            csv_path = Path(f.name)
-
-        _auto_import_weight(db, csv_path)
-        _auto_import_weight(db, csv_path)  # same file, should skip
-
-        rows = db.execute("SELECT * FROM body_comp").fetchall()
-        assert len(rows) == 1  # not duplicated
-
-    def test_skips_existing_dates(self, db):
-        # Pre-insert a weight for the same date
-        db.execute("INSERT INTO body_comp (date, weight_kg, source) VALUES ('2025-01-10', 78.0, 'checkin')")
-        db.commit()
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Date", "Weight"])
-            writer.writerow(["2025-01-10", "77.5"])
-            writer.writerow(["2025-01-11", "77.2"])
-            csv_path = Path(f.name)
-
-        _auto_import_weight(db, csv_path)
-
-        row = db.execute("SELECT weight_kg FROM body_comp WHERE date = '2025-01-10'").fetchone()
-        assert row["weight_kg"] == 78.0  # preserved, not overwritten
-
-    def test_handles_bad_values(self, db):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Date", "Weight"])
-            writer.writerow(["2025-01-10", "not-a-number"])
-            writer.writerow(["2025-01-11", "77.2"])
-            csv_path = Path(f.name)
-
-        _auto_import_weight(db, csv_path)
-
-        rows = db.execute("SELECT * FROM body_comp").fetchall()
-        assert len(rows) == 1
-        assert rows[0]["date"] == "2025-01-11"
-
-    def test_missing_file_does_nothing(self, db):
-        _auto_import_weight(db, Path("/nonexistent/weight.csv"))
-        rows = db.execute("SELECT * FROM body_comp").fetchall()
-        assert len(rows) == 0
 
 
 # ════════════════════════════════════════════════════════════════

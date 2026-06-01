@@ -11,9 +11,9 @@ Two interfaces: a **self-contained HTML dashboard** (visual, daily glance) and *
    ────────────                    ──────────────                  ───────
 
    Garmin watch ─┐                ┌──────────────┐
-   FitDays scale ─┤── fit sync ──▶│ FITNESS      │     ┌──────────────────┐
-   Apple Health  ─┤               │ PROFILE      │     │ DASHBOARD        │
-   fit checkin   ─┘               │              │     │                  │
+   Apple Health ─┤── fit sync ───▶│ FITNESS      │     ┌──────────────────┐
+   fit checkin  ─┘                │ PROFILE      │     │ DASHBOARD        │
+                                  │              │     │                  │
                                   │ Aerobic  ██░░│────▶│ Today: easy day  │
                                   │ Threshold █░░│     │ VO2max: 49/50 ✓  │
    Target Race ──────────────────▶│ Economy  ██░░│     │ S25 in 12d: 22:30│
@@ -339,7 +339,7 @@ Joins:
 
 | Table | Purpose |
 |-------|---------|
-| **`import_log`** | CSV import dedup. Stores `file_hash`, `row_counts`, `imported_at` to skip already-processed FitDays/Apple Health exports. |
+| **`import_log`** | Import dedup. Stores `file_hash`, `row_counts`, `imported_at` to skip already-processed Apple Health exports. |
 | **`schema_version`** | Migration tracking (currently 13 applied). Auto-applied on every `get_db()` call. Each row: `version` + `name`. |
 
 ### Views

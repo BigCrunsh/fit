@@ -63,7 +63,7 @@ def db():
         CREATE TABLE body_comp (
             date DATE PRIMARY KEY, weight_kg REAL NOT NULL,
             body_fat_pct REAL, muscle_mass_kg REAL, visceral_fat REAL,
-            bmi REAL, source TEXT DEFAULT 'fitdays'
+            bmi REAL, source TEXT DEFAULT 'apple_health'
         );
         CREATE TABLE weekly_agg (
             week TEXT PRIMARY KEY, run_count INTEGER, run_km REAL,
@@ -98,6 +98,11 @@ def db():
             distance TEXT, distance_km REAL, status TEXT,
             target_time TEXT, result_time TEXT, garmin_time TEXT,
             result_pace REAL, activity_id TEXT, organizer TEXT
+        );
+        CREATE TABLE calibration (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, metric TEXT, value REAL,
+            method TEXT, confidence TEXT, date DATE, source_activity_id TEXT,
+            notes TEXT, active INTEGER DEFAULT 1
         );
     """)
     return conn
