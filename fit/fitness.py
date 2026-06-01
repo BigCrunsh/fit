@@ -275,6 +275,125 @@ def _get_garmin_vo2max(conn: sqlite3.Connection) -> float | None:
     return row["vo2max"] if row else None
 
 
+def get_fitness_anchors(
+    conn: sqlite3.Connection,
+    days: int = 365,
+    min_distance_km: float = 5.0,
+    max_distance_km: float = 25.0,
+    lthr: int | None = None,
+    max_pace_cv_pct: float = 15.0,
+) -> list[dict]:
+    """Activities that qualify as fitness/VDOT anchors per physiological criteria.
+
+    Unlike race_calendar (which is manual and sometimes mislabeled — a "long
+    run training" tagged as a race poisons the anchor), this filters the
+    actual activity log by effort signature:
+
+      1. Distance in [min_distance_km, max_distance_km] — default 5–25 km
+         (covers 5K through half-marathon; longer brings fuel/glycogen into
+         play, shorter is too anaerobic for Daniels' formula).
+      2. Avg HR ≥ LTHR — proxy for "this was a sustained max effort", not
+         a tempo or long-run training pace.
+      3. Pace consistent across splits (CV ≤ max_pace_cv_pct) — rules out
+         interval workouts and runs with walk breaks.
+
+    External limiters (heat, illness, sleep) aren't visible in the activity
+    record, so the user judges those manually. The function reports
+    confidence so they can weigh the evidence.
+
+    LTHR comes from the active calibration unless overridden via the `lthr`
+    arg (handy for tests). When no LTHR is calibrated, returns [] — without
+    a threshold anchor there's no way to apply criterion 2.
+
+    Returns activities sorted VDOT-descending (best fitness signal first).
+    """
+    from fit.calibration import get_active_calibration
+
+    if lthr is None:
+        cal = get_active_calibration(conn, "lthr")
+        if not cal:
+            return []
+        lthr = cal["value"]
+
+    rows = conn.execute(
+        f"""
+        SELECT id, date, name, distance_km, duration_min, avg_hr, max_hr,
+               pace_sec_per_km
+        FROM activities
+        WHERE type IN {RUNNING_TYPES_SQL}
+          AND date >= date('now', ?)
+          AND distance_km >= ? AND distance_km <= ?
+          AND avg_hr >= ?
+          AND duration_min IS NOT NULL AND duration_min > 0
+        ORDER BY date DESC
+        """,
+        (f"-{days} days", min_distance_km, max_distance_km, lthr),
+    ).fetchall()
+
+    anchors = []
+    for r in rows:
+        # Criterion 3: pace coefficient of variation across splits.
+        # Sub-15% rules out interval workouts (which alternate fast/slow)
+        # and runs with walk breaks (one km drops to 7+ min/km).
+        splits = conn.execute(
+            "SELECT pace_sec_per_km FROM activity_splits "
+            "WHERE activity_id = ? AND pace_sec_per_km IS NOT NULL",
+            (r["id"],),
+        ).fetchall()
+        pace_cv_pct = None
+        if len(splits) >= 3:
+            paces = [s["pace_sec_per_km"] for s in splits]
+            mean_p = sum(paces) / len(paces)
+            if mean_p > 0:
+                stdev_p = (sum((p - mean_p) ** 2 for p in paces) / len(paces)) ** 0.5
+                pace_cv_pct = stdev_p / mean_p * 100
+                if pace_cv_pct > max_pace_cv_pct:
+                    continue
+
+        secs = r["duration_min"] * 60
+        vdot = compute_vdot_from_race(r["distance_km"], secs)
+        if vdot is None:
+            continue
+
+        hr_margin_pct = (r["avg_hr"] - lthr) / lthr * 100
+
+        # Confidence rubric — tighter HR margin + tighter pace CV → higher.
+        # "high" requires meaningful headroom over LTHR (≥3% = ~5 bpm)
+        # and tight pacing if splits exist.
+        if hr_margin_pct >= 3 and (pace_cv_pct is None or pace_cv_pct <= 6):
+            confidence = "high"
+        elif hr_margin_pct >= 0 and (pace_cv_pct is None or pace_cv_pct <= 12):
+            confidence = "medium"
+        else:
+            confidence = "low"
+
+        # Mark whether this date also has a race_calendar entry — purely
+        # informational, doesn't gate qualification.
+        race_match = conn.execute(
+            "SELECT 1 FROM race_calendar WHERE date = ? AND result_time IS NOT NULL LIMIT 1",
+            (r["date"],),
+        ).fetchone()
+
+        anchors.append({
+            "activity_id": r["id"],
+            "date": r["date"],
+            "name": r["name"],
+            "distance_km": round(r["distance_km"], 2),
+            "duration_min": round(r["duration_min"], 1),
+            "pace_sec_per_km": r["pace_sec_per_km"],
+            "avg_hr": r["avg_hr"],
+            "max_hr": r["max_hr"],
+            "hr_margin_pct": round(hr_margin_pct, 1),
+            "pace_cv_pct": round(pace_cv_pct, 1) if pace_cv_pct is not None else None,
+            "vdot": round(vdot, 1),
+            "confidence": confidence,
+            "source": "race" if race_match else "training",
+        })
+
+    anchors.sort(key=lambda a: a["vdot"], reverse=True)
+    return anchors
+
+
 def _get_race_vdot(conn: sqlite3.Connection) -> tuple[float | None, str | None]:
     """Best VDOT from recent race results (last 6 months).
 

@@ -279,15 +279,17 @@ def enrich_activity(activity: dict, config: dict, lthr: int | None = None,
     # is absent). Trust that over our local guess.
     activity.update(zones)
 
-    z2_range = config.get("analysis", {}).get("speed_per_bpm_hr_range", [115, 134])
-    # Speed per BPM only for running activities
+    # Speed per BPM only for running activities. `speed_per_bpm_z2` is
+    # gated on the activity actually being in Z2 under the ACTIVE zone
+    # model — so it tracks the calibrated boundaries (LTHR / AeT / %MaxHR
+    # via the fallback chain) rather than a hardcoded HR range. This keeps
+    # the "pure aerobic efficiency" trend honest after a zone-model switch.
     if activity.get("type") in RUNNING_TYPES:
-        activity["speed_per_bpm"] = compute_speed_per_bpm(
+        spb = compute_speed_per_bpm(
             activity.get("distance_km"), activity.get("duration_min"), activity.get("avg_hr")
         )
-        activity["speed_per_bpm_z2"] = compute_speed_per_bpm_z2(
-            activity.get("distance_km"), activity.get("duration_min"), activity.get("avg_hr"), z2_range
-        )
+        activity["speed_per_bpm"] = spb
+        activity["speed_per_bpm_z2"] = spb if activity.get("hr_zone") == "Z2" else None
     else:
         activity["speed_per_bpm"] = None
         activity["speed_per_bpm_z2"] = None

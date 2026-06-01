@@ -139,10 +139,22 @@ h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
 .forecast-closing-confidence.level-medium { color:var(--caution); }
 .forecast-closing-confidence.level-low { color:var(--danger); }
 
-/* Daniels pace zones (Profile tab) */
-.pace-zone-row { display:flex; align-items:center; gap:12px; padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.04); font-size:12px; }
+/* Daniels pace zones (Profile tab) — left-border accent uses the zone
+   palette to encode INTENSITY (E easy / blue → R hard / red). Not a
+   good/bad spectrum — each pace is a different training stimulus. */
+.pace-zone-row { display:flex; align-items:center; gap:12px; padding:8px 10px 8px 12px; border-bottom:1px solid rgba(255,255,255,0.04); font-size:12px; border-left:3px solid transparent; }
 .pace-zone-row:last-child { border-bottom:none; }
+.pace-zone-row.zone-E { border-left-color:var(--z1); background:linear-gradient(90deg, rgba(147,197,253,0.04), transparent 30%); }
+.pace-zone-row.zone-M { border-left-color:var(--z2); background:linear-gradient(90deg, rgba(96,165,250,0.06), transparent 30%); }
+.pace-zone-row.zone-T { border-left-color:var(--z3); background:linear-gradient(90deg, rgba(233,179,8,0.06),  transparent 30%); }
+.pace-zone-row.zone-I { border-left-color:var(--z4); background:linear-gradient(90deg, rgba(249,115,22,0.06), transparent 30%); }
+.pace-zone-row.zone-R { border-left-color:var(--z5); background:linear-gradient(90deg, rgba(239,68,68,0.06),  transparent 30%); }
 .pace-zone-key { font-family:var(--mono); font-size:14px; font-weight:700; width:24px; text-align:center; }
+.pace-zone-row.zone-E .pace-zone-key { color:var(--z1); }
+.pace-zone-row.zone-M .pace-zone-key { color:var(--z2); }
+.pace-zone-row.zone-T .pace-zone-key { color:var(--z3); }
+.pace-zone-row.zone-I .pace-zone-key { color:var(--z4); }
+.pace-zone-row.zone-R .pace-zone-key { color:var(--z5); }
 .pace-zone-label { width:80px; font-weight:600; color:var(--text); }
 .pace-zone-range { font-family:var(--mono); width:90px; color:var(--text); }
 .pace-zone-desc { flex:1; color:var(--text-muted); font-size:11px; }
@@ -269,8 +281,10 @@ details.insight-box .insight-title { font-size:14px; padding:2px 0; }
 .workout-eta  { font-size:9px; font-weight:700; flex-shrink:0; }
 
 /* Info toggles */
-.def-toggle { cursor:pointer; font-size:14px; color:var(--accent); opacity:0.7; margin-left:6px; }
-.def-toggle:hover { opacity:1; }
+/* Info marker — uses ⓘ (U+24D8). Bumped weight + opacity so it's
+   discoverable; the literal lowercase `i` it replaced was easy to miss. */
+.def-toggle { cursor:pointer; font-size:13px; color:var(--accent); opacity:0.85; margin-left:6px; font-weight:600; user-select:none; transition:transform .12s, opacity .12s; }
+.def-toggle:hover { opacity:1; transform:scale(1.15); }
 .def-box { display:none; background:rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:12px 16px; margin:8px 0 14px; font-size:12px; color:var(--text-muted); line-height:1.65; }
 
 /* Badges */
@@ -321,8 +335,18 @@ details.insight-box .insight-title { font-size:14px; padding:2px 0; }
 .sparkline-trend { font-size:10px; color:var(--text-muted); }
 
 /* Alert items */
-.alert-item { background:rgba(248,113,113,0.05); border:1px solid rgba(248,113,113,0.12); border-radius:10px; padding:10px 14px; margin:6px 0; font-size:12px; }
-.alert-item-caution { background:rgba(251,191,36,0.05); border-color:rgba(251,191,36,0.12); }
+/* Alert items — per-severity styling so a critical alert reads as more
+   urgent than a warning, instead of both rendering identical red borders. */
+.alert-item { border-radius:10px; padding:10px 14px; margin:6px 0; font-size:12px; border:1px solid; }
+.alert-item-critical { background:rgba(248,113,113,0.06); border-color:rgba(248,113,113,0.20); }
+.alert-item-warning  { background:rgba(251,191,36,0.05); border-color:rgba(251,191,36,0.15); }
+.alert-item-info     { background:rgba(129,140,248,0.04); border-color:rgba(129,140,248,0.12); }
+.alert-item-title { font-weight:700; font-size:12px; }
+.alert-item-title-critical { color:var(--danger); }
+.alert-item-title-warning  { color:var(--caution); }
+.alert-item-title-info     { color:var(--accent); }
+/* Legacy class kept for backward compatibility with non-alert-panel callers */
+.alert-item-caution { background:rgba(251,191,36,0.05); border-color:rgba(251,191,36,0.15); }
 
 /* Checkpoint items */
 .checkpoint-item { display:flex; align-items:center; gap:12px; padding:8px 14px; margin:4px 0; font-size:12px; background:var(--surface); border:1px solid var(--border); border-radius:10px; }
@@ -378,3 +402,30 @@ details.insight-box .insight-title { font-size:14px; padding:2px 0; }
 .gap-track { flex:1; height:10px; background:rgba(255,255,255,0.04); border-radius:5px; position:relative; overflow:visible; }
 .gap-fill { height:100%; border-radius:5px; position:relative; }
 .gap-marker { position:absolute; top:-3px; width:3px; height:16px; border-radius:2px; background:var(--text); }
+
+/* Section subtitle — one-line "what this answers" under each chart heading */
+.sec-sub { font-size:11px; color:var(--text-muted); margin:-4px 0 10px 0; line-height:1.5; max-width:720px; }
+
+/* Dimension "so what" caption — one-liner under each Fitness Dimensions row */
+.dim-sowhat { font-size:10px; color:var(--text-dim); margin:-2px 0 6px 88px; line-height:1.5; font-style:italic; }
+
+/* VDOT comparison card — closing badge under VO2max + VDOT Trend chart */
+.vdot-compare-card { margin-top:12px; padding:12px 14px; border-radius:10px;
+  background:rgba(129,140,248,0.04); border:1px solid rgba(129,140,248,0.10); }
+.vdot-compare-row { display:grid; grid-template-columns:120px 60px 1fr auto auto;
+  align-items:baseline; gap:10px; font-size:11px; padding:4px 0; }
+.vdot-compare-row + .vdot-compare-row { border-top:1px solid rgba(255,255,255,0.04); }
+.vdot-compare-label { font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; font-size:10px; }
+.vdot-compare-race .vdot-compare-label { color:var(--accent); }
+.vdot-compare-garmin .vdot-compare-label { color:var(--text-dim); }
+.vdot-compare-value { font-family:var(--mono); font-size:16px; font-weight:700; color:var(--text); }
+.vdot-compare-meta { color:var(--text-muted); font-size:10px; }
+.vdot-compare-arrow { color:var(--text-dim); font-size:10px; }
+.vdot-compare-prediction { font-family:var(--mono); font-size:13px; font-weight:600; color:var(--text); }
+.vdot-compare-interpretation { margin-top:10px; padding-top:10px;
+  border-top:1px solid rgba(255,255,255,0.06); font-size:11px; color:var(--text-muted); line-height:1.5; }
+@media (max-width:640px) {
+  .vdot-compare-row { grid-template-columns:1fr 1fr; row-gap:4px; }
+  .vdot-compare-meta { grid-column:1 / -1; }
+  .vdot-compare-arrow { display:none; }
+}

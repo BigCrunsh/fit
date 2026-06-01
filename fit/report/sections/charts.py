@@ -20,6 +20,77 @@ def _week_to_iso_date(week_str):
         return week_str
 
 
+def _profile_x_range(conn):
+    """Shared x-axis range for Profile-tab charts: (min_iso, max_iso).
+
+    Convention from CLAUDE.md: "Profile charts share a fixed range
+    (first phase - 2w → race + 10d)". Returns (None, None) when either
+    bound can't be computed; callers fall back to chart auto-fit.
+    """
+    from datetime import timedelta
+    try:
+        first_phase = conn.execute(
+            "SELECT MIN(start_date) AS d FROM training_phases WHERE start_date IS NOT NULL"
+        ).fetchone()
+        target = conn.execute(
+            "SELECT date FROM race_calendar WHERE status IN ('planned','target') "
+            "ORDER BY date DESC LIMIT 1"
+        ).fetchone() or conn.execute(
+            "SELECT date FROM race_calendar ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        min_iso = None
+        max_iso = None
+        if first_phase and first_phase["d"]:
+            min_iso = (date.fromisoformat(first_phase["d"]) - timedelta(days=14)).isoformat()
+        if target and target["date"]:
+            max_iso = (date.fromisoformat(target["date"]) + timedelta(days=10)).isoformat()
+        return min_iso, max_iso
+    except Exception:
+        return None, None
+
+
+def _unit_for_span(dates_iso):
+    """Pick time-axis unit by span: <42d=day, 42-180d=week, >180d=month."""
+    if not dates_iso or len(dates_iso) < 2:
+        return "day"
+    try:
+        span = (date.fromisoformat(dates_iso[-1]) - date.fromisoformat(dates_iso[0])).days
+    except Exception:
+        return "day"
+    return "month" if span > 180 else "week" if span > 42 else "day"
+
+
+def _time_x_scale(unit="month", min_iso=None, max_iso=None, stacked=False, offset=False):
+    """Standard time x-axis config block. Use everywhere instead of inlining.
+
+    Formats follow CLAUDE.md: ISO `tooltipFormat`, unit-appropriate display.
+    """
+    display_formats = {
+        "day": "MMM d",
+        "week": "MMM d",
+        "month": "MMM ''yy",
+        "year": "yyyy",
+    }
+    scale = {
+        "type": "time",
+        "time": {
+            "unit": unit,
+            "displayFormats": {unit: display_formats.get(unit, "MMM d")},
+            "tooltipFormat": "yyyy-MM-dd",
+        },
+        "grid": {"display": False},
+    }
+    if min_iso:
+        scale["min"] = min_iso
+    if max_iso:
+        scale["max"] = max_iso
+    if stacked:
+        scale["stacked"] = True
+    if offset:
+        scale["offset"] = True
+    return scale
+
+
 def _all_charts(conn):
     charts = []
 
@@ -256,86 +327,74 @@ def _all_charts(conn):
         eff_dates = [e["date"] for e in eff_all]
         eff_values = [round(e["speed_per_bpm"], 4) for e in eff_all]
     if eff_values:
+        prof_min, prof_max = _profile_x_range(conn)
+        eff_unit = _unit_for_span(eff_dates)
+        eff_points = [{"x": d, "y": v} for d, v in zip(eff_dates, eff_values)]
         charts.append({"id": "chart-efficiency", "config": json.dumps({
             "type": "line",
-            "data": {"labels": eff_dates,
-                     "datasets": [
-                         {"label": eff_label, "data": eff_values,
+            "data": {"datasets": [
+                         {"label": eff_label, "data": eff_points,
                           "borderColor": ACCENT + "cc", "borderWidth": 2, "pointRadius": 3, "tension": 0.3,
                           "fill": {"target": "origin", "above": ACCENT + "0f"}},
                      ]},
             "options": {"responsive": True, "plugins": {"legend": {"display": False}},
-                        "scales": {"x": {"grid": {"display": False}},
+                        "scales": {"x": _time_x_scale(eff_unit, prof_min, prof_max),
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
-    # VO2max + VDOT Trend — 3 datasets: Garmin VO2max (gray dashed), Race VDOT (scatter dots), Effective VDOT (blue line)
-    # Plus green target VDOT annotation line
+    # VDOT Trend — Anchor VDOT (training/race efforts that meet criteria) +
+    # Garmin VO2max reference line. The previous version pulled "Race VDOT"
+    # straight from race_calendar — which silently broke when a long-run
+    # training was logged as a race. Now we filter all activities by
+    # effort signature (5-25km, avg HR ≥ LTHR, consistent pacing) so a
+    # mislabeled row can't poison the anchor.
     vo2 = conn.execute("SELECT date, vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date").fetchall()
     if vo2:
-        # Monthly Garmin VO2max (gray dashed line)
+        # Monthly Garmin VO2max (gray dashed reference line)
         vo2_monthly = conn.execute("""
             SELECT substr(date, 1, 7) as month, ROUND(AVG(vo2max), 1) as avg_vo2
             FROM activities WHERE vo2max IS NOT NULL GROUP BY month ORDER BY month
         """).fetchall()
 
-        # Race VDOT points (computed from race_calendar result_time + distance_km)
-        race_rows = conn.execute("""
-            SELECT rc.date, rc.distance_km, rc.result_time FROM race_calendar rc
-            WHERE rc.result_time IS NOT NULL AND rc.distance_km IS NOT NULL
-            ORDER BY rc.date
-        """).fetchall()
-        race_vdots = []
+        # Fitness anchors — training or race efforts at race-effort signature.
         try:
-            from fit.fitness import compute_vdot_from_race
-            for rr in race_rows:
-                _tp = rr["result_time"].split(":")
-                if len(_tp) == 3:
-                    _secs = int(_tp[0]) * 3600 + int(_tp[1]) * 60 + int(_tp[2])
-                elif len(_tp) == 2:
-                    _secs = int(_tp[0]) * 60 + int(_tp[1])
-                else:
-                    continue
-                _vdot = round(compute_vdot_from_race(rr["distance_km"], _secs), 1)
-                race_vdots.append({"date": rr["date"], "vdot": _vdot})
+            from fit.fitness import get_fitness_anchors
+            anchor_rows = get_fitness_anchors(conn, days=540)
         except Exception:
-            pass
+            anchor_rows = []
 
-        # Merge all months from Garmin VO2max AND race data, sorted chronologically
-        garmin_by_month = {v["month"]: v["avg_vo2"] for v in vo2_monthly}
-        race_by_month = {r["date"][:7]: r["vdot"] for r in race_vdots}
+        # Build datasets as {x: ISO-date, y: value} for a true time scale.
+        garmin_points = [
+            {"x": v["month"] + "-15", "y": v["avg_vo2"]} for v in vo2_monthly
+        ]
+        # Render anchors chronologically so the connecting line moves forward
+        # in time. get_fitness_anchors sorts by VDOT desc; resort by date.
+        anchor_sorted = sorted(anchor_rows, key=lambda a: a["date"])
+        anchor_points_data = [
+            {"x": a["date"], "y": a["vdot"]} for a in anchor_sorted
+        ]
+        # Race-day anchors get a larger marker so the user can still tell
+        # which dots were races vs training time trials, without losing the
+        # principle that effort (not label) is what qualifies.
+        anchor_point_radii = [
+            8 if a["source"] == "race" else 5 for a in anchor_sorted
+        ]
 
-        all_months = sorted(set(list(garmin_by_month.keys()) + list(race_by_month.keys())))
-        # Convert YYYY-MM to YYYY-MM-15 for time axis (mid-month for visual centering)
-        labels = [m + "-15" for m in all_months]
-        garmin_data = [garmin_by_month.get(m, None) for m in all_months]
-        race_data = [race_by_month.get(m, None) for m in all_months]
-
-        # Effective VDOT = blend of Garmin + race data
-        effective_data = []
-        for m in all_months:
-            rv = race_by_month.get(m)
-            gv = garmin_by_month.get(m)
-            if rv and gv:
-                effective_data.append(round((rv + gv) / 2, 1))
-            elif rv:
-                effective_data.append(rv)
-            elif gv:
-                effective_data.append(gv)
-            else:
-                effective_data.append(None)
-
+        # Anchor VDOT (performance-anchored) is primary — solid line through
+        # the actual anchor dots. Garmin VO2max (wrist-HR-anchored) is the
+        # dashed reference. The gap BETWEEN sources is the actual insight,
+        # so they share a single y-axis.
         datasets = [
-            {"label": "Garmin VO2max", "data": garmin_data,
-             "borderColor": "rgba(148,163,184,0.6)", "borderWidth": 2, "pointRadius": 3,
-             "tension": 0.3, "borderDash": [4, 2], "fill": False, "spanGaps": True},
-            {"label": "Race VDOT", "data": race_data,
-             "borderColor": ACCENT + "e6", "borderWidth": 2, "pointRadius": 6,
-             "pointBackgroundColor": ACCENT, "tension": 0, "spanGaps": False, "fill": False,
-             "showLine": False},
-            {"label": "Effective VDOT", "data": effective_data,
-             "borderColor": Z2 + "cc", "borderWidth": 2, "pointRadius": 3,
-             "tension": 0.3, "fill": False, "spanGaps": True},
+            {"label": "Anchor VDOT (training + race efforts)",
+             "data": anchor_points_data,
+             "borderColor": ACCENT, "borderWidth": 2,
+             "pointRadius": anchor_point_radii, "pointHoverRadius": 8,
+             "pointBackgroundColor": ACCENT, "pointBorderColor": ACCENT,
+             "tension": 0.2, "fill": False, "spanGaps": True},
+            {"label": "Garmin VO2max (reference)", "data": garmin_points,
+             "borderColor": "rgba(148,163,184,0.5)", "borderWidth": 1.5,
+             "pointRadius": 2, "pointBackgroundColor": "rgba(148,163,184,0.5)",
+             "tension": 0.3, "borderDash": [4, 3], "fill": False, "spanGaps": True},
         ]
 
         # Target VDOT annotation (green line) — today/race markers added via JS
@@ -360,13 +419,14 @@ def _all_charts(conn):
         except Exception:
             pass
 
+        prof_min, prof_max = _profile_x_range(conn)
         charts.append({"id": "chart-vo2", "config": json.dumps({
             "type": "line",
-            "data": {"labels": labels, "datasets": datasets},
+            "data": {"datasets": datasets},
             "options": {"responsive": True,
                         "plugins": {"legend": {"labels": {"boxWidth": 10, "padding": 12}},
                                     "annotation": {"annotations": vo2_annots}},
-                        "scales": {"x": {"grid": {"display": False}},
+                        "scales": {"x": _time_x_scale("month", prof_min, prof_max),
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
@@ -637,7 +697,9 @@ def _all_charts(conn):
                                                    "color": "#64748b", "font": {"size": 10}},
                                          "min": 0,
                                          "grid": {"color": "rgba(255,255,255,0.03)"}},
-                                   "x": {"type": "time", "grid": {"display": False}}}}
+                                   "x": _time_x_scale(
+                                       _unit_for_span([d["date"] for d in drift_onset_data]),
+                                       *_profile_x_range(conn))}}
         }).replace('"__DRIFT_ONSET_TT__": true',
                    '"label": function(ctx){return "Drift onset: km "+ctx.parsed.y}')})
 
@@ -670,16 +732,18 @@ def _all_charts(conn):
                         cv_data.append(cv)
         if len(cv_labels) >= 2:
             PURPLE = "#c084fc"
+            prof_min, prof_max = _profile_x_range(conn)
+            cv_unit = _unit_for_span(cv_labels)
+            cv_points = [{"x": d, "y": v} for d, v in zip(cv_labels, cv_data)]
             charts.append({"id": "chart-pacecv", "config": json.dumps({
                 "type": "line",
-                "data": {"labels": cv_labels,
-                         "datasets": [{"label": "Pace CV %", "data": cv_data,
+                "data": {"datasets": [{"label": "Pace CV %", "data": cv_points,
                                        "borderColor": PURPLE + "b3", "borderWidth": 2, "pointRadius": 3, "tension": 0.3,
                                        "fill": {"target": "origin", "above": PURPLE + "0d"}}]},
                 "options": {"responsive": True, "plugins": {"legend": {"display": False}},
                             "scales": {"y": {"grid": {"color": "rgba(255,255,255,0.03)"},
                                              "ticks": {"callback": "__PCVCB__"}},
-                                       "x": {"grid": {"display": False}}}}
+                                       "x": _time_x_scale(cv_unit, prof_min, prof_max)}}
             }).replace('"__PCVCB__"', 'function(v){return v+"%"}')})
 
     # Effort Gap — Garmin TE vs activity RPE (Profile tab)
@@ -726,13 +790,21 @@ def _all_charts(conn):
         # Find actual max to set y-axis with headroom
         all_vals = [v for v in te_values if v is not None] + [v for v in rpe_values if v is not None]
         y_max = max(6, round(max(all_vals) + 1)) if all_vals else 6
+        # Promote datasets to {x, y} point objects against the time scale.
+        eff_dates_list = [e["date"] for e in effort_data]
+        for ds in datasets:
+            old_y = ds["data"]
+            ds["data"] = [{"x": d, "y": y} for d, y in zip(eff_dates_list, old_y)]
+        prof_min, prof_max = _profile_x_range(conn)
+        eg_x = _time_x_scale(_unit_for_span(eff_dates_list), prof_min, prof_max)
+        eg_x["ticks"] = {"maxRotation": 45}
         charts.append({"id": "chart-effort-gap", "config": json.dumps({
             "type": "line",
-            "data": {"labels": [e["date"] for e in effort_data], "datasets": datasets},
+            "data": {"datasets": datasets},
             "options": {"responsive": True,
                         "plugins": {"legend": {"labels": {"boxWidth": 10, "padding": 12}}},
                         "scales": {"y": {"min": 0, "max": y_max, "grid": {"color": "rgba(255,255,255,0.03)"}},
-                                   "x": {"grid": {"display": False}, "ticks": {"maxRotation": 45}}}}
+                                   "x": eg_x}}
         })})
 
     # ACWR trend (Body tab) — line chart with safe zone band
@@ -784,14 +856,17 @@ def _all_charts(conn):
                           "color": SAFE, "font": {"size": 10}, "backgroundColor": "transparent"},
             }
         }
+        cad_dates_list = [c["date"] for c in cadence]
+        cad_points = [{"x": c["date"], "y": c["avg_cadence"]} for c in cadence]
+        prof_min, prof_max = _profile_x_range(conn)
+        cad_unit = _unit_for_span(cad_dates_list)
         charts.append({"id": "chart-cadence", "config": json.dumps({
             "type": "line",
-            "data": {"labels": [c["date"] for c in cadence],
-                     "datasets": [{"label": "Cadence (spm)", "data": [c["avg_cadence"] for c in cadence],
+            "data": {"datasets": [{"label": "Cadence (spm)", "data": cad_points,
                                    "borderColor": PURPLE + "b3", "borderWidth": 2, "pointRadius": 3, "tension": 0.3, "fill": False}]},
             "options": {"responsive": True, "plugins": {"legend": {"display": False},
                                                          "annotation": {"annotations": cadence_annots}},
-                        "scales": {"x": {"grid": {"display": False}},
+                        "scales": {"x": _time_x_scale(cad_unit, prof_min, prof_max),
                                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
@@ -837,40 +912,40 @@ def _all_charts(conn):
     datasets = []
     all_labels = set()
 
-    # Dataset 1: VDOT line (monthly VO2max → predicted time)
+    # Build datasets as {x: ISO-date, y: minutes} point objects — Chart.js's
+    # time scale parses x natively and lays each point at the correct date.
+    # This replaces the prior approach of sharing a category label axis with
+    # YYYY-MM strings, which gave even spacing instead of true date spacing.
+
+    # Dataset 1: VDOT line (monthly VO2max → predicted time). Mid-month
+    # (YYYY-MM-15) keeps each point visually centered within its month.
     if len(vo2_monthly) >= 3:
         from fit.analysis import _vdot_to_marathon_seconds
-        vdot_labels = []
-        vdot_times = []
+        vdot_points = []
         for v in vo2_monthly:
             secs = _vdot_to_marathon_seconds(v["avg_vo2"])
-            # Scale to target distance if not marathon
             if target_km != 42.195:
                 secs = secs * (target_km / 42.195) ** 1.06
-            vdot_times.append(round(secs / 60, 1))
-            vdot_labels.append(v["month"])
-            all_labels.add(v["month"])
+            vdot_points.append({"x": v["month"] + "-15", "y": round(secs / 60, 1)})
         datasets.append({
-            "label": "VDOT (from VO2max)", "data": vdot_times,
+            "label": "VDOT (from VO2max)", "data": vdot_points,
             "borderColor": ACCENT, "backgroundColor": ACCENT + "15", "fill": True,
             "borderWidth": 2, "pointRadius": 2,
+            "spanGaps": True,
         })
 
-    # Dataset 2: Riegel scatter (actual race → extrapolated to target distance)
+    # Dataset 2: Riegel scatter (actual race → extrapolated to target distance).
     if race_points:
-        riegel_labels = []
-        riegel_times = []
+        riegel_points = []
         for r in race_points:
             d1 = r["distance_km"]
             t1 = _parse_t(r["result_time"])
             if d1 > 0 and t1 > 0 and d1 != target_km:
                 t2 = t1 * (target_km / d1) ** 1.06
-                riegel_times.append(round(t2 / 60, 1))
-                riegel_labels.append(r["date"][:7])  # month
-                all_labels.add(r["date"][:7])
-        if riegel_times:
+                riegel_points.append({"x": r["date"], "y": round(t2 / 60, 1)})
+        if riegel_points:
             datasets.append({
-                "label": "Riegel (from races)", "data": riegel_times,
+                "label": "Riegel (from races)", "data": riegel_points,
                 "borderColor": Z3, "borderWidth": 0,
                 "pointRadius": 5, "pointBackgroundColor": Z3,
                 "pointBorderColor": Z3 + "80", "pointBorderWidth": 2,
@@ -878,36 +953,6 @@ def _all_charts(conn):
             })
 
     if datasets:
-        sorted_labels = sorted(all_labels)
-        # Align datasets to common label axis
-        for ds in datasets:
-            old_data = ds["data"]
-            if ds.get("showLine") is False:
-                # Scatter: use sparse data (null for missing months)
-                ds_labels = [r["date"][:7] for r in race_points] if "Riegel" in ds["label"] else []
-                aligned = []
-                idx = 0
-                for lbl in sorted_labels:
-                    if idx < len(ds_labels) and ds_labels[idx] == lbl:
-                        aligned.append(old_data[idx])
-                        idx += 1
-                    else:
-                        aligned.append(None)
-                ds["data"] = aligned
-            else:
-                # Line: also align
-                ds_labels = [v["month"] for v in vo2_monthly] if "VDOT" in ds["label"] else []
-                aligned = []
-                idx = 0
-                for lbl in sorted_labels:
-                    if idx < len(ds_labels) and ds_labels[idx] == lbl:
-                        aligned.append(old_data[idx])
-                        idx += 1
-                    else:
-                        aligned.append(None)
-                ds["data"] = aligned
-                ds["spanGaps"] = True
-
         # Target annotation
         pred_annots = {}
         if target_min:
@@ -918,13 +963,14 @@ def _all_charts(conn):
                            "position": "end", "font": {"size": 8}},
             }
 
+        prof_min, prof_max = _profile_x_range(conn)
         charts.append({"id": "chart-marathon-pred", "config": json.dumps({
             "type": "line",
-            "data": {"labels": sorted_labels, "datasets": datasets},
+            "data": {"datasets": datasets},
             "options": {"responsive": True,
                         "plugins": {"legend": {"display": True, "position": "bottom", "labels": {"boxWidth": 12}},
                                     "annotation": {"annotations": pred_annots}},
-                        "scales": {"x": {"grid": {"color": "rgba(255,255,255,0.03)"}},
+                        "scales": {"x": _time_x_scale("month", prof_min, prof_max),
                                    "y": {"reverse": True, "grid": {"color": "rgba(255,255,255,0.03)"},
                                          "title": {"display": True, "text": "time (lower = faster)"}}}}
         })})

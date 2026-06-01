@@ -302,6 +302,97 @@ def _run_timeline(conn):
 _DENSE_THRESHOLD = 3  # ≥ this many distinct readings → render as scatter chart
 
 
+def _vdot_comparison(conn):
+    """Anchor-VDOT vs Garmin-VO2max comparison badge under the VDOT chart.
+
+    The anchor is the BEST fitness anchor from get_fitness_anchors — any
+    training-or-race effort meeting the physiological criteria (5-25km,
+    avg HR ≥ LTHR, consistent pacing). This replaces the prior approach
+    of taking "most recent race_calendar entry", which broke when the
+    user logged a long-run training as a race.
+
+    Returns dict with both values, the activity that anchors, predicted
+    marathon time per source, and a one-line interpretation. None when
+    neither source has data.
+    """
+    from fit.fitness import get_fitness_anchors
+    from fit.analysis import _vdot_to_marathon_seconds
+
+    def _fmt_time(secs):
+        secs = int(secs)
+        h, m, s = secs // 3600, (secs % 3600) // 60, secs % 60
+        return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+    def _fmt_marathon(secs):
+        # Marathon predictions always span >1h — keep the H:MM format for these.
+        secs = int(secs)
+        return f"{secs // 3600}:{(secs % 3600) // 60:02d}"
+
+    anchors = get_fitness_anchors(conn, days=365)
+    best_anchor = anchors[0] if anchors else None
+
+    garmin_row = conn.execute(
+        "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL "
+        "ORDER BY date DESC LIMIT 1"
+    ).fetchone()
+    garmin = float(garmin_row["vo2max"]) if garmin_row and garmin_row["vo2max"] else None
+
+    if not best_anchor and not garmin:
+        return None
+
+    # Render anchor with the same shape the template already uses ("race.*")
+    # so the existing template renders without further changes — the label
+    # in the template is the only "race"-specific copy and it's already
+    # been updated.
+    anchor_payload = None
+    if best_anchor:
+        anchor_payload = {
+            "vdot": best_anchor["vdot"],
+            "date": best_anchor["date"],
+            "distance_km": best_anchor["distance_km"],
+            "result_time": _fmt_time(best_anchor["duration_min"] * 60),
+            "name": best_anchor["name"] or ("Race effort" if best_anchor["source"] == "race" else "Training effort"),
+            "source": best_anchor["source"],
+            "confidence": best_anchor["confidence"],
+        }
+
+    anchor_marathon = _fmt_marathon(_vdot_to_marathon_seconds(best_anchor["vdot"])) if best_anchor else None
+    garmin_marathon = _fmt_marathon(_vdot_to_marathon_seconds(garmin)) if garmin else None
+
+    interpretation = None
+    if best_anchor and garmin:
+        gap = garmin - best_anchor["vdot"]
+        if gap >= 5:
+            interpretation = (
+                f"Garmin is {gap:.0f} VDOT above your best fitness anchor — wrist-HR "
+                f"estimate is significantly more optimistic than what your actual "
+                f"runs at race effort deliver. Trust the anchor VDOT."
+            )
+        elif gap >= 2:
+            interpretation = (
+                f"Garmin estimate is {gap:.1f} VDOT above your best anchor. Modest "
+                f"gap — could be HR-strap drift or course conditions. The anchor "
+                f"VDOT is still the more reliable working number."
+            )
+        elif gap <= -2:
+            interpretation = (
+                f"Anchor VDOT is {abs(gap):.1f} above Garmin's estimate — unusual; "
+                f"may indicate easy-effort HR is on the high side. Anchor result "
+                f"is still primary."
+            )
+        else:
+            interpretation = "Anchor and Garmin agree closely — confidence is high."
+
+    return {
+        "race": anchor_payload,  # template key kept stable
+        "race_marathon": anchor_marathon,
+        "garmin_vo2": garmin,
+        "garmin_marathon": garmin_marathon,
+        "interpretation": interpretation,
+        "anchor_count": len(anchors),
+    }
+
+
 def _calibration_history(conn):
     """Per-metric calibration history for the Profile tab.
 
@@ -507,6 +598,63 @@ def _attention_items(conn):
             continue
         _add(severity=sev, message=headline(days),
              tag=f"stale_{name}", command=cmd, detail=detail, source=source_fn(days))
+
+    # VDOT source disagreement: best fitness anchor vs Garmin VO2max diverge.
+    # The anchor comes from get_fitness_anchors — any training-or-race effort
+    # meeting the criteria (5-25km, avg HR ≥ LTHR, consistent pacing). When
+    # Garmin is materially above the best anchor by ≥3 VDOT, the prediction
+    # is being optimistic and the user needs a fresh max-effort data point.
+    # When there's no anchor at all (LTHR uncalibrated, or no qualifying
+    # efforts), that's a different attention item — "schedule a TT".
+    try:
+        from fit.fitness import get_fitness_anchors
+
+        anchors = get_fitness_anchors(conn, days=365)
+        garmin_row = conn.execute(
+            "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL "
+            "ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        garmin_vo2 = (float(garmin_row["vo2max"])
+                      if garmin_row and garmin_row["vo2max"] else None)
+
+        if not anchors and garmin_vo2:
+            _add(
+                severity="info",
+                message="No fitness anchor — VDOT relies on Garmin alone",
+                tag="vdot_no_anchor",
+                detail=(
+                    "No 5–25km running activity in the last year meets the criteria "
+                    "(avg HR ≥ LTHR, consistent pacing). Schedule a 5K or 10K time "
+                    "trial at race effort to anchor your VDOT. Until then, marathon "
+                    "prediction relies on Garmin's wrist-HR estimate alone."
+                ),
+                source="fit.fitness.get_fitness_anchors returned 0 qualifying activities.",
+            )
+        elif anchors and garmin_vo2:
+            best = anchors[0]
+            gap = garmin_vo2 - best["vdot"]
+            if gap >= 3:
+                days_old = (date.today() - date.fromisoformat(best["date"])).days
+                severity = "warning" if gap >= 5 else "info"
+                _add(
+                    severity=severity,
+                    message=f"VDOT anchors disagree by {gap:.0f} (anchor {best['vdot']} vs Garmin {garmin_vo2:.0f})",
+                    tag="vdot_anchor_disagreement",
+                    detail=(
+                        f"Best anchor: {best['name'] or 'effort'} ({days_old}d ago, "
+                        f"{best['distance_km']:g}km at avg HR {best['avg_hr']}). "
+                        f"Garmin's estimate is {gap:.0f} VDOT higher. Schedule a "
+                        f"fresh 5K/10K at true max effort (avg HR ≥ LTHR throughout) "
+                        f"to verify which source is right."
+                    ),
+                    source=(
+                        f"Best of {len(anchors)} qualifying anchor(s) from "
+                        f"fit.fitness.get_fitness_anchors; Garmin VO2max from "
+                        "most-recent activity."
+                    ),
+                )
+    except Exception as e:
+        logger.debug("vdot_anchor_disagreement check failed: %s", e)
 
     # Coaching review staleness.
     try:
@@ -2086,12 +2234,16 @@ def _fitness_gap_analysis(conn):
 
         dims = []
         dim_config = [
-            ("aerobic", "VO2max", "var(--z2)", True),     # higher is better
-            ("threshold", "spd/bpm", "var(--z3)", True),   # higher is better
-            ("economy", "spd/bpm", "var(--accent)", True), # higher is better
-            ("resilience", "km", "var(--purple)", True),   # higher is better
+            ("aerobic", "VO2max", "var(--z2)", True,
+             "Top-end engine — how much O₂ you can use. Sets the ceiling on race pace."),
+            ("threshold", "spd/bpm", "var(--z3)", True,
+             "Sustainable hard pace — how long you can hold ~1h all-out. Marathon pace lives here."),
+            ("economy", "spd/bpm", "var(--accent)", True,
+             "Cost of running — speed per heartbeat at Z2. Higher = you cruise easy paces with less effort."),
+            ("resilience", "km", "var(--purple)", True,
+             "Aerobic durability — how late in a long run HR starts to drift up. Predicts late-marathon survival."),
         ]
-        for name, unit, color, higher_better in dim_config:
+        for name, unit, color, higher_better, sowhat in dim_config:
             dim = profile.get(name, {})
             current = dim.get("current_value")
             required = targets.get(name)
@@ -2113,6 +2265,7 @@ def _fitness_gap_analysis(conn):
                 "rate_per_month": dim.get("rate_per_month"),
                 "history": dim.get("history", []),
                 "message": dim.get("message"),
+                "sowhat": sowhat,
             })
 
         return dims

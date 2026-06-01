@@ -7,6 +7,7 @@ import pytest
 
 from fit.fitness import (
     compute_vdot_from_race,
+    get_fitness_anchors,
     get_fitness_profile,
     inverse_vdot,
     vdot_to_race_time,
@@ -45,6 +46,12 @@ def db():
             avg_cadence REAL, elevation_gain_m REAL, avg_speed_m_s REAL,
             time_above_z2_ceiling_sec REAL, start_distance_m REAL, end_distance_m REAL,
             PRIMARY KEY (activity_id, split_num)
+        );
+        CREATE TABLE calibration (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, metric TEXT, value REAL,
+            method TEXT, source_activity_id TEXT, confidence TEXT,
+            date DATE, notes TEXT, active INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP, flags TEXT DEFAULT '[]'
         );
     """)
     return conn
@@ -250,3 +257,135 @@ class TestFitnessProfile:
         profile = get_fitness_profile(db)
         assert profile["race_vdot"] is not None
         assert 40 <= profile["race_vdot"] <= 50
+
+
+# ── Fitness Anchors (training-or-race effort-based filter) ──
+
+
+def _ins_activity(db, aid, days_ago, dist_km, dur_min, avg_hr,
+                  rtype="running", name="test"):
+    """Insert one running activity N days ago. Returns (date, activity_id)."""
+    d = (date.today() - timedelta(days=days_ago)).isoformat()
+    pace = dur_min * 60 / dist_km if dist_km > 0 else None
+    db.execute(
+        "INSERT INTO activities (id, date, type, distance_km, duration_min, "
+        "avg_hr, max_hr, name, pace_sec_per_km) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (aid, d, rtype, dist_km, dur_min, avg_hr, avg_hr + 10, name, pace),
+    )
+    return d, aid
+
+
+def _ins_splits(db, aid, paces):
+    """Insert per-km splits with given paces (sec/km)."""
+    for i, p in enumerate(paces, 1):
+        db.execute(
+            "INSERT INTO activity_splits (activity_id, split_num, pace_sec_per_km) "
+            "VALUES (?, ?, ?)",
+            (aid, i, p),
+        )
+
+
+class TestGetFitnessAnchors:
+    """Filter activities by the physiological criteria for a VDOT anchor."""
+
+    def test_no_lthr_returns_empty(self, db):
+        """Without LTHR there's no criterion-2 threshold — return [], don't crash."""
+        _ins_activity(db, "a1", 30, 10.0, 45.0, 180)
+        db.commit()
+        assert get_fitness_anchors(db) == []
+
+    def test_qualifying_10k(self, db):
+        """A 10K at avg HR above LTHR with no splits → returns one anchor."""
+        _ins_activity(db, "a1", 30, 10.0, 45.0, 175, name="Hard 10K")
+        db.commit()
+        anchors = get_fitness_anchors(db, lthr=172)
+        assert len(anchors) == 1
+        assert anchors[0]["activity_id"] == "a1"
+        assert anchors[0]["distance_km"] == 10.0
+        assert anchors[0]["avg_hr"] == 175
+        assert 40 <= anchors[0]["vdot"] <= 50
+        assert anchors[0]["source"] == "training"  # no race_calendar row
+
+    def test_excludes_below_lthr(self, db):
+        """Tempo run at HR below LTHR is excluded (criterion 2)."""
+        _ins_activity(db, "tempo", 14, 10.0, 56.0, 166)  # below LTHR=172
+        db.commit()
+        assert get_fitness_anchors(db, lthr=172) == []
+
+    def test_excludes_too_short(self, db):
+        """Sub-5km efforts excluded by default (formula too noisy)."""
+        _ins_activity(db, "short", 7, 3.0, 14.0, 180)
+        db.commit()
+        assert get_fitness_anchors(db, lthr=172) == []
+
+    def test_excludes_too_long(self, db):
+        """Marathon-length runs excluded by default (glycogen-limited)."""
+        _ins_activity(db, "mara", 60, 30.0, 180.0, 175)
+        db.commit()
+        assert get_fitness_anchors(db, lthr=172) == []
+
+    def test_excludes_interval_workout(self, db):
+        """Interval session (high pace CV) excluded by criterion 3."""
+        _ins_activity(db, "intervals", 10, 8.0, 40.0, 178)
+        # Alternating fast/slow: pace CV will be huge
+        _ins_splits(db, "intervals", [240, 360, 240, 360, 240, 360, 240, 360])
+        db.commit()
+        assert get_fitness_anchors(db, lthr=172) == []
+
+    def test_includes_consistent_splits(self, db):
+        """Evenly-paced 10K is included (low pace CV)."""
+        _ins_activity(db, "even", 20, 10.0, 45.0, 178)
+        # Roughly even — ~270 sec/km with tiny variation
+        _ins_splits(db, "even", [268, 270, 272, 270, 268, 270, 272, 270, 270, 270])
+        db.commit()
+        anchors = get_fitness_anchors(db, lthr=172)
+        assert len(anchors) == 1
+        assert anchors[0]["confidence"] == "high"  # tight CV + 3.5% margin
+
+    def test_marks_race_source_when_calendar_match(self, db):
+        """If race_calendar has a row on the same date, source='race'."""
+        d, aid = _ins_activity(db, "race10k", 90, 10.0, 45.0, 175)
+        db.execute(
+            "INSERT INTO race_calendar (date, name, distance_km, status, result_time) "
+            "VALUES (?, 'Real Race', 10.0, 'completed', '0:45:00')",
+            (d,),
+        )
+        db.commit()
+        anchors = get_fitness_anchors(db, lthr=172)
+        assert len(anchors) == 1
+        assert anchors[0]["source"] == "race"
+
+    def test_outside_window_excluded(self, db):
+        """Activities older than `days` are excluded."""
+        _ins_activity(db, "old", 400, 10.0, 45.0, 178)
+        db.commit()
+        assert get_fitness_anchors(db, lthr=172, days=365) == []
+
+    def test_sorted_by_vdot_desc(self, db):
+        """Best fitness signal first — VDOT-descending."""
+        _ins_activity(db, "slow", 30, 10.0, 55.0, 175)  # ~VDOT 35
+        _ins_activity(db, "fast", 60, 10.0, 40.0, 175)  # ~VDOT 50
+        db.commit()
+        anchors = get_fitness_anchors(db, lthr=172)
+        assert [a["activity_id"] for a in anchors] == ["fast", "slow"]
+
+    def test_low_confidence_at_lthr_threshold(self, db):
+        """Avg HR exactly at LTHR with no splits → medium confidence."""
+        _ins_activity(db, "at_lthr", 10, 10.0, 45.0, 172)
+        db.commit()
+        anchors = get_fitness_anchors(db, lthr=172)
+        assert len(anchors) == 1
+        assert anchors[0]["confidence"] == "medium"
+        assert anchors[0]["hr_margin_pct"] == 0.0
+
+    def test_pace_cv_borderline_keeps(self, db):
+        """Pace CV near but below the 15% exclusion threshold still qualifies."""
+        _ins_activity(db, "borderline", 20, 10.0, 50.0, 178)
+        # CV ~11.6%: under 15% exclusion, but over 6% "high" threshold
+        _ins_splits(db, "borderline",
+                    [240, 330, 260, 320, 290, 340, 240, 290, 310, 310])
+        db.commit()
+        anchors = get_fitness_anchors(db, lthr=172)
+        assert len(anchors) == 1
+        assert anchors[0]["confidence"] in ("medium", "low")
