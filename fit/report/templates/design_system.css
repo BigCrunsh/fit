@@ -35,6 +35,7 @@
 
   /* Semantic */
   --accent: #818cf8;
+  --accent-bright: #c4b5fd;  /* Lavender headline color for race name */
   --emerald: #34d399;
   --purple: #c084fc;
 }
@@ -66,6 +67,41 @@ h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
 .tab-btn:hover { color:var(--text-muted); }
 .tab-btn.active { background:rgba(255,255,255,0.1); color:var(--text); }
 .tab-content { display:none; } .tab-content.active { display:block; }
+
+/* In-tab anchor nav — used on the dense Profile tab to jump between chart
+   sections. Sticks to viewport top so it stays reachable while scrolling
+   past a wall of charts. Horizontal scroll on narrow screens. */
+.anchor-nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  gap: 6px;
+  padding: 8px 0;
+  margin: 4px 0 12px;
+  overflow-x: auto;
+  white-space: nowrap;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: thin;
+}
+.anchor-nav::-webkit-scrollbar { height: 4px; }
+.anchor-nav::-webkit-scrollbar-thumb { background: var(--surface-hover); border-radius: 2px; }
+.anchor-link {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-decoration: none;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  flex-shrink: 0;
+  transition: all .15s;
+}
+.anchor-link:hover { color: var(--text); background: var(--surface-hover); }
+
+/* Account for sticky nav offset when jumping to a section */
+.tab-content [id^="prof-"] { scroll-margin-top: 56px; }
 
 /* Cards */
 .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 18px; flex:1; min-width:110px; }
@@ -103,10 +139,47 @@ td:last-child { border-radius:0 6px 6px 0; }
 .insight-box { border-radius:12px; padding:14px 18px; margin-bottom:10px; }
 .insight-title { font-size:12px; font-weight:700; margin-bottom:4px; }
 .insight-body { font-size:13px; color:var(--text-muted); line-height:1.7; }
+.insight-body-sm { font-size:11px; }
+.insight-body-collapsed { margin-top:6px; }
+
+/* Coach tab insight expander */
+.insight-summary { cursor:pointer; list-style:none; }
+.insight-summary::-webkit-details-marker { display:none; }
+/* Override .insight-title's smaller font when used inside a <details> summary */
+details.insight-box .insight-title { font-size:14px; padding:2px 0; }
+
+/* Insight type tints — applied to .insight-box wrapper.
+   Single source of truth: both the Overview tab's compact card and the
+   Coach tab's expanded <details> use these classes, so the same insight
+   type renders identically across tabs. */
+.insight-critical { background:rgba(248,113,113,0.04); border:1px solid rgba(248,113,113,0.10); }
+.insight-warning  { background:rgba(251,191,36,0.04); border:1px solid rgba(251,191,36,0.10); }
+.insight-positive { background:rgba(52,211,153,0.04); border:1px solid rgba(52,211,153,0.10); }
+.insight-info     { background:rgba(129,140,248,0.04); border:1px solid rgba(129,140,248,0.10); }
+.insight-target   { background:rgba(192,132,252,0.04); border:1px solid rgba(192,132,252,0.10); }
+
+/* Insight title colors mirror the type tint */
+.insight-title-critical { color:var(--danger); }
+.insight-title-warning  { color:var(--caution); }
+.insight-title-positive { color:var(--safe); }
+.insight-title-info     { color:var(--accent); }
+.insight-title-target   { color:var(--purple); }
+
+/* Empty/help row — small dim text used when a section has no data */
+.empty-row { font-size:11px; color:var(--text-dim); padding:8px 0; }
 
 /* Run timeline bars */
 .run-bar { display:flex; align-items:center; gap:10px; margin:4px 0; font-size:11px; }
 .run-bar-fill { height:22px; border-radius:4px; display:flex; align-items:center; padding:0 8px; font-size:10px; font-weight:600; color:rgba(255,255,255,0.9); white-space:nowrap; }
+
+/* Workout-row — planned-workout pill on Next Workouts list (Overview tab) */
+.workout-row { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 14px; display:flex; align-items:center; gap:10px; }
+.workout-zone-chip { width:34px; height:34px; border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.workout-zone-chip span { font-size:12px; font-family:var(--mono); font-weight:700; }
+.workout-body { flex:1; min-width:0; }
+.workout-name { font-size:11px; font-weight:700; }
+.workout-meta { font-size:9px; color:var(--text-muted); }
+.workout-eta  { font-size:9px; font-weight:700; flex-shrink:0; }
 
 /* Info toggles */
 .def-toggle { cursor:pointer; font-size:14px; color:var(--accent); opacity:0.7; margin-left:6px; }
@@ -127,6 +200,31 @@ td:last-child { border-radius:0 6px 6px 0; }
 
 /* Race anchor card */
 .race-countdown-card { background:rgba(129,140,248,0.05); border:1px solid rgba(129,140,248,0.15); border-radius:14px; padding:18px 22px; margin:14px 0; }
+.race-hero-row { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
+.race-hero-stats { display:flex; align-items:flex-end; gap:20px; }
+.race-hero-stat { text-align:center; }
+.race-hero-name { font-size:15px; font-weight:700; color:var(--accent-bright); text-transform:uppercase; letter-spacing:0.06em; }
+.race-hero-subtitle { font-size:11px; color:var(--text-muted); margin-top:2px; }
+.race-hero-divider { margin-top:16px; padding-top:14px; border-top:1px solid rgba(129,140,248,0.08); }
+.stat-value-lg { font-size:22px; font-weight:700; font-family:var(--mono); line-height:1.1; }
+.stat-value-lg-suffix { font-size:11px; font-weight:400; margin-left:1px; }
+
+/* Compact uppercase kicker label (smaller variant of .card-label) */
+.kicker { font-size:9px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.08em; font-weight:700; }
+
+/* Inline code pill (background highlight for inline `<code>` references) */
+.value-pill { background:rgba(255,255,255,0.05); padding:2px 6px; border-radius:4px; }
+
+/* Two-column grids — Overview tab pairs (Checkpoints | Coach's Take; Fitness | Objectives) */
+.grid-2col { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.grid-2col-tight { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+
+/* Profile group surface — accent-tinted box used to group Fitness Profile / Objectives blocks */
+.profile-group-box { background:rgba(129,140,248,0.03); border:1px solid rgba(129,140,248,0.08); border-radius:14px; padding:14px 14px 16px; }
+
+/* Chart canvas height utility — replaces inline style="height:200px" wrappers */
+.chart-canvas-md { height:200px; }
+.chart-canvas-md canvas { width:100% !important; height:100% !important; }
 
 /* Sparkline grid */
 .sparkline-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:10px; margin:12px 0; }
@@ -145,9 +243,27 @@ td:last-child { border-radius:0 6px 6px 0; }
 /* WoW card */
 .wow-card { background:rgba(96,165,250,0.04); border:1px solid rgba(96,165,250,0.1); border-radius:12px; padding:12px 16px; margin:12px 0; font-size:12px; line-height:1.5; }
 
-/* Status group containers */
+/* Status group containers — colored surfaces grouping summary cards */
 .status-group { border-radius:14px; padding:14px 14px 16px; }
 .status-group-title { font-size:10px; font-weight:700; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px; }
+/* Tints: pick palette based on group meaning (accent=fitness, z2=objectives, safe=next, caution=readiness) */
+.status-group-accent   { background:rgba(129,140,248,0.03); border:1px solid rgba(129,140,248,0.08); }
+.status-group-z2       { background:rgba(96,165,250,0.03);  border:1px solid rgba(96,165,250,0.08); }
+.status-group-safe     { background:rgba(52,211,153,0.03);  border:1px solid rgba(52,211,153,0.08); }
+.status-group-caution  { background:rgba(251,191,36,0.03);  border:1px solid rgba(251,191,36,0.08); }
+
+/* Flex layout helpers used inside status groups */
+.stack-6 { display:flex; flex-direction:column; gap:6px; }
+.row-6   { display:flex; gap:6px; }
+
+/* Summary-card modifier: allow shrinking inside a flex/grid container (overrides min-width:140) */
+.summary-card-shrink { min-width:0; }
+
+/* Card-value size variants */
+.card-value-md { font-size:18px; }
+
+/* Mini suffix shown after a card-value (e.g., "kg" inline) */
+.card-value-suffix { font-size:10px; font-weight:400; color:var(--text-dim); }
 
 /* Footer */
 .footer { margin-top:40px; padding:12px 0; border-top:1px solid rgba(255,255,255,0.04); font-size:10px; color:var(--text-faint); }

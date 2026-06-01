@@ -355,16 +355,42 @@ def _coaching(conn):
     else:
         stale = True
 
-    styles = {
-        "critical": {"bg": "rgba(239,68,68,0.06)", "border": "rgba(239,68,68,0.15)", "color": DANGER, "icon": "🚨"},
-        "warning": {"bg": "rgba(249,115,22,0.06)", "border": "rgba(249,115,22,0.15)", "color": Z4, "icon": "⚠️"},
-        "positive": {"bg": "rgba(34,197,94,0.06)", "border": "rgba(34,197,94,0.15)", "color": SAFE, "icon": "✅"},
-        "info": {"bg": "rgba(59,130,246,0.06)", "border": "rgba(59,130,246,0.15)", "color": "#3b82f6", "icon": "📊"},
-        "target": {"bg": "rgba(167,139,250,0.06)", "border": "rgba(167,139,250,0.15)", "color": ACCENT, "icon": "🎯"},
+    # Per-type icons. Background, border, and title color all come from the
+    # CSS .insight-<type> classes in design_system.css — the same source of
+    # truth used by the Overview tab's compact card, so colors stay consistent
+    # across tabs.
+    icons = {
+        "critical": "🚨",
+        "warning": "⚠️",
+        "positive": "✅",
+        "info": "📊",
+        "target": "🎯",
     }
-    insights = [{**styles.get(i.get("type", "info"), styles["info"]), "title": i.get("title", ""), "body": i.get("body", "")}
-                for i in data.get("insights", [])]
-    return {"generated_at": data.get("generated_at", ""), "stale": stale, "insights": insights}
+    insights = [
+        {
+            "type": i.get("type", "info"),
+            "icon": icons.get(i.get("type", "info"), icons["info"]),
+            "title": i.get("title", ""),
+            "body": i.get("body", ""),
+        }
+        for i in data.get("insights", [])
+    ]
+
+    # Days since the coaching pipeline last ran — surfaced as a stale badge.
+    age_days = None
+    if report_date_str:
+        try:
+            age_days = (date.today() - date.fromisoformat(report_date_str)).days
+        except ValueError:
+            pass
+
+    return {
+        "generated_at": data.get("generated_at", ""),
+        "report_date": report_date_str,
+        "stale": stale,
+        "age_days": age_days,
+        "insights": insights,
+    }
 
 
 # ── Milestones ──

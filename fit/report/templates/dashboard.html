@@ -39,54 +39,54 @@
   {% if race_countdown %}
   <div class="race-countdown-card">
     <!-- Header: Race name + 4 metric columns -->
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+    <div class="race-hero-row">
       <div>
-        <div style="font-size:15px;font-weight:700;color:#c4b5fd;text-transform:uppercase;letter-spacing:0.06em">{{ race_countdown.race_name }}</div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">{{ race_countdown.distance_km or '' }} km · {{ race_countdown.race_date or '' }}</div>
+        <div class="race-hero-name">{{ race_countdown.race_name }}</div>
+        <div class="race-hero-subtitle">{{ race_countdown.distance_km or '' }} km · {{ race_countdown.race_date or '' }}</div>
       </div>
-      <div style="display:flex;align-items:flex-end;gap:20px">
-        <div style="text-align:center">
-          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:700">Days Left</div>
-          <div style="font-size:22px;font-weight:700;font-family:var(--mono);color:#c4b5fd;line-height:1.1">{{ race_countdown.days_remaining }}</div>
+      <div class="race-hero-stats">
+        <div class="race-hero-stat">
+          <div class="kicker">Days Left</div>
+          <div class="stat-value-lg" style="color:var(--accent-bright)">{{ race_countdown.days_remaining }}</div>
         </div>
         {% if race_countdown.target_time %}
-        <div style="text-align:center">
-          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:700">Target</div>
-          <div style="font-size:22px;font-weight:700;font-family:var(--mono);color:var(--safe);line-height:1.1">{{ race_countdown.target_time }}</div>
+        <div class="race-hero-stat">
+          <div class="kicker">Target</div>
+          <div class="stat-value-lg" style="color:var(--safe)">{{ race_countdown.target_time }}</div>
         </div>
         {% endif %}
         {% if race_countdown.prediction_mid %}
-        <div style="text-align:center">
-          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:700">Prediction</div>
-          <div style="font-size:22px;font-weight:700;font-family:var(--mono);color:var(--accent);line-height:1.1">{{ race_countdown.prediction_mid }}</div>
+        <div class="race-hero-stat">
+          <div class="kicker">Prediction</div>
+          <div class="stat-value-lg" style="color:var(--accent)">{{ race_countdown.prediction_mid }}</div>
         </div>
         {% endif %}
         {% if race_countdown.gap_minutes is defined and race_countdown.gap_minutes is not none %}
-        <div style="text-align:center">
-          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:700">Gap</div>
-          <div style="font-size:22px;font-weight:700;font-family:var(--mono);line-height:1.1;color:{% if race_countdown.gap_minutes <= 0 %}var(--safe){% elif race_countdown.gap_minutes <= 5 %}var(--caution){% else %}var(--danger){% endif %}">{{ '%+d' | format(race_countdown.gap_minutes) }}<span style="font-size:11px;font-weight:400;margin-left:1px">min</span></div>
+        <div class="race-hero-stat">
+          <div class="kicker">Gap</div>
+          <div class="stat-value-lg" style="color:{% if race_countdown.gap_minutes <= 0 %}var(--safe){% elif race_countdown.gap_minutes <= 5 %}var(--caution){% else %}var(--danger){% endif %}">{{ '%+d' | format(race_countdown.gap_minutes) }}<span class="stat-value-lg-suffix">min</span></div>
         </div>
         {% endif %}
       </div>
     </div>
 
     <!-- Prediction trend chart (full width) -->
-    <div style="margin-top:16px;padding-top:14px;border-top:1px solid rgba(129,140,248,0.08)">
+    <div class="race-hero-divider">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
-        <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">Prediction Trend</span>
-        {% if race_countdown.trend_badge %}<span class="badge badge-green" style="font-size:10px">{{ race_countdown.trend_badge }}</span>{% endif %}
+        <span class="kicker">Prediction Trend</span>
+        {% if race_countdown.trend_badge %}<span class="badge badge-green">{{ race_countdown.trend_badge }}</span>{% endif %}
       </div>
-      <div style="height:200px"><canvas id="chart-pred-trend"></canvas></div>
+      <div class="chart-canvas-md"><canvas id="chart-pred-trend"></canvas></div>
     </div>
   </div>
   {% else %}
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin:14px 0;font-size:11px;color:var(--text-muted)">
-    No target race set. Run <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit races add</code> then <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit target set &lt;id&gt;</code> to anchor the dashboard around your target.
+  <div class="narrative-item">
+    No target race set. Run <code class="value-pill">fit races add</code> then <code class="value-pill">fit target set &lt;id&gt;</code> to anchor the dashboard around your target.
   </div>
   {% endif %}
 
   <!-- 3+4. CHECKPOINTS (left) + COACH'S TAKE (right) — side by side -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:4px">
+  <div class="grid-2col" style="margin-top:4px">
     <div>
       <div class="sec" style="margin-top:12px"><h2>Checkpoints</h2><div class="line"></div></div>
       {% if prediction_trend %}
@@ -94,23 +94,29 @@
       <!-- Checkpoints rendered from prediction_trend data via JS below -->
       <div id="checkpoints-table"></div>
       {% else %}
-      <div style="font-size:11px;color:var(--text-dim);padding:8px 0">No checkpoint races registered.</div>
+      <div class="empty-row">No checkpoint races registered.</div>
       {% endif %}
     </div>
     <div>
-      <div class="sec" style="margin-top:12px"><h2>Coach's Take</h2><div class="line"></div></div>
+      <div class="sec" style="margin-top:12px">
+        <h2>Coach's Take</h2>
+        {% if coaching and coaching.stale and coaching.age_days %}
+        <span class="stale-badge" title="Coach's Take comes from coaching.json (generated by the weekly review). Re-run /fit-coach to refresh.">{{ coaching.age_days }} d old</span>
+        {% endif %}
+        <div class="line"></div>
+      </div>
       {% if coaching and coaching.insights %}
       {% set top = coaching.insights[0] %}
-      <div class="insight-box" style="background:rgba({% if top.type == 'critical' %}248,113,113{% elif top.type == 'warning' %}251,191,36{% elif top.type == 'positive' %}52,211,153{% else %}129,140,248{% endif %},0.04);border:1px solid rgba({% if top.type == 'critical' %}248,113,113{% elif top.type == 'warning' %}251,191,36{% elif top.type == 'positive' %}52,211,153{% else %}129,140,248{% endif %},0.1);margin:0">
-        <div class="insight-title" style="color:{% if top.type == 'critical' %}var(--danger){% elif top.type == 'warning' %}var(--caution){% elif top.type == 'positive' %}var(--safe){% else %}var(--accent){% endif %}">{{ top.title }}</div>
-        <div class="insight-body" style="font-size:11px">{{ top.body[:300] }}</div>
+      <div class="insight-box insight-{{ top.type or 'info' }}" style="margin:0">
+        <div class="insight-title insight-title-{{ top.type or 'info' }}">{{ top.title }}</div>
+        <div class="insight-body insight-body-sm">{{ top.body[:300] }}</div>
       </div>
       {% elif headline_signal %}
-      <div class="insight-box" style="background:rgba(129,140,248,0.04);border:1px solid rgba(129,140,248,0.1);margin:0">
-        <div class="insight-body" style="font-size:11px">{{ headline_signal }}</div>
+      <div class="insight-box insight-info" style="margin:0">
+        <div class="insight-body insight-body-sm">{{ headline_signal }}</div>
       </div>
       {% else %}
-      <div style="font-size:11px;color:var(--text-dim);padding:8px 0">Run <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">/fit-coach</code> for coaching insights.</div>
+      <div class="empty-row">Run <code class="value-pill">/fit-coach</code> for coaching insights.</div>
       {% endif %}
     </div>
   </div>
@@ -118,71 +124,71 @@
   <!-- 5. STRUCTURED STATUS — 2-column grid -->
 
   <!-- Row A: Fitness Profile (left) + Objectives (right) -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
+  <div class="grid-2col-tight" style="margin-top:8px">
     <!-- LEFT: Fitness Profile -->
-    <div style="background:rgba(129,140,248,0.03);border:1px solid rgba(129,140,248,0.08);border-radius:14px;padding:14px 14px 16px">
+    <div class="status-group status-group-accent">
       <div class="status-group-title">Fitness Profile</div>
       {% if fitness_profile and fitness_profile.effective_vdot %}
-      <div style="display:flex;flex-direction:column;gap:6px">
-        <div style="display:flex;gap:6px">
-          <div class="summary-card" style="min-width:0">
+      <div class="stack-6">
+        <div class="row-6">
+          <div class="summary-card summary-card-shrink">
             <div class="card-label">VDOT</div>
-            <div class="card-value" style="font-size:18px;color:var(--accent)">{{ fitness_profile.effective_vdot }}</div>
+            <div class="card-value card-value-md" style="color:var(--accent)">{{ fitness_profile.effective_vdot }}</div>
             <div class="card-sub">{% if fitness_profile.target_vdot %}need {{ fitness_profile.target_vdot }} · gap <span style="color:{% if fitness_profile.effective_vdot >= fitness_profile.target_vdot %}var(--safe){% else %}var(--caution){% endif %}">{{ '%.1f' % (fitness_profile.effective_vdot - fitness_profile.target_vdot) }}</span>{% else %}from race · <span style="color:var(--text-muted)">set target for gap</span>{% endif %}</div>
             <canvas id="spark-fp-vdot"></canvas>
           </div>
-          <div class="summary-card" style="min-width:0">
+          <div class="summary-card summary-card-shrink">
             <div class="card-label">Weight</div>
-            <div class="card-value" style="font-size:18px">{% if fitness_profile.weight %}{{ fitness_profile.weight.current }}{% else %}—{% endif %}</div>
+            <div class="card-value card-value-md">{% if fitness_profile.weight %}{{ fitness_profile.weight.current }}{% else %}—{% endif %}</div>
             <div class="card-sub">{% if fitness_profile.weight %}kg{% if fitness_profile.weight.target %} · target {{ fitness_profile.weight.target }}{% endif %}{% if fitness_profile.weight.change %} · <span style="color:{% if fitness_profile.weight.change <= 0 %}var(--safe){% else %}var(--caution){% endif %}">{{ '%+.1f' % fitness_profile.weight.change }} /{{ fitness_profile.weight.change_span or '?' }}</span>{% endif %}{% else %}no data{% endif %}</div>
             {% if fitness_profile.weight and fitness_profile.weight.history %}<canvas id="spark-fp-weight"></canvas>{% endif %}
           </div>
         </div>
-        <div style="display:flex;gap:6px">
-          <div class="summary-card" style="min-width:0">
+        <div class="row-6">
+          <div class="summary-card summary-card-shrink">
             <div class="card-label">Aerobic</div>
-            <div class="card-value" style="font-size:18px;color:var(--z2)">{{ fitness_profile.aerobic.current_value if fitness_profile.aerobic.current_value is not none else '—' }}</div>
+            <div class="card-value card-value-md" style="color:var(--z2)">{{ fitness_profile.aerobic.current_value if fitness_profile.aerobic.current_value is not none else '—' }}</div>
             <div class="card-sub">VO2max{% if fitness_profile.aerobic.rate_per_month %} · <span style="color:{% if fitness_profile.aerobic.trend == 'improving' %}var(--safe){% elif fitness_profile.aerobic.trend == 'declining' %}var(--danger){% else %}var(--text-muted){% endif %}">{{ '%+.1f' % fitness_profile.aerobic.rate_per_month }}/mo</span>{% endif %}</div>
             <canvas id="spark-fp-aerobic"></canvas>
           </div>
-          <div class="summary-card" style="min-width:0">
+          <div class="summary-card summary-card-shrink">
             <div class="card-label">Threshold</div>
-            <div class="card-value" style="font-size:18px;color:var(--z3)">{{ fitness_profile.threshold.current_value if fitness_profile.threshold.current_value is not none else '—' }}</div>
+            <div class="card-value card-value-md" style="color:var(--z3)">{{ fitness_profile.threshold.current_value if fitness_profile.threshold.current_value is not none else '—' }}</div>
             <div class="card-sub">Z2 pace{% if fitness_profile.threshold.rate_per_month %} · <span style="color:{% if fitness_profile.threshold.trend == 'improving' %}var(--safe){% elif fitness_profile.threshold.trend == 'declining' %}var(--danger){% else %}var(--text-muted){% endif %}">{{ '%+.4f' % fitness_profile.threshold.rate_per_month }}/mo</span>{% endif %}</div>
             <canvas id="spark-fp-threshold"></canvas>
           </div>
         </div>
-        <div style="display:flex;gap:6px">
-          <div class="summary-card" style="min-width:0">
+        <div class="row-6">
+          <div class="summary-card summary-card-shrink">
             <div class="card-label">Economy</div>
-            <div class="card-value" style="font-size:18px;color:var(--accent)">{{ fitness_profile.economy.current_value if fitness_profile.economy.current_value is not none else '—' }}</div>
+            <div class="card-value card-value-md" style="color:var(--accent)">{{ fitness_profile.economy.current_value if fitness_profile.economy.current_value is not none else '—' }}</div>
             <div class="card-sub">spd/bpm{% if fitness_profile.economy.rate_per_month %} · <span style="color:{% if fitness_profile.economy.trend == 'improving' %}var(--safe){% elif fitness_profile.economy.trend == 'declining' %}var(--danger){% else %}var(--text-muted){% endif %}">{{ '%+.3f' % fitness_profile.economy.rate_per_month }}/mo</span>{% endif %}</div>
             <canvas id="spark-fp-economy"></canvas>
           </div>
-          <div class="summary-card" style="min-width:0">
+          <div class="summary-card summary-card-shrink">
             <div class="card-label">Resilience</div>
-            <div class="card-value" style="font-size:18px;color:var(--purple)">{% if fitness_profile.resilience.current_value is not none %}{{ fitness_profile.resilience.current_value }} km{% else %}—{% endif %}</div>
+            <div class="card-value card-value-md" style="color:var(--purple)">{% if fitness_profile.resilience.current_value is not none %}{{ fitness_profile.resilience.current_value }} km{% else %}—{% endif %}</div>
             <div class="card-sub">drift onset{% if fitness_profile.resilience.trend == 'improving' %} · <span style="color:var(--safe)">improving</span>{% elif fitness_profile.resilience.trend == 'declining' %} · <span style="color:var(--danger)">declining</span>{% elif fitness_profile.resilience.trend == 'flat' %} · stable{% endif %}</div>
             <canvas id="spark-fp-resilience"></canvas>
           </div>
         </div>
       </div>
       {% else %}
-      <div style="font-size:11px;color:var(--text-dim)">Need more data for fitness profile.</div>
+      <div class="empty-row">Need more data for fitness profile.</div>
       {% endif %}
     </div>
 
     <!-- RIGHT: Objectives -->
-    <div style="background:rgba(96,165,250,0.03);border:1px solid rgba(96,165,250,0.08);border-radius:14px;padding:14px 14px 16px">
+    <div class="status-group status-group-z2">
       <div class="status-group-title">Objectives</div>
       {% if overview_objectives %}
-      <div style="display:flex;flex-direction:column;gap:6px">
+      <div class="stack-6">
         {% for i in range(0, overview_objectives|length, 2) %}
-        <div style="display:flex;gap:6px">
+        <div class="row-6">
           {% for obj in overview_objectives[i:i+2] %}
-          <div class="summary-card" style="min-width:0">
+          <div class="summary-card summary-card-shrink">
             <div class="card-label">{{ obj.label }}</div>
-            <div class="card-value" style="font-size:18px;color:{{ obj.color }}">{{ obj.value }}</div>
+            <div class="card-value card-value-md" style="color:{{ obj.color }}">{{ obj.value }}</div>
             <div class="card-sub">{{ obj.sub }}{% if obj.pct is not none %} · <span style="color:{{ obj.color }}">{{ obj.pct }}%</span>{% endif %}</div>
             {% if obj.history %}<canvas id="{{ obj.spark_id }}"></canvas>{% endif %}
           </div>
@@ -191,52 +197,52 @@
         {% endfor %}
       </div>
       {% else %}
-      <div style="font-size:11px;color:var(--text-dim)">Run <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit sync</code> to populate training data.</div>
+      <div class="empty-row">Run <code class="value-pill">fit sync</code> to populate training data.</div>
       {% endif %}
     </div>
   </div>
 
   <!-- Row B: Next Workouts (left) + Readiness (right) -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
+  <div class="grid-2col-tight" style="margin-top:8px">
     <!-- LEFT: Next Workouts -->
-    <div style="background:rgba(52,211,153,0.03);border:1px solid rgba(52,211,153,0.08);border-radius:14px;padding:14px 14px 16px">
+    <div class="status-group status-group-safe">
       <div class="status-group-title">Next Workouts</div>
       {% if next_workouts %}
-      <div style="display:flex;flex-direction:column;gap:6px">
+      <div class="stack-6">
         {% for w in next_workouts %}
         {% set zone_color = 'var(--z4)' if w.type == 'intervals' else 'var(--z3)' if w.type == 'tempo' else 'var(--z2)' %}
         {% set zone_bg = 'rgba(249,115,22,0.1)' if w.type == 'intervals' else 'rgba(233,179,8,0.1)' if w.type == 'tempo' else 'rgba(96,165,250,0.1)' %}
         {% set zone_label = 'Z4' if w.type == 'intervals' else 'Z3' if w.type == 'tempo' else 'Z2' %}
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:10px">
-          <div style="width:34px;height:34px;border-radius:8px;background:{{ zone_bg }};display:flex;align-items:center;justify-content:center;flex-shrink:0">
-            <span style="font-size:12px;font-family:var(--mono);font-weight:700;color:{{ zone_color }}">{{ zone_label }}</span>
+        <div class="workout-row">
+          <div class="workout-zone-chip" style="background:{{ zone_bg }}">
+            <span style="color:{{ zone_color }}">{{ zone_label }}</span>
           </div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:11px;font-weight:700">{{ w.name }}</div>
-            <div style="font-size:9px;color:var(--text-muted)">{{ w.date_label }} · {{ w.distance_km }} km</div>
+          <div class="workout-body">
+            <div class="workout-name">{{ w.name }}</div>
+            <div class="workout-meta">{{ w.date_label }} · {{ w.distance_km }} km</div>
           </div>
-          <div style="font-size:9px;font-weight:700;color:{% if w.days == 0 %}var(--safe){% else %}var(--text-dim){% endif %};flex-shrink:0">
+          <div class="workout-eta" style="color:{% if w.days == 0 %}var(--safe){% else %}var(--text-dim){% endif %}">
             {% if w.days == 0 %}TODAY{% elif w.days == 1 %}tomorrow{% else %}{{ w.days }}d{% endif %}
           </div>
         </div>
         {% endfor %}
       </div>
       {% else %}
-      <div style="font-size:11px;color:var(--text-dim);padding:8px 0">No planned workouts. Import a plan with <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit plan import</code>.</div>
+      <div class="empty-row">No planned workouts. Import a plan with <code class="value-pill">fit plan import</code>.</div>
       {% endif %}
     </div>
 
     <!-- RIGHT: Readiness -->
-    <div style="background:rgba(251,191,36,0.03);border:1px solid rgba(251,191,36,0.08);border-radius:14px;padding:14px 14px 16px">
+    <div class="status-group status-group-caution">
       <div class="status-group-title">Readiness</div>
       {% if readiness_summary %}
-      <div style="display:flex;flex-direction:column;gap:6px">
+      <div class="stack-6">
         {% for i in range(0, readiness_summary|length, 2) %}
-        <div style="display:flex;gap:6px">
+        <div class="row-6">
           {% for rd in readiness_summary[i:i+2] %}
-          <div class="summary-card" style="min-width:0">
+          <div class="summary-card summary-card-shrink">
             <div class="card-label">{{ rd.label }}</div>
-            <div class="card-value" style="font-size:18px;color:{{ rd.color }}">{{ rd.value }}<span style="font-size:10px;font-weight:400;color:var(--text-dim)">{{ ' ' ~ rd.unit if rd.unit else '' }}</span></div>
+            <div class="card-value card-value-md" style="color:{{ rd.color }}">{{ rd.value }}<span class="card-value-suffix">{{ ' ' ~ rd.unit if rd.unit else '' }}</span></div>
             <div class="card-sub">{{ rd.sub }}{% if rd.status %} · <span style="color:{{ rd.color }}">{{ rd.status }}</span>{% endif %}</div>
             {% if rd.history %}<canvas id="{{ rd.spark_id }}"></canvas>{% endif %}
           </div>
@@ -245,7 +251,7 @@
         {% endfor %}
       </div>
       {% else %}
-      <div style="font-size:11px;color:var(--text-dim)">Need health data for readiness summary.</div>
+      <div class="empty-row">Need health data for readiness summary.</div>
       {% endif %}
     </div>
   </div>
@@ -339,10 +345,25 @@
   </div>
   {% endif %}
 
+  <!-- In-tab anchor nav: jump between chart sections without scrolling 10 screens -->
+  <nav class="anchor-nav" aria-label="Profile sections">
+    <a class="anchor-link" href="#prof-today">Today</a>
+    <a class="anchor-link" href="#prof-dimensions">Dimensions</a>
+    <a class="anchor-link" href="#prof-vo2max">VO2max</a>
+    <a class="anchor-link" href="#prof-aerobic">Aerobic</a>
+    <a class="anchor-link" href="#prof-drift">Drift</a>
+    <a class="anchor-link" href="#prof-pacecv">Pace CV</a>
+    <a class="anchor-link" href="#prof-zones">Zones</a>
+    <a class="anchor-link" href="#prof-weight">Weight</a>
+    <a class="anchor-link" href="#prof-cadence">Cadence</a>
+    <a class="anchor-link" href="#prof-effort-gap">Effort Gap</a>
+    <a class="anchor-link" href="#prof-prediction">Prediction</a>
+  </nav>
+
   <!-- 2. TODAY'S CAPABILITY -->
   {% if todays_capability %}
   {% set tc = todays_capability %}
-  <div class="sec"><h2>What You Can Run Today</h2><div class="line"></div></div>
+  <div id="prof-today" class="sec"><h2>What You Can Run Today</h2><div class="line"></div></div>
   <div class="cards" style="margin-bottom:16px">
     <div class="card" style="min-width:160px">
       <div class="card-label">Sustainable Pace</div>
@@ -367,7 +388,7 @@
 
   <!-- 3. FITNESS DIMENSIONS — Gap Analysis -->
   {% if fitness_gaps %}
-  <div class="sec"><h2>Fitness Dimensions</h2><div class="line"></div></div>
+  <div id="prof-dimensions" class="sec"><h2>Fitness Dimensions</h2><div class="line"></div></div>
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin:10px 0">
     {% for dim in fitness_gaps %}
     <div class="dim-row">
@@ -394,15 +415,15 @@
   {% endif %}
 
   <!-- 4. VO2max + VDOT Trend -->
-  <div class="sec"><h2>VO2max + VDOT Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.vo2max }}</div><div class="line"></div></div>
+  <div id="prof-vo2max" class="sec"><h2>VO2max + VDOT Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.vo2max }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-vo2" height="200"></canvas></div>
 
   <!-- 5. Efficiency Trend -->
-  <div class="sec"><h2>Aerobic Efficiency (Z2 speed/bpm)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.speed_per_bpm }}</div><div class="line"></div></div>
+  <div id="prof-aerobic" class="sec"><h2>Aerobic Efficiency (Z2 speed/bpm)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.speed_per_bpm }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-efficiency" height="180"></canvas></div>
 
   <!-- 6. Split Analysis — Cardiac Drift -->
-  <div class="sec"><h2>Split Analysis — Cardiac Drift</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.cardiac_drift }}</div><div class="line"></div></div>
+  <div id="prof-drift" class="sec"><h2>Split Analysis — Cardiac Drift</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.cardiac_drift }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-drift" height="200"></canvas></div>
   {% set drift_chart = charts | selectattr('id', 'equalto', 'chart-drift') | first %}
   {% if drift_chart and drift_chart.n_runs is defined %}
@@ -412,17 +433,17 @@
   <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">Drift onset = first km where HR exceeds first-half average + 5 bpm. Higher = better aerobic endurance. Green band = onset after km 15 (good base).</div>
 
   <!-- 7. Pace Consistency (CV%) -->
-  <div class="sec"><h2>Pace Consistency (CV%)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.pacecv }}</div><div class="line"></div></div>
+  <div id="prof-pacecv" class="sec"><h2>Pace Consistency (CV%)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.pacecv }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-pacecv" height="160"></canvas></div>
 
   <!-- 8. Zone Distribution -->
-  <div class="sec"><h2>Zone Distribution</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.zones }}</div><div class="line"></div></div>
+  <div id="prof-zones" class="sec"><h2>Zone Distribution</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.zones }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-zones" height="180"></canvas></div>
 
   <!-- 9. Weight + Body Composition -->
   {% if body_comp %}
   {% set bc = body_comp %}
-  <div class="sec"><h2>Weight + Body Composition</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.weight }}</div><div class="line"></div></div>
+  <div id="prof-weight" class="sec"><h2>Weight + Body Composition</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.weight }}</div><div class="line"></div></div>
   <div class="cards">
     <div class="card">
       <div class="card-label">Weight</div>
@@ -448,16 +469,16 @@
   {% endif %}
 
   <!-- 10. Cadence Trend -->
-  <div class="sec"><h2>Cadence Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.cadence }}</div><div class="line"></div></div>
+  <div id="prof-cadence" class="sec"><h2>Cadence Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.cadence }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-cadence" height="160"></canvas></div>
 
   <!-- 11. Effort Gap — Garmin TE vs RPE -->
-  <div class="sec"><h2>Effort Gap — Garmin TE vs RPE</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.effort_gap }}</div><div class="line"></div></div>
+  <div id="prof-effort-gap" class="sec"><h2>Effort Gap — Garmin TE vs RPE</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.effort_gap }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-effort-gap" height="160"></canvas></div>
   <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">When RPE exceeds TE, the run felt harder than Garmin thinks — possible fatigue accumulation.</div>
 
   <!-- 12. Marathon prediction trend — Daniels VDOT × Riegel race-based -->
-  <div class="sec"><h2>Marathon Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">VDOT-derived predictions over time (Daniels formula) plus Riegel projections from actual race results, scaled to your target distance. Y-axis is reverse-scaled — lower = faster.</div><div class="line"></div></div>
+  <div id="prof-prediction" class="sec"><h2>Marathon Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">VDOT-derived predictions over time (Daniels formula) plus Riegel projections from actual race results, scaled to your target distance. Y-axis is reverse-scaled — lower = faster.</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-marathon-pred" height="180"></canvas></div>
 
 </div>
@@ -779,11 +800,11 @@
     <div style="font-size:10px;color:var(--text-muted);margin-bottom:12px">Generated: {{ coaching.generated_at }}</div>
     {% endif %}
     {% for insight in coaching.insights %}
-    <details class="insight-box" style="background:{{ insight.bg }};border:1px solid {{ insight.border }}" {% if loop.first %}open{% endif %}>
-      <summary style="cursor:pointer;list-style:none">
-        <div style="font-size:14px;font-weight:700;color:{{ insight.color }};padding:2px 0">{{ insight.icon }} {{ insight.title }}</div>
+    <details class="insight-box insight-{{ insight.type or 'info' }}" {% if loop.first %}open{% endif %}>
+      <summary class="insight-summary">
+        <div class="insight-title insight-title-{{ insight.type or 'info' }}">{{ insight.icon }} {{ insight.title }}</div>
       </summary>
-      {% if insight.body %}<div class="insight-body" style="margin-top:6px">{{ insight.body }}</div>{% endif %}
+      {% if insight.body %}<div class="insight-body insight-body-collapsed">{{ insight.body }}</div>{% endif %}
     </details>
     {% endfor %}
   {% else %}
