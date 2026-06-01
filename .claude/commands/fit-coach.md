@@ -12,14 +12,26 @@ atomically.
 0. **Preflight — verify MCP availability.** Confirm the following tools exist
    in the current session: `check_dashboard_freshness`, `get_coaching_context`,
    `execute_sql_query`, `save_coaching_notes`. If any are missing, STOP and
-   tell the user:
+   tell the user this — then give the fix for their client. Do NOT proceed,
+   and do NOT work around it by reading the database directly (that bypasses
+   the validation and history-archive in `save_coaching_notes`).
 
-   > The fit MCP server is not connected to this Claude Code session.
-   > Fix: ensure `.mcp.json` exists at the project root and registers the
-   > `fit` server (`python mcp/server.py`). Restart the Claude Code session
-   > so the server is spawned. Do NOT try to work around this by reading
-   > the database directly — the persistence and validation live in the
-   > MCP server.
+   **Fix — register the MCP server, then restart the client:**
+
+   ```
+   fit mcp install        # sets up Claude Desktop + verifies Claude Code
+   fit mcp status         # confirm what's registered where
+   ```
+
+   - **Claude Code:** the committed `.mcp.json` registers it (`python
+     mcp/server.py`). If `fit mcp status` shows it missing, restore that
+     file. Restart the Claude Code session so the server is spawned.
+   - **Claude Desktop:** `fit mcp install` merges the server into
+     `claude_desktop_config.json` using the current interpreter. Fully quit
+     and relaunch Claude Desktop afterward.
+   - **claude.ai (web):** cannot reach a local stdio server at all — this
+     skill only runs in Claude Code or Claude Desktop. Tell the user to
+     switch clients; there is no web workaround.
 
    Do not proceed to step 1 until all four tools are available.
 

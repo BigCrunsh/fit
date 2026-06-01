@@ -195,6 +195,93 @@ def auth_status():
         raise SystemExit(1)
 
 
+@main.group(invoke_without_command=True)
+@click.pass_context
+def mcp(ctx):
+    """Register the fit MCP server with local Claude clients."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(mcp_status)
+
+
+@mcp.command("install")
+@click.option("--client", type=click.Choice(["desktop", "claude-code", "all"]),
+              default="all", help="Which client to set up (default: all).")
+def mcp_install(client: str):
+    """Register the fit MCP server so /fit-coach and friends can reach it.
+
+    Desktop gets an idempotent JSON merge into its app-support config using
+    the current Python interpreter. Claude Code is already wired via the
+    committed .mcp.json — this just verifies it.
+    """
+    from fit import mcp_install as mi
+
+    if client in ("desktop", "all"):
+        try:
+            res = mi.install_desktop()
+        except ValueError as e:
+            console.print(f"[bold red]Claude Desktop config error:[/bold red] {e}")
+            console.print("Fix or remove the malformed file, then re-run.")
+            raise SystemExit(1)
+        verb = {"installed": "Registered", "updated": "Updated",
+                "unchanged": "Already current"}[res["action"]]
+        console.print(f"[green]✓[/green] Claude Desktop: {verb} fit server in {res['path']}")
+        console.print(f"    command: {res['entry']['command']}")
+        console.print(f"    script:  {res['entry']['args'][0]}")
+        if res["action"] != "unchanged":
+            console.print("    [yellow]Fully quit and relaunch Claude Desktop[/yellow] to spawn the server.")
+
+    if client in ("claude-code", "all"):
+        v = mi.verify_claude_code()
+        if v["ok"]:
+            console.print(f"[green]✓[/green] Claude Code: fit server present in {v['path']}")
+        else:
+            reasons = {"missing": ".mcp.json not found at repo root",
+                       "invalid_json": ".mcp.json is malformed",
+                       "no_fit_entry": ".mcp.json has no 'fit' server entry"}
+            console.print(f"[yellow]⚠[/yellow] Claude Code: {reasons[v['reason']]} ({v['path']})")
+            console.print("    Restore the committed .mcp.json (relative: python mcp/server.py).")
+
+    console.print("\n[dim]claude.ai (web) can't reach a local stdio server — use Claude Code or Desktop.[/dim]")
+
+
+@mcp.command("status")
+def mcp_status():
+    """Show where the fit MCP server is registered."""
+    from fit import mcp_install as mi
+
+    dt = mi.desktop_config_path()
+    desktop = mi.load_json(dt) if dt.exists() else {}
+    desktop_entry = desktop.get("mcpServers", {}).get(mi.SERVER_NAME)
+    if desktop_entry:
+        console.print(f"[green]✓[/green] Claude Desktop: registered ({dt})")
+        console.print(f"    {desktop_entry['command']} {desktop_entry['args'][0]}")
+    else:
+        console.print(f"[yellow]✗[/yellow] Claude Desktop: not registered ({dt})")
+        console.print("    Run [bold]fit mcp install --client desktop[/bold].")
+
+    v = mi.verify_claude_code()
+    if v["ok"]:
+        console.print(f"[green]✓[/green] Claude Code: registered ({v['path']})")
+    else:
+        console.print(f"[yellow]✗[/yellow] Claude Code: not registered ({v['path']})")
+
+
+@mcp.command("uninstall")
+@click.option("--client", type=click.Choice(["desktop"]), default="desktop",
+              help="Which client to remove from (only Desktop is editable; "
+                   "Claude Code's .mcp.json is committed).")
+def mcp_uninstall(client: str):
+    """Remove the fit MCP server from Claude Desktop's config."""
+    from fit import mcp_install as mi
+
+    res = mi.uninstall_desktop()
+    if res["action"] == "removed":
+        console.print(f"[green]✓[/green] Removed fit server from {res['path']}")
+        console.print("    [yellow]Relaunch Claude Desktop[/yellow] to drop the server.")
+    else:
+        console.print(f"[dim]fit server was not registered in {res['path']}[/dim]")
+
+
 @main.command("splits")
 @click.option("--backfill", is_flag=True, help="Process all running activities missing splits.")
 @click.option("--activity-id", default=None, help="Process a single activity by ID.")

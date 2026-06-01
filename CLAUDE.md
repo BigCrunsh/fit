@@ -7,7 +7,7 @@ Personal fitness data platform. SQLite database, Python CLI, MCP server, HTML da
 ```bash
 pip install -e .                      # install
 pip install -e '.[analysis]'          # install with fitparse for .fit file analysis
-pytest tests/ -v                      # run tests (770 tests, in-memory SQLite)
+pytest tests/ -v                      # run tests (896 tests, in-memory SQLite)
 pytest tests/ -v --tb=short           # compact output
 fit sync --days 7                     # daily: pull Garmin + enrich + weather + aggregate
 fit sync --full && fit recompute      # init: pull all history + re-enrich
@@ -16,6 +16,7 @@ fit backfill rpe                      # one-shot: import directWorkoutRpe/Feel/C
 fit report                            # generate dashboard → ~/.fit/reports/dashboard.html
 fit status                            # quick overview: countdown, phase, ACWR, last 7 days
 fit doctor                            # validate pipeline health
+fit mcp install                       # register MCP server with Claude Desktop / Code (needed for /fit-coach)
 ```
 
 ## Design Decisions That Prevent Mistakes
