@@ -1452,6 +1452,66 @@ def calibrate(metric: str):
         conn.close()
 
 
+@main.command("calibrate-history")
+@click.argument("metric",
+                type=click.Choice(["lthr", "max_hr", "aet", "vo2max", "weight"]))
+def calibrate_history(metric: str):
+    """Show calibration history for a metric (every recorded reading).
+
+    Each row: date · value · method · confidence · flags. The active row
+    (currently driving zone derivation) is highlighted.
+    """
+    from rich.table import Table
+    from fit.calibration import get_calibration_history, get_active_calibration
+
+    conn = _conn()
+    try:
+        rows = get_calibration_history(conn, metric)
+        if not rows:
+            console.print(f"[yellow]No calibration history for {metric}.[/yellow]")
+            console.print(f"Run [bold]fit calibrate {metric}[/bold] (manual) or "
+                          "wait for sync to auto-extract.")
+            return
+
+        active = get_active_calibration(conn, metric)
+        active_id = active["id"] if active else None
+
+        # Sparkline of values over time
+        values = [r["value"] for r in rows]
+        if len(values) >= 2:
+            vmin, vmax = min(values), max(values)
+            span = (vmax - vmin) or 1
+            bars = "▁▂▃▄▅▆▇█"
+            sparkline = "".join(bars[int((v - vmin) / span * (len(bars) - 1))] for v in values)
+            console.print(f"\n[bold]{metric}[/bold] {sparkline}  "
+                          f"[dim]{vmin:.1f} → {vmax:.1f}, {len(rows)} readings[/dim]")
+
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Date")
+        table.add_column("Value", justify="right")
+        table.add_column("Method")
+        table.add_column("Conf")
+        table.add_column("Flags")
+        table.add_column("")  # active marker column
+
+        conf_color = {"high": "green", "medium": "yellow", "low": "red"}
+        for r in rows:
+            conf = r["confidence"] or "medium"
+            flags = ", ".join(r["flags"]) if r["flags"] else ""
+            is_active = "★" if r["id"] == active_id else ""
+            table.add_row(
+                r["date"],
+                f"{r['value']:.1f}",
+                r["method"] or "—",
+                f"[{conf_color.get(conf, 'white')}]{conf}[/]",
+                flags,
+                f"[bold cyan]{is_active}[/]",
+            )
+        console.print(table)
+    finally:
+        conn.close()
+
+
 @main.command()
 def status():
     """Quick overview — what you need to know right now."""

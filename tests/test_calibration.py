@@ -5,9 +5,12 @@ from datetime import date, timedelta
 
 from fit.calibration import (
     add_calibration,
+    derive_confidence,
+    derive_flags,
     extract_lthr_from_race,
     extract_max_hr_from_activity,
     get_active_calibration,
+    get_calibration_history,
     get_calibration_status,
     is_stale,
 )
@@ -435,3 +438,159 @@ class TestMaxHRExtraction:
             "type": "running", "run_type": "race", "distance_km": 9.99, "avg_hr": 178,
         })
         assert lthr is None
+
+
+# ════════════════════════════════════════════════════════════════
+# Flag taxonomy + confidence rubric (calibration-history change)
+# ════════════════════════════════════════════════════════════════
+
+
+class TestDeriveFlags:
+    def test_implausible_max_hr(self):
+        # 220 > 215 upper envelope
+        flags = derive_flags("max_hr", 220, "race_extract", None)
+        assert "implausible_value" in flags
+
+    def test_implausible_lthr(self):
+        # 120 < 130 lower envelope
+        flags = derive_flags("lthr", 120, "race_extract", None)
+        assert "implausible_value" in flags
+
+    def test_plausible_no_flag(self):
+        flags = derive_flags("max_hr", 195, "race_extract", None)
+        assert flags == []
+
+    def test_agrees_with_prior_within_tolerance(self):
+        prior = {"value": 172, "date": (date.today() - timedelta(days=30)).isoformat()}
+        flags = derive_flags("lthr", 171, "race_extract", prior)
+        assert "agrees_with_prior" in flags
+
+    def test_outside_tolerance_no_agreement(self):
+        prior = {"value": 172, "date": (date.today() - timedelta(days=30)).isoformat()}
+        flags = derive_flags("lthr", 180, "race_extract", prior)
+        assert "agrees_with_prior" not in flags
+
+    def test_unexpected_drop_within_12_weeks(self):
+        # max_hr: drop >2 in <12 weeks
+        prior = {"value": 195, "date": (date.today() - timedelta(days=30)).isoformat()}
+        flags = derive_flags("max_hr", 188, "race_extract", prior)
+        assert "unexpected_direction" in flags
+
+    def test_old_drop_not_flagged(self):
+        # Same drop but >12 weeks → real age-related decline, not anomaly
+        prior = {"value": 195, "date": (date.today() - timedelta(days=200)).isoformat()}
+        flags = derive_flags("max_hr", 188, "race_extract", prior)
+        assert "unexpected_direction" not in flags
+
+    def test_new_peak_max_hr_upward(self):
+        prior = {"value": 192, "date": (date.today() - timedelta(days=200)).isoformat()}
+        flags = derive_flags("max_hr", 200, "race_extract", prior)
+        assert "new_peak" in flags
+
+    def test_no_new_peak_for_activity_max(self):
+        """activity_max (non-race) doesn't get new_peak — too weak a context."""
+        prior = {"value": 192, "date": (date.today() - timedelta(days=200)).isoformat()}
+        flags = derive_flags("max_hr", 200, "activity_max", prior)
+        assert "new_peak" not in flags
+        assert "weak_context" in flags
+
+    def test_weak_context_on_activity_max(self):
+        flags = derive_flags("max_hr", 195, "activity_max", None)
+        assert "weak_context" in flags
+
+
+class TestDeriveConfidence:
+    def test_manual_is_high(self):
+        assert derive_confidence("manual", []) == "high"
+
+    def test_implausible_demotes_to_low(self):
+        assert derive_confidence("manual", ["implausible_value"]) == "low"
+
+    def test_weak_context_is_low(self):
+        assert derive_confidence("activity_max", ["weak_context"]) == "low"
+
+    def test_unexpected_direction_is_low(self):
+        assert derive_confidence("race_extract", ["unexpected_direction"]) == "low"
+
+    def test_agreement_is_high(self):
+        assert derive_confidence("race_extract", ["agrees_with_prior"]) == "high"
+
+    def test_new_peak_is_high(self):
+        assert derive_confidence("race_extract", ["new_peak"]) == "high"
+
+    def test_default_race_extract_is_medium(self):
+        assert derive_confidence("race_extract", []) == "medium"
+
+    def test_blocker_beats_agreement(self):
+        """An implausible reading can't be rescued by also agreeing."""
+        assert derive_confidence("race_extract", ["agrees_with_prior", "implausible_value"]) == "low"
+
+
+class TestGetActiveCalibrationConfidenceAware:
+    """get_active_calibration should prefer higher confidence over newer date."""
+
+    def test_high_beats_newer_low(self, db):
+        # Insert older high, newer low — high should win
+        db.execute(
+            "INSERT INTO calibration (metric, value, method, confidence, date, active) "
+            "VALUES ('max_hr', 192, 'manual', 'high', date('now', '-60 days'), 0)"
+        )
+        db.execute(
+            "INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
+            "VALUES ('max_hr', 220, 'race_extract', 'low', date('now', '-10 days'), 1, '[\"implausible_value\"]')"
+        )
+        db.commit()
+        active = get_active_calibration(db, "max_hr")
+        assert active["value"] == 192
+
+    def test_newer_wins_within_same_confidence(self, db):
+        db.execute(
+            "INSERT INTO calibration (metric, value, method, confidence, date, active) "
+            "VALUES ('max_hr', 192, 'manual', 'high', date('now', '-60 days'), 0)"
+        )
+        db.execute(
+            "INSERT INTO calibration (metric, value, method, confidence, date, active) "
+            "VALUES ('max_hr', 195, 'manual', 'high', date('now', '-10 days'), 1)"
+        )
+        db.commit()
+        active = get_active_calibration(db, "max_hr")
+        assert active["value"] == 195
+
+    def test_stale_high_loses_to_fresh_medium(self, db):
+        """When the high-conf row is past staleness, the fresh medium wins."""
+        # lthr staleness threshold is 56 days
+        db.execute(
+            "INSERT INTO calibration (metric, value, method, confidence, date, active) "
+            "VALUES ('lthr', 172, 'manual', 'high', date('now', '-200 days'), 0)"
+        )
+        db.execute(
+            "INSERT INTO calibration (metric, value, method, confidence, date, active) "
+            "VALUES ('lthr', 175, 'race_extract', 'medium', date('now', '-10 days'), 1)"
+        )
+        db.commit()
+        active = get_active_calibration(db, "lthr")
+        # Only fresh row was in pool
+        assert active["value"] == 175
+
+
+class TestGetCalibrationHistory:
+    def test_returns_oldest_first(self, db):
+        db.execute(
+            "INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
+            "VALUES ('max_hr', 192, 'manual', 'high', '2025-10-19', 0, '[]')"
+        )
+        db.execute(
+            "INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
+            "VALUES ('max_hr', 195, 'race_extract', 'high', '2026-04-15', 1, '[\"new_peak\"]')"
+        )
+        db.commit()
+        rows = get_calibration_history(db, "max_hr")
+        assert len(rows) == 2
+        assert rows[0]["date"] == "2025-10-19"
+        assert rows[1]["date"] == "2026-04-15"
+        # flags parsed as a list
+        assert rows[0]["flags"] == []
+        assert rows[1]["flags"] == ["new_peak"]
+
+    def test_empty_when_metric_unseen(self, db):
+        assert get_calibration_history(db, "aet") == []

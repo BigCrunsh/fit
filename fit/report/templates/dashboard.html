@@ -411,6 +411,7 @@
     <a class="anchor-link" href="#prof-today">Today</a>
     <a class="anchor-link" href="#prof-dimensions">Dimensions</a>
     <a class="anchor-link" href="#prof-pace-zones">Pace Zones</a>
+    <a class="anchor-link" href="#prof-cal-history">Calibrations</a>
     <a class="anchor-link" href="#prof-vo2max">VO2max</a>
     <a class="anchor-link" href="#prof-aerobic">Aerobic</a>
     <a class="anchor-link" href="#prof-drift">Drift</a>
@@ -494,6 +495,30 @@
     <div class="empty-row">{{ pace_zones.missing }}</div>
     {% endif %}
   </div>
+  {% endif %}
+
+  <!-- 3c. Calibration History — audit trail per metric -->
+  {% if calibration_history %}
+  <div id="prof-cal-history" class="sec"><h2>Calibration History</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">Every recorded calibration reading per metric. Filled dot = high confidence (two corroborating readings or manual entry). Hollow dot = medium (single hard-effort reading). Red ring = low confidence (implausible, spike, or stale). The active row drives current zone derivation.</div><div class="line"></div></div>
+  {% for m in calibration_history %}
+  <div class="cal-history-metric">
+    <div class="cal-history-metric-title">{{ m.label }}</div>
+    {% if m.missing %}
+    <div class="cal-history-empty">No readings yet. Use <code class="value-pill">fit calibrate {{ m.metric }} &lt;value&gt;</code> or wait for sync to auto-extract.</div>
+    {% else %}
+    {% for r in m.rows | reverse %}
+    <div class="cal-history-row{% if r.is_active %} is-active{% endif %}">
+      <span class="cal-history-dot conf-{{ r.confidence }}" title="{{ r.confidence }} confidence"></span>
+      <span class="cal-history-date">{{ r.date }}</span>
+      <span class="cal-history-value">{{ r.value | round(1) }}</span>
+      <span class="cal-history-method">{{ r.method }}</span>
+      <span class="cal-history-flags">{% if r.flags %}{{ r.flags | join(', ') }}{% if r.stale %} · stale{% endif %}{% elif r.stale %}stale ({{ r.days_ago }}d){% endif %}</span>
+      {% if r.is_active %}<span class="cal-history-active-marker">active</span>{% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
+  </div>
+  {% endfor %}
   {% endif %}
 
   <!-- 4. VO2max + VDOT Trend -->

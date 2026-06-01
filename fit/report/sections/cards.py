@@ -299,6 +299,81 @@ def _run_timeline(conn):
 
 
 
+def _calibration_history(conn):
+    """Per-metric calibration history for the Profile tab.
+
+    Returns a list of {metric, label, rows} dicts. Each row carries
+    value, date, days_ago, method, confidence, flags, source_activity_id,
+    plus a UI-only `is_active` boolean (the row currently driving zone
+    derivation per get_active_calibration's confidence-aware rule).
+
+    The dashboard renders each metric as a small table with confidence
+    indicators (solid dot=high, hollow=medium, red ring=low) and a
+    staleness flag.
+    """
+    from fit.calibration import (
+        STALENESS_THRESHOLDS,
+        get_active_calibration,
+        get_calibration_history,
+    )
+
+    metric_labels = {
+        "lthr": "LTHR (Lactate Threshold)",
+        "max_hr": "MaxHR (Peak HR)",
+        "aet": "AeT (Aerobic Threshold)",
+        "vo2max": "VO2max",
+        "weight": "Weight",
+    }
+
+    today = date.today()
+    out = []
+    for metric, label in metric_labels.items():
+        history = get_calibration_history(conn, metric)
+        if not history:
+            # Show the metric as a "no data" entry — surfaces the gap.
+            out.append({
+                "metric": metric, "label": label,
+                "rows": [],
+                "missing": True,
+            })
+            continue
+
+        active = get_active_calibration(conn, metric)
+        active_id = active["id"] if active else None
+        threshold_days = STALENESS_THRESHOLDS.get(metric)
+        threshold_days = threshold_days.days if threshold_days else None
+
+        rendered = []
+        for r in history:
+            try:
+                row_date = date.fromisoformat(r["date"])
+                days_ago = (today - row_date).days
+            except (ValueError, TypeError):
+                days_ago = None
+            stale = (threshold_days is not None and days_ago is not None
+                     and days_ago > threshold_days)
+            rendered.append({
+                "value": r["value"],
+                "date": r["date"],
+                "days_ago": days_ago,
+                "method": r["method"],
+                "confidence": r["confidence"] or "medium",
+                "flags": r.get("flags") or [],
+                "source_activity_id": r.get("source_activity_id"),
+                "notes": r.get("notes"),
+                "is_active": r["id"] == active_id,
+                "stale": stale,
+            })
+
+        out.append({
+            "metric": metric, "label": label,
+            "rows": rendered,
+            "missing": False,
+            "threshold_days": threshold_days,
+        })
+    return out
+
+
 def _attention_items(conn):
     """Aggregate pending user actions for the Overview tab's Attention panel.
 

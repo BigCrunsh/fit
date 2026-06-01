@@ -89,7 +89,7 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
         #       with the new value (F3).
         # extract_max_hr_from_activity only consults raw fields (type, max_hr)
         # so it works fine on unenriched activity dicts.
-        from fit.calibration import add_calibration
+        from fit.calibration import add_calibration, derive_flags, derive_confidence
         for a in activities:
             candidate_max = extract_max_hr_from_activity(a, max_hr)
             if not candidate_max:
@@ -100,14 +100,22 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
                 logger.debug("Skipping max_hr extract for activity %s: missing/bad date %r",
                              a.get("id"), a.get("date"))
                 continue
+            # Race max counts as a hard-effort context (medium); other
+            # running activities get `activity_max` method which derive_flags
+            # marks as `weak_context` → low confidence.
+            method = "race_extract" if a.get("run_type") == "race" else "activity_max"
+            prior_cal = max_hr_cal  # may be None on first run
+            flags = derive_flags("max_hr", candidate_max, method, prior_cal)
+            confidence = derive_confidence(method, flags)
             add_calibration(
-                conn, "max_hr", candidate_max, "activity_max", "medium",
+                conn, "max_hr", candidate_max, method, confidence,
                 cal_date,
                 source_activity_id=a.get("id"),
                 notes=f"Auto-extracted from {a.get('name')} ({a.get('distance_km', '?')}km)",
+                flags=flags,
             )
-            logger.info("max_hr auto-raised to %s bpm from %s",
-                        int(candidate_max), a.get("name"))
+            logger.info("max_hr auto-raised to %s bpm from %s (confidence=%s)",
+                        int(candidate_max), a.get("name"), confidence)
             max_hr = int(candidate_max)
 
         # 3b. Pass 2 — enrich new activities using the (possibly-raised) max_hr.
