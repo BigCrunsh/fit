@@ -302,13 +302,27 @@ details.insight-box .insight-title { font-size:14px; padding:2px 0; }
 /* Race anchor card */
 .race-countdown-card { background:rgba(129,140,248,0.05); border:1px solid rgba(129,140,248,0.15); border-radius:14px; padding:18px 22px; margin:14px 0; }
 .race-hero-row { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
-.race-hero-stats { display:flex; align-items:flex-end; gap:20px; }
+.race-hero-stats { display:flex; align-items:flex-end; gap:20px; flex-wrap:wrap; }
 .race-hero-stat { text-align:center; }
 .race-hero-name { font-size:15px; font-weight:700; color:var(--accent-bright); text-transform:uppercase; letter-spacing:0.06em; }
 .race-hero-subtitle { font-size:11px; color:var(--text-muted); margin-top:2px; }
 .race-hero-divider { margin-top:16px; padding-top:14px; border-top:1px solid rgba(129,140,248,0.08); }
 .stat-value-lg { font-size:22px; font-weight:700; font-family:var(--mono); line-height:1.1; }
 .stat-value-lg-suffix { font-size:11px; font-weight:400; margin-left:1px; }
+
+/* Race countdown — narrow viewport: stack stats, shrink type, tighten padding */
+@media (max-width:640px) {
+  .race-countdown-card { padding:14px 14px; }
+  .race-hero-row { flex-direction:column; align-items:flex-start; gap:14px; }
+  .race-hero-stats { gap:14px; width:100%; justify-content:space-between; }
+  .stat-value-lg { font-size:18px; }
+  .race-hero-name { font-size:13px; }
+}
+@media (max-width:420px) {
+  .race-hero-stats { gap:10px; }
+  .stat-value-lg { font-size:16px; }
+  .race-hero-stat .card-label { font-size:9px; }
+}
 
 /* Compact uppercase kicker label (smaller variant of .card-label) */
 .kicker { font-size:9px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.08em; font-weight:700; }
@@ -418,6 +432,21 @@ details.insight-box .insight-title { font-size:14px; padding:2px 0; }
 .vdot-compare-label { font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; font-size:10px; }
 .vdot-compare-race .vdot-compare-label { color:var(--accent); }
 .vdot-compare-garmin .vdot-compare-label { color:var(--text-dim); }
+.vdot-compare-peak .vdot-compare-label { color:var(--text-dim); }
+.vdot-compare-peak .vdot-compare-value { color:var(--text-muted); font-size:13px; }
+.vdot-compare-peak { opacity:0.75; }
+.vdot-compare-meta strong { color:var(--text); font-weight:600; }
+
+/* Coach's Take — stale narrative dim + "see all" link */
+.insight-box.insight-stale { opacity:0.65; }
+.insight-stale-note { margin-top:8px; padding-top:8px;
+  border-top:1px dashed rgba(255,255,255,0.08); font-size:10px;
+  color:var(--text-dim); font-style:italic; }
+.insight-stale-note code { background:rgba(255,255,255,0.06); padding:1px 5px;
+  border-radius:3px; font-size:9.5px; }
+.see-all-link { float:right; font-size:11px; color:var(--accent);
+  text-decoration:none; margin-top:2px; }
+.see-all-link:hover { text-decoration:underline; }
 .vdot-compare-value { font-family:var(--mono); font-size:16px; font-weight:700; color:var(--text); }
 .vdot-compare-meta { color:var(--text-muted); font-size:10px; }
 .vdot-compare-arrow { color:var(--text-dim); font-size:10px; }
