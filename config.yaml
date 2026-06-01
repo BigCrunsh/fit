@@ -5,7 +5,7 @@ profile:
   age: "${FIT_USER_AGE}"
   max_hr: "${FIT_USER_MAX_HR}"
   lthr: "${FIT_USER_LTHR:-}"           # Lactate threshold HR (optional). If set, zones use LTHR model instead of max HR.
-  zone_model: "${FIT_ZONE_MODEL:-max_hr}"  # "max_hr" (default) or "lthr" (Friel model)
+  zone_model: "${FIT_ZONE_MODEL:-lthr}"   # "lthr" (Friel, default — anchors zones to calibrated LTHR) or "max_hr" (textbook %MaxHR). Unset = fall through AeT → LTHR → %MaxHR.
   zones_max_hr:  # Standard 5-zone model (% of max HR) — used when zone_model=max_hr
     z1: [0, 115]       # Recovery:   < 60%
     z2: [115, 134]     # Easy:       60-70%

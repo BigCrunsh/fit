@@ -55,9 +55,20 @@ def compute_hr_zones(avg_hr: int | None, config: dict,
         zones_lthr_pct = config["profile"].get("zones_lthr", {})
         zone_lthr = _classify_zone_lthr(avg_hr, lthr, zones_lthr_pct)
 
-    # Primary zone = preferred model
-    preferred = config["profile"].get("zone_model", "max_hr")
-    primary = zone_lthr if (preferred == "lthr" and zone_lthr) else zone_maxhr
+    # Primary zone selection.
+    # An explicit zone_model in config wins; otherwise fall through:
+    #   AeT (reserved, not yet implemented) → LTHR (Friel) → %MaxHR.
+    # The fallthrough means a user who has LTHR calibrated automatically gets
+    # the Friel %LTHR model — much more appropriate for trained runners than
+    # the textbook 70%-MaxHR Z2 ceiling.
+    preferred = config["profile"].get("zone_model")
+    if preferred == "lthr":
+        primary = zone_lthr if zone_lthr else zone_maxhr
+    elif preferred == "max_hr":
+        primary = zone_maxhr
+    else:
+        # Unset → use the most appropriate available model
+        primary = zone_lthr if zone_lthr else zone_maxhr
 
     return {
         "hr_zone_maxhr": zone_maxhr,

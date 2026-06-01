@@ -37,17 +37,22 @@ fit doctor                            # validate pipeline health
 
 ## Zone Model
 
-5-zone, % of max HR. Z2 ceiling at 134 bpm (not 150):
+5-zone. **Default: Friel %LTHR** (anchored to calibrated LTHR), with fall-through to %MaxHR when LTHR is missing. The textbook 70%-MaxHR Z2 ceiling (= 134 at MaxHR=192) is too strict for trained runners with high LTHR/MaxHR ratio; %LTHR with LTHR=172 gives a Z2 ceiling of 153, which matches actual upper-aerobic effort.
 
 ```
-Z1: <60%  (<115)   Recovery
-Z2: 60-70% (115-134) Easy     ← real easy ceiling
-Z3: 70-80% (134-154) Moderate
-Z4: 80-90% (154-173) Hard
-Z5: 90-100% (173-192) Very Hard
+                 %LTHR (primary)     %MaxHR (diagnostic)
+Z1 Recovery      <85% (<146)         <60% (<117)
+Z2 Easy          85-89% (146-153)    60-70% (117-136)
+Z3 Tempo         90-94% (154-161)    70-80% (137-156)
+Z4 Threshold     95-99% (163-170)    80-90% (156-175)
+Z5 VO2max        ≥100% (≥172)        ≥90% (≥176)
 ```
 
-Zone boundaries must come from config, never from memory or common defaults.
+(Numbers above are for LTHR=172, MaxHR=195 — the active calibrations as of 2026-06-01.)
+
+Zone boundaries must come from config (`zones_lthr` for the primary model, `zones_max_hr_pct` for the diagnostic), never from memory or common defaults. AeT-anchored Z2 ceiling is planned (`aet-anchored-zones` change) — when AeT lands, Z2 ceiling refines to AeT directly; everything Z3 and above stays LTHR-anchored.
+
+Override the default via `profile.zone_model: max_hr` in `config.local.yaml` if you want the strict textbook model.
 
 ## Dashboard & Visualization
 

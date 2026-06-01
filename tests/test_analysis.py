@@ -63,6 +63,30 @@ class TestHRZones:
         zones = compute_hr_zones(160, config, lthr=172)
         assert zones["hr_zone"] == zones["hr_zone_lthr"]
 
+    def test_zone_model_unset_falls_through_to_lthr(self, config):
+        """When zone_model is absent and LTHR cal exists, primary should fall
+        through to %LTHR — the Friel model is preferred over textbook %MaxHR
+        for trained runners."""
+        config["profile"].pop("zone_model", None)
+        zones = compute_hr_zones(150, config, lthr=172)
+        assert zones["hr_zone"] == zones["hr_zone_lthr"]
+
+    def test_zone_model_unset_falls_through_to_maxhr_when_no_lthr(self, config):
+        """When zone_model is absent and no LTHR — last resort is %MaxHR."""
+        config["profile"].pop("zone_model", None)
+        zones = compute_hr_zones(150, config, lthr=None)
+        assert zones["hr_zone"] == zones["hr_zone_maxhr"]
+
+    def test_explicit_max_hr_override_beats_fallback(self, config):
+        """Explicit zone_model=max_hr should win even when LTHR is calibrated —
+        a power user can opt back into the strict textbook model."""
+        config["profile"]["zone_model"] = "max_hr"
+        zones = compute_hr_zones(150, config, lthr=172)
+        # 150 bpm at LTHR=172 = ~87% LTHR → Friel Z2; at MaxHR=192 = ~78% → Z3
+        # The override should pick the %MaxHR classification.
+        assert zones["hr_zone"] == zones["hr_zone_maxhr"]
+        assert zones["hr_zone_maxhr"] == "Z3"
+
     def test_effort_class_set_on_zones(self, config):
         zones = compute_hr_zones(140, config)
         assert zones["effort_class"] is not None
