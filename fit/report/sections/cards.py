@@ -377,70 +377,80 @@ def _calibration_history(conn):
 def _attention_items(conn):
     """Aggregate pending user actions for the Overview tab's Attention panel.
 
-    Pulls from existing sources of truth:
-      - data_health.check_data_sources()  → stale Garmin streams / weight / SpO2
-      - calibration.get_calibration_status() → stale LTHR / max_hr / AeT
-      - coaching.json `report_date` → coaching review age
+    Each item carries four user-visible fields:
 
-    Returns a list of dicts with: severity (critical/warning/info), message
-    (imperative voice), command (optional bash to copy), tooltip (optional
-    "why" text), tag (stable id for dedup). Sorted by severity asc.
+      message  — short headline (imperative voice, what's wrong)
+      command  — one copy-pasteable shell line (the most likely fix)
+      detail   — context / alternative actions (rendered as a caption)
+      source   — where the info came from (small, helps the user reason
+                 about whether the prompt is genuinely actionable)
 
-    Empty list when there's nothing pending — the panel hides entirely (no
-    celebration card; absence is the signal).
+    Items dedupe by tag and sort critical → warning → info; the panel
+    hides entirely when the list is empty.
     """
     from fit.data_health import check_data_sources
     from fit.calibration import get_calibration_status
 
     items: list[dict] = []
-    seen_tags: set[str] = set()  # dedupe: same fact surfaced by multiple sources
+    seen_tags: set[str] = set()
 
-    def _add(severity, message, *, tag, command=None, tooltip=None):
+    def _add(severity, message, *, tag, command=None, detail=None, source=None):
         if tag in seen_tags:
             return
         seen_tags.add(tag)
         items.append({"severity": severity, "message": message, "tag": tag,
-                      "command": command, "tooltip": tooltip})
+                      "command": command, "detail": detail, "source": source})
 
-    # Calibration staleness — first, so generic data_health doesn't duplicate.
+    # Calibration staleness — first, so data_health doesn't duplicate.
     for c in get_calibration_status(conn):
         if c["missing"] and c["metric"] == "lthr":
             _add("warning",
                  "Calibrate LTHR — anchors your training zones.",
                  tag="cal_missing_lthr",
-                 command="fit calibrate lthr <value>")
+                 command="fit calibrate lthr",
+                 detail="Or wait for a 10K+ race; sync auto-extracts from the race result.",
+                 source="No row in the calibration table for metric=lthr.")
         elif c["stale"] and not c["missing"]:
             days = (date.today() - date.fromisoformat(c["date"])).days if c.get("date") else None
             sev = "warning" if c["metric"] in ("lthr", "max_hr") else "info"
             _add(sev,
-                 f"{c['metric'].upper()} last calibrated {days}d ago — "
-                 f"{c.get('retest_prompt') or 'consider re-testing'}",
-                 tag=f"cal_stale_{c['metric']}")
+                 f"{c['metric'].upper()} last calibrated {days}d ago",
+                 tag=f"cal_stale_{c['metric']}",
+                 command=f"fit calibrate {c['metric']}",
+                 detail=c.get("retest_prompt"),
+                 source=f"calibration row dated {c['date']} · staleness threshold {c.get('threshold_days')}d.")
 
     # Data freshness — Garmin streams, SpO2, weight, checkins.
     for src in check_data_sources(conn):
         if src["status"] == "missing":
             _add("info",
-                 src.get("instruction") or f"Enable {src['source']}",
-                 tag=f"missing_{src['source']}")
+                 f"{src['source'].replace('_', ' ').title()} not flowing",
+                 tag=f"missing_{src['source']}",
+                 detail=src.get("instruction") or f"Enable {src['source']}",
+                 source=f"data_health: 0 readings for {src['source']} in the last 14 days.")
         elif src["status"] == "stale":
             days = src.get("days_ago")
             if src["source"] == "checkins" and days and days >= 3:
                 _add("info",
-                     f"No checkin for {days} days — log sleep/hydration via `fit checkin`",
+                     f"No checkin for {days} days",
                      tag="checkin_gap",
-                     command="fit checkin")
+                     command="fit checkin",
+                     detail="Log sleep, hydration, and (optionally) alcohol.",
+                     source=f"checkins table: last entry {days}d ago.")
             elif src["source"] == "weight" and days and days >= 14:
                 _add("warning",
-                     f"Weight last logged {days}d ago — re-export Apple Health",
+                     f"Weight last logged {days}d ago",
                      tag="weight_stale",
-                     command="fit import-health ~/Downloads/Export.zip")
+                     command="fit import-health ~/Downloads/Export.zip",
+                     detail="Re-export from the Apple Health app on iPhone, then import.",
+                     source=f"body_comp table: last weight row {days}d ago.")
             elif src["source"] in ("garmin_health", "garmin_activities"):
                 stream = src["source"].split("_", 1)[1]
                 _add("warning",
-                     f"Garmin {stream} {days}d behind — run `fit sync`",
+                     f"Garmin {stream} {days}d behind",
                      tag=f"sync_lag_{src['source']}",
-                     command="fit sync")
+                     command="fit sync",
+                     source=f"data_health: last {src['source']} row {days}d ago.")
 
     # Coaching review staleness.
     try:
@@ -453,8 +463,11 @@ def _attention_items(conn):
                 age = (date.today() - date.fromisoformat(rd)).days
                 if age > 7:
                     _add("info",
-                         f"Coaching review is {age}d old — re-run `/fit-coach`",
-                         tag="coaching_stale")
+                         f"Coaching review is {age}d old",
+                         tag="coaching_stale",
+                         command="/fit-coach",
+                         detail="Run the coaching skill in Claude Code to refresh insights.",
+                         source=f"coaching.json: report_date {rd}.")
     except Exception:
         pass  # missing/malformed coaching.json shouldn't block the panel
 

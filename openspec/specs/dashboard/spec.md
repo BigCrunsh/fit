@@ -439,7 +439,6 @@ When multiple annotations target the same or nearby data points, the system SHAL
 #### Scenario: More than 3 annotations
 - **WHEN** a run has 4+ overlapping annotations
 - **THEN** 3 are shown stacked, remainder collapsed into tooltip: "4 factors"
-## ADDED Requirements
 
 ### Requirement: Your Physiology card on Overview tab
 The Overview tab SHALL display a Physiology card showing the four physiological anchors (LTHR, MaxHR, AeT, VO2max) side-by-side. Each anchor SHALL display: current value, one-line description, days since last calibration, and a trend tag. The card SHALL be positioned at the top of the Overview tab and use the design-system surface tinting (accent-tinted, matching `.profile-group-box`).
@@ -489,7 +488,6 @@ The Overview tab SHALL contain a collapsible `<details>` section labeled "Concep
 #### Scenario: Concepts shown alongside per-chart toggles
 - **WHEN** the dashboard is rendered
 - **THEN** existing per-chart `def-toggle` popovers continue to function; the Concepts section is the canonical glossary, the popovers are contextual quick-references
-## ADDED Requirements
 
 ### Requirement: Needs Your Attention panel on Overview tab
 The Overview tab SHALL display a "Needs Your Attention" panel listing all pending user actions, aggregated from data freshness checks, calibration staleness, coaching review age, and missing data sources. The panel SHALL be positioned at the top of the Overview tab (above the race countdown card) and SHALL NOT render when there are zero attention items (no celebration / empty-state card; absence is the signal).
@@ -547,7 +545,6 @@ The race countdown card on the Overview tab SHALL include a one-line "Prediction
 #### Scenario: No race data available
 - **WHEN** no race_calendar entries with `result_time` in the last 12 months
 - **THEN** the note reads "Prediction confidence: low — no recent race data"
-## ADDED Requirements
 
 ### Requirement: Calibration history chart per metric on Profile tab
 The Profile tab SHALL include a "Calibration History" section containing one Chart.js chart per metric (`lthr`, `max_hr`, `aet`, `weight`, `vo2max`). Each chart SHALL plot every calibration row over time as a point, regardless of whether the row is the currently active one.

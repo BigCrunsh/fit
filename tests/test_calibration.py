@@ -171,10 +171,11 @@ class TestCalibrationStatus:
         today = date.today()
         add_calibration(db, "max_hr", 192, "race", "high", today)
         add_calibration(db, "lthr", 172, "time_trial", "high", today)
+        add_calibration(db, "aet", 145, "drift_test", "medium", today)
         add_calibration(db, "weight", 78, "scale", "high", today)
         add_calibration(db, "vo2max", 49, "garmin_estimate", "medium", today)
         status = get_calibration_status(db)
-        assert len(status) == 4
+        assert len(status) == 5  # max_hr, lthr, aet, weight, vo2max
         assert all(not s["stale"] for s in status)
         assert all(not s["missing"] for s in status)
         assert all(s["retest_prompt"] is None for s in status)
@@ -198,7 +199,7 @@ class TestCalibrationStatus:
     # Unhappy
     def test_all_missing(self, db):
         status = get_calibration_status(db)
-        assert len(status) == 4
+        assert len(status) == 5  # max_hr, lthr, aet, weight, vo2max
         assert all(s["missing"] for s in status)
         assert all(s["stale"] for s in status)
 
@@ -594,3 +595,89 @@ class TestGetCalibrationHistory:
 
     def test_empty_when_metric_unseen(self, db):
         assert get_calibration_history(db, "aet") == []
+
+
+# ════════════════════════════════════════════════════════════════
+# AeT extraction from steady-pace long runs
+# ════════════════════════════════════════════════════════════════
+
+
+from fit.calibration import extract_aet_from_steady_run
+
+
+class TestExtractAetFromSteadyRun:
+    def _splits(self, n: int, pace_sec: float, first_half_hr: float, second_half_hr: float,
+                pace_jitter: float = 5.0) -> list[dict]:
+        """Build N km splits with given paces (with small jitter) and HR halves."""
+        out = []
+        mid = n // 2
+        for i in range(n):
+            hr = first_half_hr if i < mid else second_half_hr
+            out.append({
+                "split_num": i + 1,
+                "distance_km": 1.0,
+                "pace_sec_per_km": pace_sec + ((-1) ** i) * pace_jitter,
+                "avg_hr": hr,
+            })
+        return out
+
+    def test_direct_estimate_when_drift_5_to_7(self):
+        # drift 6%, avg HR ~150
+        splits = self._splits(15, pace_sec=360, first_half_hr=146, second_half_hr=155)
+        activity = {"type": "running", "distance_km": 15.0, "avg_hr": 150}
+        result = extract_aet_from_steady_run(activity, splits)
+        assert result is not None
+        assert result["classification"] == "direct_estimate"
+        assert 5 <= result["drift_pct"] <= 7
+
+    def test_lower_bound_when_drift_under_5(self):
+        splits = self._splits(15, pace_sec=360, first_half_hr=145, second_half_hr=149)
+        activity = {"type": "running", "distance_km": 15.0, "avg_hr": 147}
+        result = extract_aet_from_steady_run(activity, splits)
+        assert result is not None
+        assert result["classification"] == "lower_bound"
+
+    def test_upper_bound_when_drift_over_7(self):
+        splits = self._splits(15, pace_sec=360, first_half_hr=145, second_half_hr=160)
+        activity = {"type": "running", "distance_km": 15.0, "avg_hr": 152}
+        result = extract_aet_from_steady_run(activity, splits)
+        assert result is not None
+        assert result["classification"] == "upper_bound"
+
+    def test_no_extract_for_negative_drift(self):
+        """Negative drift (warmup or fueling kicked in) → not a valid AeT signal."""
+        splits = self._splits(15, pace_sec=360, first_half_hr=160, second_half_hr=150)
+        activity = {"type": "running", "distance_km": 15.0, "avg_hr": 155}
+        result = extract_aet_from_steady_run(activity, splits)
+        assert result is None
+
+    def test_no_extract_for_too_short(self):
+        splits = self._splits(10, pace_sec=360, first_half_hr=145, second_half_hr=152)
+        activity = {"type": "running", "distance_km": 10.0, "avg_hr": 148}
+        result = extract_aet_from_steady_run(activity, splits)
+        assert result is None
+
+    def test_no_extract_for_non_steady_pace(self):
+        # Big jitter → pace stddev > 15 sec/km
+        splits = self._splits(15, pace_sec=360, first_half_hr=145, second_half_hr=152,
+                              pace_jitter=30.0)
+        activity = {"type": "running", "distance_km": 15.0, "avg_hr": 148}
+        result = extract_aet_from_steady_run(activity, splits)
+        assert result is None
+
+    def test_no_extract_for_cycling(self):
+        splits = self._splits(20, pace_sec=120, first_half_hr=140, second_half_hr=147)
+        activity = {"type": "cycling", "distance_km": 40.0, "avg_hr": 143}
+        result = extract_aet_from_steady_run(activity, splits)
+        assert result is None
+
+    def test_no_extract_when_no_splits(self):
+        activity = {"type": "running", "distance_km": 18.0, "avg_hr": 150}
+        result = extract_aet_from_steady_run(activity, [])
+        assert result is None
+
+    def test_track_running_accepted(self):
+        splits = self._splits(15, pace_sec=300, first_half_hr=148, second_half_hr=157)
+        activity = {"type": "track_running", "distance_km": 15.0, "avg_hr": 152}
+        result = extract_aet_from_steady_run(activity, splits)
+        assert result is not None

@@ -16,7 +16,8 @@ RUNNING_TYPES_SQL = "('running','track_running','trail_running')"
 
 def compute_hr_zones(avg_hr: int | None, config: dict,
                      lthr: int | None = None,
-                     max_hr: int | None = None) -> dict:
+                     max_hr: int | None = None,
+                     aet: int | None = None) -> dict:
     """Compute zones from BOTH max HR and LTHR models in parallel.
 
     Returns dict with hr_zone_maxhr, hr_zone_lthr (None if no LTHR),
@@ -34,6 +35,12 @@ def compute_hr_zones(avg_hr: int | None, config: dict,
          this case `max_hr_used` reports `config.profile.max_hr` — the value
          the static bounds were originally computed from — NOT the calibrated
          max_hr, since the bounds did not actually scale with it.
+
+    AeT refinement: when `aet` is provided AND `zone_model != 'max_hr'`,
+    the Z2 ceiling (= Z3 lower bound) on the %LTHR ladder is replaced by
+    AeT. Other LTHR boundaries (Z4 floor at 95% LTHR, Z5 floor at LTHR)
+    are unchanged — AeT is a single-zone refinement, not a primary-anchor
+    replacement.
     """
     if avg_hr is None:
         return {"hr_zone_maxhr": None, "hr_zone_lthr": None, "hr_zone": None,
@@ -49,11 +56,14 @@ def compute_hr_zones(avg_hr: int | None, config: dict,
         max_hr_used = config["profile"].get("max_hr")
     zone_maxhr = _classify_zone(avg_hr, zones_maxhr)
 
-    # LTHR model (computed only if LTHR calibration exists)
+    # LTHR model (computed only if LTHR calibration exists). When AeT is
+    # also calibrated, AeT replaces the Z2 ceiling (= Z3 lower bound) —
+    # Z2 = "true easy aerobic" is the boundary marathon training cares
+    # about, and AeT measures it directly while %LTHR is a proxy.
     zone_lthr = None
     if lthr:
         zones_lthr_pct = config["profile"].get("zones_lthr", {})
-        zone_lthr = _classify_zone_lthr(avg_hr, lthr, zones_lthr_pct)
+        zone_lthr = _classify_zone_lthr(avg_hr, lthr, zones_lthr_pct, aet=aet)
 
     # Primary zone selection.
     # An explicit zone_model in config wins; otherwise fall through:
@@ -128,8 +138,22 @@ def _derive_maxhr_zones_from_pct(zones_pct: dict, max_hr: int) -> dict:
     return result
 
 
-def _classify_zone_lthr(avg_hr: int, lthr: int, zones_pct: dict) -> str:
-    """Classify HR into zone using LTHR percentage model."""
+def _classify_zone_lthr(avg_hr: int, lthr: int, zones_pct: dict,
+                         aet: int | None = None) -> str:
+    """Classify HR into zone using the LTHR percentage model.
+
+    When `aet` is provided, the Z2/Z3 boundary is set to AeT directly
+    (overriding the Friel `z3_pct[0]` lower bound). All other zone
+    boundaries continue to come from the Friel percentages — AeT is a
+    single-zone refinement, not a model replacement.
+    """
+    # AeT overrides only the Z3 lower bound. Express it as a dict patch
+    # above the loop so the override reads as "AeT replaces Z3 lower" —
+    # matches the docstring without an inline branch in the iteration.
+    if aet is not None and "z3_pct" in zones_pct:
+        z3_existing_upper = zones_pct["z3_pct"][1]
+        zones_pct = {**zones_pct, "z3_pct": [aet / lthr * 100, z3_existing_upper]}
+
     pct = (avg_hr / lthr) * 100
     for zone_name in ("z5_pct", "z4_pct", "z3_pct", "z2_pct", "z1_pct"):
         bounds = zones_pct.get(zone_name)
@@ -234,7 +258,8 @@ def classify_run_type(activity: dict, config: dict = None, recent_long_run_avg: 
 
 def enrich_activity(activity: dict, config: dict, lthr: int | None = None,
                     recent_long_run_avg: float = None,
-                    max_hr: int | None = None) -> dict:
+                    max_hr: int | None = None,
+                    aet: int | None = None) -> dict:
     """Apply all derived metrics to an activity dict.
 
     Adds: hr_zone_maxhr, hr_zone_lthr, hr_zone, effort_class,
@@ -242,11 +267,12 @@ def enrich_activity(activity: dict, config: dict, lthr: int | None = None,
 
     `max_hr` overrides the config value — caller passes the active
     calibration so zone boundaries track the user's current physiology
-    rather than a stale config default.
+    rather than a stale config default. `aet` (when calibrated) refines
+    the Z2 ceiling on the LTHR ladder.
     """
     effective_max_hr = max_hr if max_hr is not None else config["profile"]["max_hr"]
     zones = compute_hr_zones(activity.get("avg_hr"), config, lthr=lthr,
-                             max_hr=effective_max_hr)
+                             max_hr=effective_max_hr, aet=aet)
     # `max_hr_used` from compute_hr_zones reflects the value that *actually*
     # informed the zone boundaries (which may differ from `effective_max_hr`
     # if zones fell back to static `zones_max_hr` because zones_max_hr_pct

@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 STALENESS_THRESHOLDS = {
     "max_hr": timedelta(days=365),
     "lthr": timedelta(days=56),  # 8 weeks
+    "aet": timedelta(days=56),   # 8 weeks — AeT shifts during build phases
     "weight": timedelta(days=7),
     "vo2max": timedelta(days=90),
 }
@@ -17,6 +18,7 @@ STALENESS_THRESHOLDS = {
 RETEST_PROMPTS = {
     "max_hr": "Verify during your next hard race or interval session.",
     "lthr": "Schedule a 30-min time trial, or we can auto-extract from your next 10k+ race.",
+    "aet": "Run a 15+ km steady-pace effort (flat terrain, fueled) — we auto-derive AeT from HR drift.",
     "weight": "Step on the scale or enter weight in `fit checkin`.",
     "vo2max": "Run outdoors with GPS for Garmin to update estimate.",
 }
@@ -28,6 +30,7 @@ RETEST_PROMPTS = {
 _PLAUSIBLE = {
     "max_hr": (140, 215),
     "lthr":   (130, 200),
+    "aet":    (100, 180),  # typically 70-85% × LTHR for trained runners
     "vo2max": (25, 80),
     "weight": (35, 200),  # kg
 }
@@ -226,7 +229,7 @@ def is_stale(conn: sqlite3.Connection, metric: str) -> bool:
 def get_calibration_status(conn: sqlite3.Connection) -> list[dict]:
     """Get status of all tracked metrics with staleness and retest prompts."""
     results = []
-    for metric in ("max_hr", "lthr", "weight", "vo2max"):
+    for metric in ("max_hr", "lthr", "aet", "weight", "vo2max"):
         cal = get_active_calibration(conn, metric)
         stale = is_stale(conn, metric)
         threshold = STALENESS_THRESHOLDS[metric]
@@ -303,6 +306,95 @@ def extract_max_hr_from_activity(activity: dict, current_max_hr: float | None) -
     if current_max_hr is not None and observed <= current_max_hr + 1:
         return None
     return float(observed)
+
+
+# Thresholds for AeT candidate detection. Named so they're greppable.
+_AET_MIN_DISTANCE_KM = 12.0
+_AET_STEADY_PACE_STDDEV_SEC = 15.0
+
+
+def _weighted_hr_avg(splits: list[dict]) -> float | None:
+    """Distance-weighted average HR over a list of split rows.
+
+    Splits with missing `avg_hr` are excluded from BOTH numerator and
+    denominator — keeps the math symmetric instead of silently zeroing
+    the numerator. Returns None when no usable rows remain.
+    """
+    valid = [s for s in splits
+             if s.get("avg_hr") is not None and s.get("distance_km")]
+    if not valid:
+        return None
+    total_hr_km = sum(s["avg_hr"] * s["distance_km"] for s in valid)
+    total_km = sum(s["distance_km"] for s in valid)
+    return total_hr_km / total_km if total_km else None
+
+
+def extract_aet_from_steady_run(activity: dict, splits: list[dict]) -> dict | None:
+    """Derive an AeT estimate from a candidate steady-pace long run.
+
+    Method (HR-drift bisection):
+      1. Require running activity with distance >= _AET_MIN_DISTANCE_KM (12 km).
+      2. Pace stddev across the run's middle splits (warmup + cooldown
+         excluded) must be < _AET_STEADY_PACE_STDDEV_SEC (15 sec/km).
+      3. Compute first-half vs second-half avg HR (distance-weighted).
+      4. drift_pct = (h2 - h1) / h1 * 100
+      5. Classify:
+          drift < 0      → invalid (negative drift, no row written)
+          0 ≤ drift < 5  → lower bound: AeT > avg_hr_of_run
+          5 ≤ drift ≤ 7  → direct estimate: AeT ≈ avg_hr_of_run
+          drift > 7      → upper bound: AeT < avg_hr_of_run
+
+    Returns dict with `value` (the AeT estimate, in bpm), `drift_pct`,
+    and `classification`. Returns None when the activity doesn't qualify.
+    The caller maps `classification` → flag taxonomy when storing.
+    """
+    from fit.analysis import RUNNING_TYPES
+
+    if activity.get("type") not in RUNNING_TYPES:
+        return None
+    distance = activity.get("distance_km") or 0
+    if distance < _AET_MIN_DISTANCE_KM:
+        return None
+    if not splits or len(splits) < 4:
+        return None
+
+    # Pace-steadiness check uses the middle (warmup + cooldown excluded).
+    # HR-drift uses the FULL split set — warmup HR is part of how the body
+    # responded to the effort and matters for the first-half average.
+    middle_paces = [s["pace_sec_per_km"] for s in splits[1:-1]
+                    if s.get("pace_sec_per_km") is not None]
+    if len(middle_paces) < 2:
+        return None
+    mean_pace = sum(middle_paces) / len(middle_paces)
+    variance = sum((p - mean_pace) ** 2 for p in middle_paces) / len(middle_paces)
+    if variance ** 0.5 > _AET_STEADY_PACE_STDDEV_SEC:
+        return None  # not steady — likely intervals or fartlek
+
+    mid = len(splits) // 2
+    h1 = _weighted_hr_avg(splits[:mid])
+    h2 = _weighted_hr_avg(splits[mid:])
+    if h1 is None or h2 is None or h1 <= 0:
+        return None
+    drift_pct = (h2 - h1) / h1 * 100
+
+    if drift_pct < 0:
+        return None  # negative drift — runner slowed down or fueling kicked in
+
+    # Run-average HR (used as the AeT estimate/anchor across all classes)
+    avg_hr = activity.get("avg_hr") or ((h1 + h2) / 2)
+
+    if drift_pct < 5:
+        classification = "lower_bound"
+    elif drift_pct <= 7:
+        classification = "direct_estimate"
+    else:
+        classification = "upper_bound"
+
+    return {
+        "value": round(float(avg_hr), 1),
+        "drift_pct": round(drift_pct, 2),
+        "classification": classification,
+    }
 
 
 def extract_lthr_from_race(activity: dict) -> float | None:

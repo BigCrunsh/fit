@@ -173,7 +173,6 @@ The prediction summary SHALL use the target race distance (from `get_target_race
 #### Scenario: No target race defaults to marathon
 - **WHEN** no target race exists
 - **THEN** predictions use 42.195km as default target distance
-## MODIFIED Requirements
 
 ### Requirement: Alert severity is explicit
 Every alert returned by `run_alerts()` SHALL include an explicit `severity` field with value `critical`, `warning`, or `info`. Severity SHALL be a property of the alert *rule*, not derived at render time.

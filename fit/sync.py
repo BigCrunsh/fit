@@ -9,7 +9,15 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCo
 
 from fit import garmin, weather
 from fit.analysis import RUNNING_TYPES_SQL, enrich_activity, compute_weekly_agg
-from fit.calibration import get_active_calibration, extract_lthr_from_race, extract_max_hr_from_activity
+from fit.calibration import (
+    add_calibration,
+    derive_confidence,
+    derive_flags,
+    extract_aet_from_steady_run,
+    extract_lthr_from_race,
+    extract_max_hr_from_activity,
+    get_active_calibration,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +57,9 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     # of truth and zone boundaries scale up accordingly.
     max_hr_cal = get_active_calibration(conn, "max_hr")
     max_hr = int(max_hr_cal["value"]) if max_hr_cal else config["profile"].get("max_hr")
+    # AeT (when calibrated) refines the Z2 ceiling on the LTHR ladder.
+    aet_cal = get_active_calibration(conn, "aet")
+    aet = int(aet_cal["value"]) if aet_cal else None
 
     total_days = (end - start).days + 1
 
@@ -124,7 +135,7 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
             if existing and existing["hr_zone"] is not None:
                 _upsert_activity(conn, a)
             else:
-                enriched = enrich_activity(a, config, lthr=lthr, max_hr=max_hr)
+                enriched = enrich_activity(a, config, lthr=lthr, max_hr=max_hr, aet=aet)
                 _upsert_enriched_activity(conn, enriched)
                 counts["enriched"] += 1
 
@@ -159,6 +170,51 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
                 add_calibration(conn, "vo2max", latest_vo2["vo2max"],
                                 "garmin_estimate", "medium",
                                 date.fromisoformat(latest_vo2["date"]))
+
+        # 3c. AeT auto-derive — walk recent running activities ≥12 km that have
+        # per-km splits and look like steady-pace efforts. Each qualifying run
+        # produces an AeT calibration row (direct estimate, lower bound, or
+        # upper bound depending on HR drift %). See extract_aet_from_steady_run.
+        #
+        # `prior_aet` is the pre-sync active row (loaded once at the top of
+        # run_sync as `aet_cal`). Reusing it instead of re-querying per
+        # iteration mirrors how max_hr / lthr extraction already works — and
+        # makes the flag computation deterministic within a single sync run.
+        aet_candidates = conn.execute(f"""
+            SELECT id, date, name, type, distance_km, avg_hr, run_type
+            FROM activities
+            WHERE date BETWEEN ? AND ?
+              AND type IN {RUNNING_TYPES_SQL}
+              AND distance_km >= 12
+        """, (start.isoformat(), end.isoformat())).fetchall()
+        for a in aet_candidates:
+            splits = conn.execute(
+                "SELECT split_num, distance_km, pace_sec_per_km, avg_hr "
+                "FROM activity_splits WHERE activity_id = ? ORDER BY split_num",
+                (a["id"],),
+            ).fetchall()
+            if not splits:
+                continue
+            result = extract_aet_from_steady_run(dict(a), [dict(s) for s in splits])
+            if not result:
+                continue
+            try:
+                cal_date = date.fromisoformat(a["date"])
+            except (ValueError, TypeError):
+                continue
+            classification = result["classification"]
+            bound_flag = ["lower_bound"] if classification == "lower_bound" \
+                else ["upper_bound"] if classification == "upper_bound" else []
+            flags = sorted(set(derive_flags("aet", result["value"], "drift_test", aet_cal) + bound_flag))
+            confidence = derive_confidence("drift_test", flags)
+            add_calibration(
+                conn, "aet", result["value"], "drift_test", confidence,
+                cal_date,
+                source_activity_id=a["id"],
+                notes=(f"drift {result['drift_pct']}% ({classification}) "
+                       f"from {a.get('name', '?')} ({a['distance_km']}km)"),
+                flags=flags,
+            )
 
         # 3b. RPE/feel/compliance from Garmin activity detail (running activities only).
         # Refresh policy: re-fetch activities ≤14 days old; fill-NULL beyond.
@@ -447,6 +503,8 @@ def enrich_existing_activities(conn: sqlite3.Connection, config: dict,
     lthr = int(lthr_cal["value"]) if lthr_cal else None
     max_hr_cal = get_active_calibration(conn, "max_hr")
     max_hr = int(max_hr_cal["value"]) if max_hr_cal else config["profile"].get("max_hr")
+    aet_cal = get_active_calibration(conn, "aet")
+    aet = int(aet_cal["value"]) if aet_cal else None
 
     where_clause = "" if force else "WHERE hr_zone IS NULL"
     # `run_type` is included so `enrich_activity` can preserve existing 'race'
@@ -463,7 +521,7 @@ def enrich_existing_activities(conn: sqlite3.Connection, config: dict,
     count = 0
     for row in rows:
         a = dict(row)
-        enriched = enrich_activity(a, config, lthr=lthr, max_hr=max_hr)
+        enriched = enrich_activity(a, config, lthr=lthr, max_hr=max_hr, aet=aet)
         conn.execute("""
             UPDATE activities SET
                 hr_zone_maxhr = ?, hr_zone_lthr = ?, hr_zone = ?,
