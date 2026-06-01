@@ -418,16 +418,16 @@
     <a class="anchor-link" href="#prof-today">Today</a>
     <a class="anchor-link" href="#prof-dimensions">Dimensions</a>
     <a class="anchor-link" href="#prof-pace-zones">Pace Zones</a>
-    <a class="anchor-link" href="#prof-cal-history">Calibrations</a>
     <a class="anchor-link" href="#prof-vo2max">VO2max</a>
     <a class="anchor-link" href="#prof-aerobic">Aerobic</a>
-    <a class="anchor-link" href="#prof-drift">Drift</a>
-    <a class="anchor-link" href="#prof-pacecv">Pace CV</a>
+    <a class="anchor-link" href="#prof-drift">Resilience</a>
     <a class="anchor-link" href="#prof-zones">Zones</a>
     <a class="anchor-link" href="#prof-weight">Weight</a>
     <a class="anchor-link" href="#prof-cadence">Cadence</a>
+    <a class="anchor-link" href="#prof-pacecv">Pace CV</a>
     <a class="anchor-link" href="#prof-effort-gap">Effort Gap</a>
     <a class="anchor-link" href="#prof-prediction">Prediction</a>
+    <a class="anchor-link" href="#prof-cal-history">Calibrations</a>
   </nav>
 
   <!-- 2. TODAY'S CAPABILITY -->
@@ -504,40 +504,20 @@
   </div>
   {% endif %}
 
-  <!-- 3c. Calibration History — audit trail per metric -->
-  {% if calibration_history %}
-  <div id="prof-cal-history" class="sec"><h2>Calibration History</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">Every recorded calibration reading per metric. Filled dot = high confidence (two corroborating readings or manual entry). Hollow dot = medium (single hard-effort reading). Red ring = low confidence (implausible, spike, or stale). The active row drives current zone derivation.</div><div class="line"></div></div>
-  {% for m in calibration_history %}
-  <div class="cal-history-metric">
-    <div class="cal-history-metric-title">{{ m.label }}</div>
-    {% if m.missing %}
-    <div class="cal-history-empty">No readings yet. Use <code class="value-pill">fit calibrate {{ m.metric }} &lt;value&gt;</code> or wait for sync to auto-extract.</div>
-    {% else %}
-    {% for r in m.rows | reverse %}
-    <div class="cal-history-row{% if r.is_active %} is-active{% endif %}">
-      <span class="cal-history-dot conf-{{ r.confidence }}" title="{{ r.confidence }} confidence"></span>
-      <span class="cal-history-date">{{ r.date }}</span>
-      <span class="cal-history-value">{{ r.value | round(1) }}</span>
-      <span class="cal-history-method">{{ r.method }}</span>
-      <span class="cal-history-flags">{% if r.flags %}{{ r.flags | join(', ') }}{% if r.stale %} · stale{% endif %}{% elif r.stale %}stale ({{ r.days_ago }}d){% endif %}</span>
-      {% if r.is_active %}<span class="cal-history-active-marker">active</span>{% endif %}
-    </div>
-    {% endfor %}
-    {% endif %}
-  </div>
-  {% endfor %}
-  {% endif %}
+  <!-- ════════════════════════════════════════════════════════════════
+       ACT 2 — How am I trending aerobically? (the core fitness story)
+       ════════════════════════════════════════════════════════════════ -->
 
-  <!-- 4. VO2max + VDOT Trend -->
+  <!-- VO2max + VDOT Trend — capacity over months -->
   <div id="prof-vo2max" class="sec"><h2>VO2max + VDOT Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.vo2max }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-vo2" height="200"></canvas></div>
 
-  <!-- 5. Efficiency Trend -->
+  <!-- Aerobic Efficiency (speed/bpm) — economy over time -->
   <div id="prof-aerobic" class="sec"><h2>Aerobic Efficiency (Z2 speed/bpm)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.speed_per_bpm }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-efficiency" height="180"></canvas></div>
 
-  <!-- 6. Split Analysis — Cardiac Drift -->
-  <div id="prof-drift" class="sec"><h2>Split Analysis — Cardiac Drift</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.cardiac_drift }}</div><div class="line"></div></div>
+  <!-- Long-Run Resilience (cardiac drift) — when does HR start rising? -->
+  <div id="prof-drift" class="sec"><h2>Long-Run Resilience</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.cardiac_drift }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-drift" height="200"></canvas></div>
   {% set drift_chart = charts | selectattr('id', 'equalto', 'chart-drift') | first %}
   {% if drift_chart and drift_chart.n_runs is defined %}
@@ -546,15 +526,15 @@
   <div class="chart-box"><canvas id="chart-drift-trend" height="160"></canvas></div>
   <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">Drift onset = first km where HR exceeds first-half average + 5 bpm. Higher = better aerobic endurance. Green band = onset after km 15 (good base).</div>
 
-  <!-- 7. Pace Consistency (CV%) -->
-  <div id="prof-pacecv" class="sec"><h2>Pace Consistency (CV%)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.pacecv }}</div><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-pacecv" height="160"></canvas></div>
-
-  <!-- 8. Zone Distribution -->
+  <!-- Zone Distribution — training mix -->
   <div id="prof-zones" class="sec"><h2>Zone Distribution</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.zones }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-zones" height="180"></canvas></div>
 
-  <!-- 9. Weight + Body Composition -->
+  <!-- ════════════════════════════════════════════════════════════════
+       ACT 3 — Body & form (secondary axes)
+       ════════════════════════════════════════════════════════════════ -->
+
+  <!-- Weight + Body Composition -->
   {% if body_comp %}
   {% set bc = body_comp %}
   <div id="prof-weight" class="sec"><h2>Weight + Body Composition</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.weight }}</div><div class="line"></div></div>
@@ -582,18 +562,68 @@
   <div class="chart-box"><canvas id="chart-weight" height="180"></canvas></div>
   {% endif %}
 
-  <!-- 10. Cadence Trend -->
+  <!-- Cadence — form indicator -->
   <div id="prof-cadence" class="sec"><h2>Cadence Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.cadence }}</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-cadence" height="160"></canvas></div>
 
-  <!-- 11. Effort Gap — Garmin TE vs RPE -->
-  <div id="prof-effort-gap" class="sec"><h2>Effort Gap — Garmin TE vs RPE</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.effort_gap }}</div><div class="line"></div></div>
-  <div class="chart-box"><canvas id="chart-effort-gap" height="160"></canvas></div>
-  <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">When RPE exceeds TE, the run felt harder than Garmin thinks — possible fatigue accumulation.</div>
+  <!-- Pace Consistency (CV%) — pacing form indicator -->
+  <div id="prof-pacecv" class="sec"><h2>Pace Consistency (CV%)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.pacecv }}</div><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-pacecv" height="160"></canvas></div>
 
-  <!-- 12. Marathon prediction trend — Daniels VDOT × Riegel race-based -->
+  <!-- ════════════════════════════════════════════════════════════════
+       ACT 4 — What does this mean for race day?  (caveat + forecast)
+       ════════════════════════════════════════════════════════════════ -->
+
+  <!-- Effort Gap — comes BEFORE the prediction as its caveat -->
+  <div id="prof-effort-gap" class="sec"><h2>Effort Gap — Hidden Fatigue Signal</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">{{ definitions.effort_gap }}</div><div class="line"></div></div>
+  <div class="chart-box"><canvas id="chart-effort-gap" height="160"></canvas></div>
+  <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">When RPE exceeds Garmin TE, the run felt harder than the watch thinks — possible fatigue the prediction below can't see.</div>
+
+  <!-- Marathon Prediction — the forecast with target annotation -->
   <div id="prof-prediction" class="sec"><h2>Marathon Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">i</span><div class="def-box">VDOT-derived predictions over time (Daniels formula) plus Riegel projections from actual race results, scaled to your target distance. Y-axis is reverse-scaled — lower = faster.</div><div class="line"></div></div>
   <div class="chart-box"><canvas id="chart-marathon-pred" height="180"></canvas></div>
+  {% if race_countdown and race_countdown.prediction_mid and race_countdown.target_time %}
+  <div class="forecast-closing">
+    <span class="forecast-closing-label">Forecast:</span>
+    <span class="forecast-closing-value">{{ race_countdown.prediction_mid }}</span>
+    <span class="forecast-closing-target">· target {{ race_countdown.target_time }}</span>
+    {% if race_countdown.gap_minutes is defined and race_countdown.gap_minutes is not none %}
+    <span class="forecast-closing-gap" style="color:{% if race_countdown.gap_minutes <= 0 %}var(--safe){% elif race_countdown.gap_minutes <= 5 %}var(--caution){% else %}var(--danger){% endif %}">{{ '%+d' | format(race_countdown.gap_minutes) }} min</span>
+    {% endif %}
+    {% if prediction_confidence %}
+    <span class="forecast-closing-confidence level-{{ prediction_confidence.level }}">· confidence {{ prediction_confidence.level }}{% if prediction_confidence.reason %} ({{ prediction_confidence.reason }}){% endif %}</span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <!-- ════════════════════════════════════════════════════════════════
+       ACT 5 — Diagnostics: calibration history (collapsible)
+       ════════════════════════════════════════════════════════════════ -->
+
+  {% if calibration_history %}
+  <details id="prof-cal-history" class="cal-history-details">
+    <summary class="cal-history-summary"><h2>Calibration History</h2></summary>
+    <div class="def-box" style="display:block">Per-metric audit trail of every recorded reading. <strong>Marker shape</strong> (drift-test only): ● direct estimate · ▲ upper bound (AeT &lt; value) · ◆ lower bound (AeT &gt; value). <strong>Fill</strong>: solid = high confidence, hollow = medium, red outline = low. The larger marker is the row currently driving zone derivation.</div>
+    {% for m in calibration_history %}
+    <div class="cal-history-metric">
+      <div class="cal-history-stat-row">
+        <div class="cal-history-metric-label">{{ m.label }}</div>
+        {% if m.missing %}
+        <div class="cal-history-empty">No readings yet. Use <code class="value-pill">fit calibrate {{ m.metric }}</code>.</div>
+        {% else %}
+        <span class="cal-history-dot conf-{{ m.active.confidence }}" title="{{ m.active.confidence }} confidence"></span>
+        <span class="cal-history-stat-value">{{ m.active.value | round(1) }}</span>
+        <span class="cal-history-stat-meta">{{ m.active.confidence }} · {{ m.active.date }} ({{ m.active.days_ago }}d ago){% if m.active.stale %} · <span style="color:var(--caution)">stale</span>{% endif %}</span>
+        <span class="cal-history-stat-count">{{ m.rows|length }} reading{{ 's' if m.rows|length != 1 else '' }}</span>
+        {% endif %}
+      </div>
+      {% if m.is_dense %}
+      <div class="cal-history-chart-wrap"><canvas id="chart-cal-{{ m.metric }}"></canvas></div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </details>
+  {% endif %}
 
 </div>
 

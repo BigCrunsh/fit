@@ -102,24 +102,42 @@ h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
 .physiology-anchor .anchor-missing { font-size:10px; color:var(--caution); line-height:1.4; margin-top:6px; }
 .physiology-anchor .anchor-missing a { color:var(--caution); text-decoration:underline; }
 
-/* Calibration history (Profile tab) — per-metric audit trail of every
-   recorded reading. Single source of truth for "why does the system
-   believe my current value?" — confidence dot, flags, source activity. */
-.cal-history-metric { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 14px; margin:8px 0; }
-.cal-history-metric-title { font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:6px; }
-.cal-history-row { display:flex; align-items:center; gap:10px; padding:6px 0; font-size:11px; border-top:1px solid rgba(255,255,255,0.03); }
-.cal-history-row:first-of-type { border-top:none; }
-.cal-history-row.is-active { background:rgba(129,140,248,0.04); margin:0 -10px; padding:6px 10px; border-radius:6px; }
-.cal-history-dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; }
+/* Calibration history (Profile tab) — collapsible diagnostics section.
+   Each metric: a single-row stat (current value + confidence + date) and,
+   for dense metrics (≥3 readings), a scatter chart underneath. The chart's
+   marker shapes encode drift-test classification and fills encode confidence
+   — see template inline help text for the legend. */
+.cal-history-details { margin:24px 0 8px; }
+.cal-history-summary { cursor:pointer; list-style:none; padding:8px 0; }
+.cal-history-summary::-webkit-details-marker { display:none; }
+.cal-history-summary h2 { display:inline-block; font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.12em; }
+.cal-history-summary::after { content:" ▸"; color:var(--text-dim); font-size:10px; }
+.cal-history-details[open] .cal-history-summary::after { content:" ▾"; }
+
+.cal-history-metric { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 14px; margin:10px 0; }
+.cal-history-stat-row { display:flex; align-items:center; gap:10px; font-size:12px; }
+.cal-history-metric-label { font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; width:200px; }
+.cal-history-stat-value { font-family:var(--mono); font-weight:700; font-size:14px; color:var(--text); }
+.cal-history-stat-meta { font-size:10px; color:var(--text-dim); }
+.cal-history-stat-count { font-size:10px; color:var(--text-dim); margin-left:auto; }
+.cal-history-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
 .cal-history-dot.conf-high { background:var(--safe); }
 .cal-history-dot.conf-medium { background:transparent; border:1.5px solid var(--text-muted); }
 .cal-history-dot.conf-low { background:transparent; border:1.5px solid var(--danger); }
-.cal-history-date { font-family:var(--mono); width:80px; color:var(--text-muted); font-size:10px; }
-.cal-history-value { font-family:var(--mono); font-weight:700; width:60px; color:var(--text); }
-.cal-history-method { font-size:10px; color:var(--text-dim); width:100px; }
-.cal-history-flags { flex:1; font-size:10px; color:var(--caution); }
-.cal-history-active-marker { font-size:8px; font-weight:700; color:var(--accent); text-transform:uppercase; letter-spacing:0.08em; margin-left:auto; }
-.cal-history-empty { font-size:11px; color:var(--text-dim); padding:4px 0; }
+.cal-history-chart-wrap { height:130px; margin-top:8px; }
+.cal-history-empty { font-size:11px; color:var(--text-dim); }
+
+/* Profile-tab closing narrative under Marathon Prediction — pairs with the
+   Race Readiness verdict at the top of the tab to close the snapshot →
+   trend → forecast arc. */
+.forecast-closing { background:rgba(129,140,248,0.04); border:1px solid rgba(129,140,248,0.10); border-radius:10px; padding:10px 14px; margin-top:8px; font-size:12px; display:flex; align-items:baseline; flex-wrap:wrap; gap:6px; }
+.forecast-closing-label { font-size:10px; font-weight:700; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.08em; }
+.forecast-closing-value { font-family:var(--mono); font-weight:700; font-size:16px; color:var(--accent); }
+.forecast-closing-target { color:var(--text-muted); }
+.forecast-closing-gap { font-family:var(--mono); font-weight:700; }
+.forecast-closing-confidence { font-size:10px; color:var(--text-dim); margin-left:auto; }
+.forecast-closing-confidence.level-medium { color:var(--caution); }
+.forecast-closing-confidence.level-low { color:var(--danger); }
 
 /* Daniels pace zones (Profile tab) */
 .pace-zone-row { display:flex; align-items:center; gap:12px; padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.04); font-size:12px; }

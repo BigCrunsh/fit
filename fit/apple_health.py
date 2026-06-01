@@ -111,7 +111,10 @@ def import_apple_health(conn: sqlite3.Connection, export_path: Path) -> dict:
         ))
         imported += 1
 
-    # Auto-update weight calibration from latest body_comp
+    # Auto-update weight calibration from latest body_comp — but only if the
+    # value or date actually changed. Re-imports of the same Apple Health
+    # export would otherwise accumulate duplicate calibration rows (one per
+    # import, identical value/date), which clutters the calibration history.
     if imported > 0:
         latest = conn.execute(
             "SELECT date, weight_kg FROM body_comp WHERE weight_kg IS NOT NULL ORDER BY date DESC LIMIT 1"
@@ -119,8 +122,14 @@ def import_apple_health(conn: sqlite3.Connection, export_path: Path) -> dict:
         if latest:
             from fit.calibration import add_calibration
             from datetime import date
-            add_calibration(conn, "weight", latest["weight_kg"], "scale", "high",
-                            date.fromisoformat(latest["date"]))
+            existing = conn.execute(
+                "SELECT 1 FROM calibration WHERE metric='weight' "
+                "AND date=? AND value=? LIMIT 1",
+                (latest["date"], latest["weight_kg"]),
+            ).fetchone()
+            if not existing:
+                add_calibration(conn, "weight", latest["weight_kg"], "scale", "high",
+                                date.fromisoformat(latest["date"]))
 
     conn.commit()
     logger.info("Imported %d body comp records from Apple Health (%s)", imported, counts)

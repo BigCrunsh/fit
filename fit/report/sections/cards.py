@@ -299,19 +299,26 @@ def _run_timeline(conn):
 
 
 
+_DENSE_THRESHOLD = 3  # ≥ this many distinct readings → render as scatter chart
+
+
 def _calibration_history(conn):
     """Per-metric calibration history for the Profile tab.
 
-    Returns a list of {metric, label, rows} dicts. Each row carries
-    value, date, days_ago, method, confidence, flags, source_activity_id,
-    plus a UI-only `is_active` boolean (the row currently driving zone
-    derivation per get_active_calibration's confidence-aware rule).
-
-    The dashboard renders each metric as a small table with confidence
-    indicators (solid dot=high, hollow=medium, red ring=low) and a
-    staleness flag.
+    Returns a list of dicts per metric:
+      {metric, label, rows, missing, threshold_days, is_dense, active}
+    - `rows`: deduped (same date+value+method collapsed), oldest first.
+      Each row carries value, date, days_ago, method, confidence, flags,
+      classification (parsed from `notes` for drift_test rows: 'direct',
+      'lower_bound', 'upper_bound'; None otherwise), is_active, stale.
+    - `is_dense`: True when there are >= _DENSE_THRESHOLD distinct readings
+      — the dashboard renders these as a scatter chart. Sparse metrics
+      render as a stat card (no chart) since 1-2 dots aren't informative.
+    - `active`: the active row (or None) lifted to the top level so the
+      stat-card view doesn't need to scan rows.
     """
     import json as _json
+    import re
     from fit.calibration import STALENESS_THRESHOLDS, get_active_calibration
 
     metric_labels = {
@@ -322,30 +329,44 @@ def _calibration_history(conn):
         "weight": "Weight",
     }
 
-    # One SELECT for all 5 metrics; group in Python. Active row is still
-    # resolved per metric via get_active_calibration's confidence-aware rule
-    # — that's the only call we keep, since reproducing the selection logic
-    # in two places would be the worse simplification.
+    # One SELECT for all 5 metrics; group in Python.
     all_rows = conn.execute(
         "SELECT id, metric, value, method, confidence, date, "
         "source_activity_id, notes, flags FROM calibration ORDER BY metric, date ASC"
     ).fetchall()
     by_metric: dict[str, list[dict]] = {m: [] for m in metric_labels}
     for r in all_rows:
-        if r["metric"] in by_metric:
-            d = dict(r)
-            try:
-                d["flags"] = _json.loads(d["flags"] or "[]")
-            except (ValueError, TypeError):
-                d["flags"] = []
-            by_metric[r["metric"]].append(d)
+        if r["metric"] not in by_metric:
+            continue
+        d = dict(r)
+        try:
+            d["flags"] = _json.loads(d["flags"] or "[]")
+        except (ValueError, TypeError):
+            d["flags"] = []
+        by_metric[r["metric"]].append(d)
+
+    # Dedupe: collapse rows with identical (date, value, method) into one.
+    # Keeps the LATEST (highest-id) representative so confidence/flags
+    # reflect the most recent write — guards against the calibration table
+    # accumulating dupes from re-imports.
+    def _dedupe(rows: list[dict]) -> list[dict]:
+        seen: dict[tuple, dict] = {}
+        for r in rows:
+            key = (r["date"], r["value"], r["method"])
+            seen[key] = r  # later writes overwrite earlier ones
+        return sorted(seen.values(), key=lambda r: r["date"])
+
+    # Drift-test classification appears in the notes field as e.g.
+    # "drift 6.84% (direct_estimate) from ..."
+    classification_re = re.compile(r"\((direct_estimate|upper_bound|lower_bound)\)")
 
     today = date.today()
     out = []
     for metric, label in metric_labels.items():
-        history = by_metric[metric]
+        history = _dedupe(by_metric[metric])
         if not history:
-            out.append({"metric": metric, "label": label, "rows": [], "missing": True})
+            out.append({"metric": metric, "label": label, "rows": [],
+                        "missing": True, "is_dense": False, "active": None})
             continue
 
         active = get_active_calibration(conn, metric)
@@ -359,7 +380,16 @@ def _calibration_history(conn):
                 days_ago = (today - date.fromisoformat(r["date"])).days
             except (ValueError, TypeError):
                 days_ago = None
-            stale = threshold_days is not None and days_ago is not None and days_ago > threshold_days
+            # Per-row staleness is only meaningful for the active row.
+            # Historical rows are records, not states.
+            is_active = r["id"] == active_id
+            stale = (is_active and threshold_days is not None and days_ago is not None
+                     and days_ago > threshold_days)
+            classification = None
+            if r.get("notes"):
+                m = classification_re.search(r["notes"])
+                if m:
+                    classification = m.group(1).replace("_estimate", "")
             rendered.append({
                 "value": r["value"], "date": r["date"], "days_ago": days_ago,
                 "method": r["method"],
@@ -367,13 +397,17 @@ def _calibration_history(conn):
                 "flags": r["flags"],
                 "source_activity_id": r.get("source_activity_id"),
                 "notes": r.get("notes"),
-                "is_active": r["id"] == active_id,
+                "classification": classification,
+                "is_active": is_active,
                 "stale": stale,
             })
 
+        active_row = next((r for r in rendered if r["is_active"]), rendered[-1])
         out.append({
             "metric": metric, "label": label, "rows": rendered,
             "missing": False, "threshold_days": threshold_days,
+            "is_dense": len(rendered) >= _DENSE_THRESHOLD,
+            "active": active_row,
         })
     return out
 

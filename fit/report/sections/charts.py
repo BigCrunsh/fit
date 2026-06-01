@@ -1064,6 +1064,83 @@ def _all_charts(conn):
             },
         })})
 
+    # Calibration history scatter — one chart per dense metric. Marker
+    # shape encodes drift-test classification (triangle-up = upper bound:
+    # AeT < value; triangle-down = lower bound: AeT > value; circle =
+    # direct estimate). Marker fill encodes confidence (filled = high,
+    # hollow = medium, red ring = low). Active row gets a larger radius.
+    from fit.report.sections.cards import _calibration_history as _ch_builder
+    cal_metrics = _ch_builder(conn)
+    for m in cal_metrics:
+        if not m["is_dense"]:
+            continue
+        # Build per-point arrays for Chart.js scatter
+        points = []
+        styles, fills, borders, radii = [], [], [], []
+        for r in m["rows"]:
+            points.append({"x": r["date"], "y": r["value"]})
+            # Marker shape by classification — drift_test rows have one;
+            # everything else gets a plain circle.
+            cls = r.get("classification")
+            if cls == "upper_bound":
+                styles.append("triangle")          # ▲ AeT < this value
+            elif cls == "lower_bound":
+                styles.append("rectRot")            # ◆ AeT > this value (diamond placeholder for Chart.js)
+            else:
+                styles.append("circle")             # ● direct estimate / non-drift
+            conf = r.get("confidence", "medium")
+            color = {"high": SAFE, "medium": ACCENT, "low": DANGER}.get(conf, ACCENT)
+            # Filled for high, hollow for medium, red-ring for low
+            if conf == "high":
+                fills.append(color)
+                borders.append(color)
+            elif conf == "low":
+                fills.append("rgba(0,0,0,0)")
+                borders.append(DANGER)
+            else:
+                fills.append("rgba(0,0,0,0)")
+                borders.append(color)
+            radii.append(8 if r["is_active"] else 5)
+        # Annotation: vertical band marking the staleness threshold (the
+        # active marker should be to the right of it to be considered fresh).
+        annotations = {}
+        if m.get("threshold_days"):
+            from datetime import date as _date, timedelta as _td
+            cutoff = (_date.today() - _td(days=m["threshold_days"])).isoformat()
+            annotations["staleline"] = {
+                "type": "line", "xMin": cutoff, "xMax": cutoff,
+                "borderColor": CAUTION + "40", "borderWidth": 1, "borderDash": [3, 3],
+                "label": {"content": "stale →", "display": True,
+                           "position": "start", "color": CAUTION,
+                           "font": {"size": 9}, "backgroundColor": "rgba(0,0,0,0)"},
+            }
+        charts.append({"id": f"chart-cal-{m['metric']}", "config": json.dumps({
+            "type": "scatter",
+            "data": {"datasets": [{
+                "label": m["label"], "data": points,
+                "pointStyle": styles,
+                "pointBackgroundColor": fills,
+                "pointBorderColor": borders,
+                "pointBorderWidth": 2,
+                "pointRadius": radii,
+                "pointHoverRadius": [r + 2 for r in radii],
+                "showLine": False,
+            }]},
+            "options": {
+                "responsive": True, "maintainAspectRatio": False,
+                "plugins": {"legend": {"display": False},
+                             "annotation": {"annotations": annotations},
+                             "tooltip": {"callbacks": {}}},
+                "scales": {
+                    "x": {"type": "time",
+                           "time": {"unit": "month", "displayFormats": {"month": "MMM ''yy"}},
+                           "grid": {"display": False}},
+                    "y": {"grid": {"color": "rgba(255,255,255,0.03)"},
+                           "title": {"display": True, "text": "bpm" if m["metric"] in ("lthr","max_hr","aet") else ("kg" if m["metric"] == "weight" else "")}},
+                },
+            },
+        })})
+
     return charts
 
 
