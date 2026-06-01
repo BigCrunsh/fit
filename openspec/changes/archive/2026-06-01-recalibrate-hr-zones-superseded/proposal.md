@@ -1,3 +1,18 @@
+## Status (2026-06-01) — Superseded
+
+This proposal has been split into smaller independently shippable changes:
+
+- **Part A** (max_hr calibration auto-refresh) — **shipped 2026-05-31**: `extract_max_hr_from_activity()` in `fit/calibration.py`, sync hook in `fit/sync.py`, percentage-derived zones via `zones_max_hr_pct` in `fit/analysis.py`. Tests in `tests/test_calibration.py::TestMaxHRExtraction` and `tests/test_analysis.py::TestHRZones`.
+- **Part B** (LTHR confidence bump) — trivial; not worth a proposal. Will land alongside Part D when calibration substrate is rebuilt.
+- **Part C** (AeT-anchored zones + auto-derive from drift) → new change `aet-anchored-zones`.
+- **Part D** (flags column, confidence rubric, confidence-aware active selection, calibration history graph) → new change `calibration-history`.
+
+The broader zone-model question (anchor primary to %MaxHR, %LTHR, or AeT?) was resolved separately by `lthr-default-zones`: LTHR is the primary anchor, with %MaxHR demoted to a diagnostic. AeT, when later calibrated by `aet-anchored-zones`, refines only the Z2 ceiling — it does NOT replace LTHR as the primary anchor (LTHR is more stable, more reliably measurable, and ecosystem-standard; AeT-anchored Z2 is a refinement of one boundary, not a model replacement).
+
+Original proposal text follows for historical reference.
+
+---
+
 ## Why
 
 The HR zone system has three calibration issues — two factual, one definitional. They compound: the wrong max HR shifts every %MaxHR boundary downward, the dual-model preference creates a 19 bpm Z2-ceiling gap, and there is no anchored aerobic threshold (AeT) to settle which model is right for a given run. Result: easy-day runs get classified inconsistently between the two models, and the user does not trust either zone label.
