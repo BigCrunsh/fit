@@ -2,7 +2,7 @@
 
 from datetime import date, timedelta
 
-from fit.alerts import run_alerts, get_recent_alerts
+from fit.alerts import run_alerts, get_recent_alerts, severity_of
 
 
 class TestAlertRules:
@@ -52,6 +52,69 @@ class TestAlertRules:
         # Second run should not duplicate the alert in DB
         count = db.execute("SELECT COUNT(*) FROM alerts WHERE type = 'readiness_gate'").fetchone()[0]
         assert count == 1
+
+    def test_every_fired_alert_carries_severity(self, db, config):
+        """Every alert returned by run_alerts MUST include a severity field —
+        critical / warning / info, never absent."""
+        self._setup_health(db, readiness=20)
+        self._setup_weekly(db, z12_pct=10)
+        alerts = run_alerts(db, config)
+        for a in alerts:
+            assert "severity" in a, f"alert {a['type']!r} missing severity"
+            assert a["severity"] in {"critical", "warning", "info"}
+
+    def test_readiness_gate_is_critical(self, db, config):
+        self._setup_health(db, readiness=20)
+        alerts = [a for a in run_alerts(db, config) if a["type"] == "readiness_gate"]
+        assert alerts and alerts[0]["severity"] == "critical"
+
+    def test_all_runs_too_hard_is_warning(self, db, config):
+        self._setup_weekly(db, z12_pct=10)
+        alerts = [a for a in run_alerts(db, config) if a["type"] == "all_runs_too_hard"]
+        assert alerts and alerts[0]["severity"] == "warning"
+
+    def test_severity_of_unknown_defaults_to_info(self):
+        """severity_of() never returns absent — unknown rules default to info."""
+        assert severity_of("some_future_rule") == "info"
+
+
+class TestSeveritySort:
+    def _fire_alert(self, db, alert_date, alert_type, message="msg"):
+        db.execute(
+            "INSERT INTO alerts (date, type, message, data_context, acknowledged) VALUES (?, ?, ?, '{}', 0)",
+            (alert_date, alert_type, message),
+        )
+        db.commit()
+
+    def test_severity_sort_critical_above_warning(self, db, config):
+        # Fire one of each, store with same date so severity decides order.
+        today = date.today().isoformat()
+        self._fire_alert(db, today, "all_runs_too_hard")     # warning
+        # Mock condition: insert weekly_agg matching the rule's predicate
+        db.execute("INSERT INTO weekly_agg (week, z12_pct) VALUES ('2026-W14', 10)")
+        # Now fire a critical
+        self._fire_alert(db, today, "readiness_gate")
+        db.execute("INSERT INTO daily_health (date, training_readiness) VALUES (date('now'), 20)")
+        db.commit()
+        result = get_recent_alerts(db)
+        # Both should appear, critical first
+        types = [a["type"] for a in result]
+        idx_critical = types.index("readiness_gate")
+        idx_warning = types.index("all_runs_too_hard")
+        assert idx_critical < idx_warning
+
+    def test_dedupe_to_most_recent_per_type(self, db, config):
+        """If a rule fired twice (yesterday + today), only one row shows."""
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        today = date.today().isoformat()
+        self._fire_alert(db, yesterday, "all_runs_too_hard", "old")
+        self._fire_alert(db, today, "all_runs_too_hard", "new")
+        db.execute("INSERT INTO weekly_agg (week, z12_pct) VALUES ('2026-W14', 10)")
+        db.commit()
+        result = get_recent_alerts(db)
+        same_type = [a for a in result if a["type"] == "all_runs_too_hard"]
+        assert len(same_type) == 1
+        assert same_type[0]["message"] == "new"
 
 
 class TestGetRecentAlerts:

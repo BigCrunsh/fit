@@ -68,6 +68,23 @@ h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
 .tab-btn.active { background:rgba(255,255,255,0.1); color:var(--text); }
 .tab-content { display:none; } .tab-content.active { display:block; }
 
+/* Attention panel (Overview tab) — what's pending from the user */
+.attention-panel { background:rgba(251,191,36,0.04); border:1px solid rgba(251,191,36,0.12); border-radius:14px; padding:12px 16px; margin:14px 0; }
+.attention-panel-title { font-size:10px; font-weight:700; color:var(--caution); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:8px; }
+.attention-item { display:flex; align-items:flex-start; gap:10px; padding:6px 0; font-size:12px; border-top:1px solid rgba(255,255,255,0.03); }
+.attention-item:first-of-type { border-top:none; padding-top:0; }
+.attention-icon { font-size:12px; line-height:1.3; flex-shrink:0; }
+.attention-body { flex:1; color:var(--text); line-height:1.5; }
+.attention-cmd { font-family:var(--mono); font-size:11px; color:var(--text-muted); margin-left:6px; }
+.attention-item-critical .attention-icon { color:var(--danger); }
+.attention-item-warning  .attention-icon { color:var(--caution); }
+.attention-item-info     .attention-icon { color:var(--accent); }
+
+/* Race-countdown prediction-confidence note */
+.race-prediction-confidence { font-size:9px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.06em; margin-top:2px; }
+.race-prediction-confidence.level-medium { color:var(--caution); }
+.race-prediction-confidence.level-low { color:var(--danger); }
+
 /* Your Physiology card (Overview tab) — four anchors side-by-side */
 .physiology-card { background:rgba(129,140,248,0.03); border:1px solid rgba(129,140,248,0.08); border-radius:14px; padding:14px 16px 16px; margin:14px 0; }
 .physiology-grid { display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; margin-top:8px; }

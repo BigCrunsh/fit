@@ -35,6 +35,19 @@
   {% endfor %}
   {% endif %}
 
+  <!-- 1a. NEEDS YOUR ATTENTION — pending actions, severity-sorted. Hides when empty. -->
+  {% if attention_items %}
+  <div class="attention-panel">
+    <div class="attention-panel-title">Needs Your Attention</div>
+    {% for item in attention_items %}
+    <div class="attention-item attention-item-{{ item.severity }}"{% if item.tooltip %} title="{{ item.tooltip }}"{% endif %}>
+      <span class="attention-icon">{% if item.severity == 'critical' %}🔴{% elif item.severity == 'warning' %}🟡{% else %}🔵{% endif %}</span>
+      <div class="attention-body">{{ item.message }}{% if item.command %} <code class="attention-cmd">{{ item.command }}</code>{% endif %}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   <!-- 1b. YOUR PHYSIOLOGY — the four anchors everything else derives from -->
   {% if physiology %}
   <div class="physiology-card">
@@ -99,7 +112,14 @@
     <!-- Prediction trend chart (full width) -->
     <div class="race-hero-divider">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
-        <span class="kicker">Prediction Trend</span>
+        <div>
+          <span class="kicker">Prediction Trend</span>
+          {% if prediction_confidence %}
+          <div class="race-prediction-confidence level-{{ prediction_confidence.level }}">
+            confidence: {{ prediction_confidence.level }}{% if prediction_confidence.reason %} — {{ prediction_confidence.reason }}{% endif %}
+          </div>
+          {% endif %}
+        </div>
         {% if race_countdown.trend_badge %}<span class="badge badge-green">{{ race_countdown.trend_badge }}</span>{% endif %}
       </div>
       <div class="chart-canvas-md"><canvas id="chart-pred-trend"></canvas></div>

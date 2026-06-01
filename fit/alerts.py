@@ -9,6 +9,33 @@ from fit.analysis import detect_training_gap
 
 logger = logging.getLogger(__name__)
 
+# Severity mapping per alert rule. Severity is a property of the *rule*,
+# not derived at render time. Anything not listed defaults to 'info'.
+# Renderers (dashboard, MCP) order by severity (critical → warning → info)
+# then by date desc within a tier.
+ALERT_SEVERITY: dict[str, str] = {
+    # Critical — immediate physiological / injury-risk signal
+    "acwr_spike_danger": "critical",
+    "readiness_gate": "critical",
+    "volume_ramp": "critical",
+    # Warning — meaningful but not urgent
+    "all_runs_too_hard": "warning",
+    "alcohol_hrv": "warning",
+    "high_monotony": "warning",
+    "undertraining": "warning",
+    "deload_overdue": "warning",
+    "spo2_low": "warning",
+    # info — context signal, no action required immediately
+}
+
+
+def severity_of(alert_type: str) -> str:
+    """Return the severity tier for an alert type. Defaults to 'info'."""
+    return ALERT_SEVERITY.get(alert_type, "info")
+
+
+_SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
+
 
 def run_alerts(conn: sqlite3.Connection, config: dict) -> list[dict]:
     """Run all alert rules against current data. Store and return fired alerts."""
@@ -150,7 +177,7 @@ def _check_deload_overdue(conn: sqlite3.Connection, today: str) -> dict | None:
 
 
 def _fire(conn: sqlite3.Connection, today: str, alert_type: str, message: str, data: dict) -> dict:
-    """Store and return a fired alert."""
+    """Store and return a fired alert with explicit severity."""
     # Don't duplicate same-day same-type alerts
     existing = conn.execute("SELECT 1 FROM alerts WHERE date = ? AND type = ?", (today, alert_type)).fetchone()
     if not existing:
@@ -159,7 +186,12 @@ def _fire(conn: sqlite3.Connection, today: str, alert_type: str, message: str, d
             VALUES (?, ?, ?, ?)
         """, (today, alert_type, message, json.dumps(data)))
         conn.commit()
-    return {"type": alert_type, "message": message, "data": data}
+    return {
+        "type": alert_type,
+        "severity": severity_of(alert_type),
+        "message": message,
+        "data": data,
+    }
 
 
 def get_recent_alerts(conn: sqlite3.Connection, days: int = 7) -> list[dict]:
@@ -175,13 +207,30 @@ def get_recent_alerts(conn: sqlite3.Connection, days: int = 7) -> list[dict]:
         ORDER BY date DESC
     """, (f"-{days} days",)).fetchall()
 
+    # Dedupe by type — only the most recent of each type is shown (the date
+    # ORDER BY DESC above gives us that natively since we iterate top-down).
+    seen_types: set[str] = set()
     result = []
     for r in rows:
+        if r["type"] in seen_types:
+            continue
         if _condition_still_holds(conn, r["type"]):
-            result.append({"date": r["date"], "type": r["type"], "message": r["message"]})
+            seen_types.add(r["type"])
+            result.append({
+                "date": r["date"],
+                "type": r["type"],
+                "severity": severity_of(r["type"]),
+                "message": r["message"],
+            })
         else:
             conn.execute("UPDATE alerts SET acknowledged = 1 WHERE rowid = ?", (r["id"],))
     conn.commit()
+    # Order by severity (critical → warning → info), then most-recent within
+    # tier. Two-stage sort because Python's sort is stable: sort by date desc
+    # first, then by severity asc — keeps the "most recent within severity"
+    # behavior the dashboard expects.
+    result.sort(key=lambda a: a["date"], reverse=True)
+    result.sort(key=lambda a: _SEVERITY_ORDER.get(a["severity"], 99))
     return result
 
 

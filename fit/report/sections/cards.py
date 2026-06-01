@@ -299,6 +299,130 @@ def _run_timeline(conn):
 
 
 
+def _attention_items(conn):
+    """Aggregate pending user actions for the Overview tab's Attention panel.
+
+    Pulls from existing sources of truth:
+      - data_health.check_data_sources()  → stale Garmin streams / weight / SpO2
+      - calibration.get_calibration_status() → stale LTHR / max_hr / AeT
+      - coaching.json `report_date` → coaching review age
+
+    Returns a list of dicts with: severity (critical/warning/info), message
+    (imperative voice), command (optional bash to copy), tooltip (optional
+    "why" text), tag (stable id for dedup). Sorted by severity asc.
+
+    Empty list when there's nothing pending — the panel hides entirely (no
+    celebration card; absence is the signal).
+    """
+    from fit.data_health import check_data_sources
+    from fit.calibration import get_calibration_status
+
+    items: list[dict] = []
+    seen_tags: set[str] = set()  # dedupe: same fact surfaced by multiple sources
+
+    def _add(severity, message, *, tag, command=None, tooltip=None):
+        if tag in seen_tags:
+            return
+        seen_tags.add(tag)
+        items.append({"severity": severity, "message": message, "tag": tag,
+                      "command": command, "tooltip": tooltip})
+
+    # Calibration staleness — first, so generic data_health doesn't duplicate.
+    for c in get_calibration_status(conn):
+        if c["missing"] and c["metric"] == "lthr":
+            _add("warning",
+                 "Calibrate LTHR — anchors your training zones.",
+                 tag="cal_missing_lthr",
+                 command="fit calibrate lthr <value>")
+        elif c["stale"] and not c["missing"]:
+            days = (date.today() - date.fromisoformat(c["date"])).days if c.get("date") else None
+            sev = "warning" if c["metric"] in ("lthr", "max_hr") else "info"
+            _add(sev,
+                 f"{c['metric'].upper()} last calibrated {days}d ago — "
+                 f"{c.get('retest_prompt') or 'consider re-testing'}",
+                 tag=f"cal_stale_{c['metric']}")
+
+    # Data freshness — Garmin streams, SpO2, weight, checkins.
+    for src in check_data_sources(conn):
+        if src["status"] == "missing":
+            _add("info",
+                 src.get("instruction") or f"Enable {src['source']}",
+                 tag=f"missing_{src['source']}")
+        elif src["status"] == "stale":
+            days = src.get("days_ago")
+            if src["source"] == "checkins" and days and days >= 3:
+                _add("info",
+                     f"No checkin for {days} days — log sleep/hydration via `fit checkin`",
+                     tag="checkin_gap",
+                     command="fit checkin")
+            elif src["source"] == "weight" and days and days >= 14:
+                _add("warning",
+                     f"Weight last logged {days}d ago — re-export Apple Health",
+                     tag="weight_stale",
+                     command="fit import-health ~/Downloads/Export.zip")
+            elif src["source"] in ("garmin_health", "garmin_activities"):
+                stream = src["source"].split("_", 1)[1]
+                _add("warning",
+                     f"Garmin {stream} {days}d behind — run `fit sync`",
+                     tag=f"sync_lag_{src['source']}",
+                     command="fit sync")
+
+    # Coaching review staleness.
+    try:
+        db_path = conn.execute("PRAGMA database_list").fetchone()[2]
+        coaching_path = Path(db_path).parent / "reports" / "coaching.json"
+        if coaching_path.exists():
+            data = json.loads(coaching_path.read_text())
+            rd = data.get("report_date")
+            if rd:
+                age = (date.today() - date.fromisoformat(rd)).days
+                if age > 7:
+                    _add("info",
+                         f"Coaching review is {age}d old — re-run `/fit-coach`",
+                         tag="coaching_stale")
+    except Exception:
+        pass  # missing/malformed coaching.json shouldn't block the panel
+
+    sev_order = {"critical": 0, "warning": 1, "info": 2}
+    items.sort(key=lambda i: sev_order.get(i["severity"], 99))
+    return items
+
+
+def _prediction_confidence(conn):
+    """Race-prediction confidence — fresh anchors give a sharper forecast.
+
+    Returns dict with `level` (high/medium/low) and `reason` (short string,
+    empty when level == high).
+    """
+    from fit.calibration import is_stale as cal_is_stale, get_active_calibration
+
+    lthr_cal = get_active_calibration(conn, "lthr")
+    vo2_cal = get_active_calibration(conn, "vo2max")
+    lthr_stale = (lthr_cal is None) or cal_is_stale(conn, "lthr")
+    vo2_stale = (vo2_cal is None) or cal_is_stale(conn, "vo2max")
+    race_count = conn.execute(
+        "SELECT COUNT(*) FROM race_calendar WHERE result_time IS NOT NULL "
+        "AND date >= date('now', '-365 days')"
+    ).fetchone()[0]
+
+    if (race_count == 0 and lthr_stale and vo2_stale):
+        return {"level": "low", "reason": "no race data, LTHR + VO2max stale"}
+    if lthr_stale and vo2_stale:
+        return {"level": "low", "reason": "LTHR + VO2max both stale"}
+    if race_count == 0:
+        return {"level": "low", "reason": "no race data in last 12 months"}
+    if lthr_stale or vo2_stale or race_count < 2:
+        reasons = []
+        if lthr_stale:
+            reasons.append("LTHR stale")
+        if vo2_stale:
+            reasons.append("VO2max stale")
+        if race_count < 2:
+            reasons.append(f"only {race_count} recent race")
+        return {"level": "medium", "reason": ", ".join(reasons)}
+    return {"level": "high", "reason": ""}
+
+
 def _physiology(conn):
     """Build the "Your Physiology" card data for the Overview tab.
 
