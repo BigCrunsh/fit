@@ -305,18 +305,16 @@ _DENSE_THRESHOLD = 3  # ≥ this many distinct readings → render as scatter ch
 def _vdot_comparison(conn):
     """Anchor-VDOT vs Garmin-VO2max comparison badge under the VDOT chart.
 
-    The anchor is the BEST fitness anchor from get_fitness_anchors — any
-    training-or-race effort meeting the physiological criteria (5-25km,
-    avg HR ≥ LTHR, consistent pacing). This replaces the prior approach
-    of taking "most recent race_calendar entry", which broke when the
-    user logged a long-run training as a race.
-
-    Returns dict with both values, the activity that anchors, predicted
-    marathon time per source, and a one-line interpretation. None when
-    neither source has data.
+    The anchor VDOT is the SINGLE standardized value from
+    get_calibration_anchor('vdot') — the human-confirmed sticky value, or the
+    windowed-max policy estimate from race observations. The source effort
+    shown is the best in-window observation that drives the estimate. Garmin's
+    wrist-HR VO2max is shown only as a (more optimistic) reference. Marathon
+    equivalents use vdot_to_race_time — the same Daniels inverse the VDOT
+    estimate uses (NOT the retired conservative table). None when no data.
     """
-    from fit.fitness import get_fitness_anchors
-    from fit.analysis import _vdot_to_marathon_seconds
+    from fit.calibration import get_calibration_anchor
+    from fit.fitness import vdot_to_race_time
 
     def _fmt_time(secs):
         secs = int(secs)
@@ -324,20 +322,14 @@ def _vdot_comparison(conn):
         return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
     def _fmt_marathon(secs):
-        # Marathon predictions always span >1h — keep the H:MM format for these.
         secs = int(secs)
         return f"{secs // 3600}:{(secs % 3600) // 60:02d}"
 
-    anchors = get_fitness_anchors(conn, days=365)
-    # Use the MOST RECENT qualifying anchor, not the best. A peak from 8
-    # months ago isn't representative of current fitness — for predicting
-    # next race day, the most recent legitimate effort is the honest
-    # signal. (get_fitness_anchors returns VDOT-descending; resort by date.)
-    latest_anchor = (sorted(anchors, key=lambda a: a["date"], reverse=True)[0]
-                     if anchors else None)
-    # Also surface the best-in-window for context — if much higher than
-    # latest, the user is in a rebuild phase and should know peak existed.
-    best_in_window = max(anchors, key=lambda a: a["vdot"]) if anchors else None
+    def _marathon(vdot):
+        s = vdot_to_race_time(vdot, 42.195)
+        return _fmt_marathon(s) if s else None
+
+    anchor = get_calibration_anchor(conn, "vdot")
 
     garmin_row = conn.execute(
         "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL "
@@ -345,72 +337,71 @@ def _vdot_comparison(conn):
     ).fetchone()
     garmin = float(garmin_row["vo2max"]) if garmin_row and garmin_row["vo2max"] else None
 
-    if not latest_anchor and not garmin:
+    if (not anchor or anchor.get("value") is None) and not garmin:
         return None
 
-    # Render latest anchor — the template key stays "race" for compatibility,
-    # but the *latest qualifying effort* (training or race) is what's shown.
+    # Anchor payload — the standardized value + the effort that drives it.
     anchor_payload = None
-    if latest_anchor:
-        days_ago = (date.today() - date.fromisoformat(latest_anchor["date"])).days
+    anchor_vdot = anchor.get("value") if anchor else None
+    if anchor_vdot is not None:
+        # Source effort = the top in-window observation (joins to its activity
+        # for distance/time). Falls back to the confirmed row's own date.
+        src = None
+        sug = anchor.get("suggestion")
+        if sug and sug.get("inputs"):
+            src = sug["inputs"][0]
+        src_date = (src or {}).get("date") or (anchor.get("inputs") or [{}])[0].get("date")
+        act = None
+        if src and src.get("source_activity_id"):
+            act = conn.execute(
+                "SELECT name, distance_km, duration_min FROM activities WHERE id = ?",
+                (src["source_activity_id"],),
+            ).fetchone()
+        days_ago = (date.today() - date.fromisoformat(src_date)).days if src_date else None
         anchor_payload = {
-            "vdot": latest_anchor["vdot"],
-            "date": latest_anchor["date"],
+            "vdot": anchor_vdot,
+            "date": src_date,
             "days_ago": days_ago,
-            "distance_km": latest_anchor["distance_km"],
-            "result_time": _fmt_time(latest_anchor["duration_min"] * 60),
-            "name": latest_anchor["name"] or ("Race effort" if latest_anchor["source"] == "race" else "Training effort"),
-            "source": latest_anchor["source"],
-            "confidence": latest_anchor["confidence"],
+            "distance_km": round(act["distance_km"], 1) if act and act["distance_km"] else None,
+            "result_time": _fmt_time(act["duration_min"] * 60) if act and act["duration_min"] else None,
+            "name": (act["name"] if act and act["name"] else "Confirmed VDOT"),
+            "source": "confirmed" if anchor.get("method") in ("manual", "confirmed") else "race",
+            "confidence": anchor.get("confidence"),
+            "stale": anchor.get("stale"),
         }
 
-    # If a meaningfully better anchor exists earlier in the window, surface
-    # it as context — useful for the user to see "you were a 41 before the
-    # layoff, you're at 35.7 now".
-    peak_payload = None
-    if best_in_window and latest_anchor and best_in_window["vdot"] - latest_anchor["vdot"] >= 2:
-        peak_payload = {
-            "vdot": best_in_window["vdot"],
-            "date": best_in_window["date"],
-            "name": best_in_window["name"] or "Previous best",
-            "delta": round(best_in_window["vdot"] - latest_anchor["vdot"], 1),
-        }
-
-    anchor_marathon = _fmt_marathon(_vdot_to_marathon_seconds(latest_anchor["vdot"])) if latest_anchor else None
-    garmin_marathon = _fmt_marathon(_vdot_to_marathon_seconds(garmin)) if garmin else None
+    anchor_marathon = _marathon(anchor_vdot) if anchor_vdot is not None else None
+    garmin_marathon = _marathon(garmin) if garmin else None
 
     interpretation = None
-    if latest_anchor and garmin:
-        gap = garmin - latest_anchor["vdot"]
+    if anchor_vdot is not None and garmin:
+        gap = garmin - anchor_vdot
         if gap >= 5:
             interpretation = (
-                f"Garmin is {gap:.0f} VDOT above your latest qualifying effort — "
-                f"wrist-HR estimate is significantly more optimistic than what "
-                f"you actually delivered. Trust the anchor VDOT."
-            )
+                f"Garmin is {gap:.0f} VDOT above your race-anchored fitness — the "
+                f"wrist-HR estimate is significantly more optimistic than what you've "
+                f"actually run. Trust the anchor VDOT.")
         elif gap >= 2:
             interpretation = (
-                f"Garmin estimate is {gap:.1f} VDOT above your latest anchor. "
-                f"Modest gap — could be HR-strap drift or course conditions. The "
-                f"anchor VDOT is still the more reliable working number."
-            )
+                f"Garmin reads {gap:.1f} VDOT above your anchor — modest gap (HR-strap "
+                f"drift or course conditions). The anchor is the more reliable number.")
         elif gap <= -2:
             interpretation = (
-                f"Anchor VDOT is {abs(gap):.1f} above Garmin's estimate — unusual; "
-                f"may indicate easy-effort HR is on the high side. Anchor result "
-                f"is still primary."
-            )
+                f"Anchor VDOT is {abs(gap):.1f} above Garmin's estimate — unusual; easy-"
+                f"effort HR may be running high. Anchor is still primary.")
         else:
             interpretation = "Anchor and Garmin agree closely — confidence is high."
+    if anchor_payload and anchor_payload.get("stale"):
+        note = "Anchor is getting old — race a 5–10 km or run a threshold test to refresh it."
+        interpretation = f"{interpretation} {note}" if interpretation else note
 
     return {
-        "race": anchor_payload,  # template key kept stable
+        "race": anchor_payload,   # template key kept stable
         "race_marathon": anchor_marathon,
         "garmin_vo2": garmin,
         "garmin_marathon": garmin_marathon,
         "interpretation": interpretation,
-        "anchor_count": len(anchors),
-        "peak": peak_payload,
+        "peak": None,
     }
 
 

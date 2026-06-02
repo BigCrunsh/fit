@@ -530,7 +530,7 @@
   <div class="vdot-compare-card">
     {% if vdot_comparison.race %}
     <div class="vdot-compare-row vdot-compare-race">
-      <span class="vdot-compare-label">Latest anchor{% if vdot_comparison.race.source == 'race' %} (race){% else %} (training){% endif %}</span>
+      <span class="vdot-compare-label">Anchor VDOT{% if vdot_comparison.race.source == 'confirmed' %} (confirmed){% elif vdot_comparison.race.source == 'race' %} (race){% else %} (training){% endif %}</span>
       <span class="vdot-compare-value">{{ vdot_comparison.race.vdot }}</span>
       <span class="vdot-compare-meta"><strong>{{ vdot_comparison.race.date }}</strong> · {{ vdot_comparison.race.days_ago }}d ago · {{ vdot_comparison.race.name }} ({{ vdot_comparison.race.distance_km }} km in {{ vdot_comparison.race.result_time }})</span>
       <span class="vdot-compare-arrow">→ predicts marathon</span>
