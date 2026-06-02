@@ -355,7 +355,9 @@ def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> dict | None
     elif suggestion is not None:
         value, confidence, method, src_date = (
             suggestion["value"], suggestion["confidence"], "policy", suggestion["inputs"][0]["date"])
-    elif active:
+    elif active and (active.get("method") or "") not in REFERENCE_METHODS:
+        # Legacy fallback — but never a reference-only row (e.g. Garmin VO2max
+        # must not become the VDOT anchor; it's optimistic by design).
         value, confidence, method, src_date = (
             active["value"], active.get("confidence"), active.get("method"), active.get("date"))
     else:

@@ -916,28 +916,19 @@ def _pace_zones(conn):
     when False, a hint pointing at the calibration that's missing.
     """
     from fit.analysis import compute_daniels_paces
-    from fit.calibration import get_active_calibration
-    from fit.fitness import get_fitness_anchors
+    from fit.calibration import get_calibration_anchor
 
-    # Anchor training paces to the SAME performance VDOT the rest of the
-    # dashboard trusts (latest qualifying race/training effort), not Garmin's
-    # wrist-HR VO2max. Garmin's estimate runs optimistic (e.g. 49 vs an anchor
-    # of ~36), and Daniels paces off 49 would prescribe paces far too fast for
-    # the athlete's real fitness. Falls back to the VO2max calibration only
-    # when there's no qualifying effort to anchor on.
-    anchors = get_fitness_anchors(conn, days=365)
-    vdot = None
-    vdot_source = None
-    if anchors:
-        latest = sorted(anchors, key=lambda a: a["date"], reverse=True)[0]
-        vdot = latest["vdot"]
-        vdot_source = "anchor"
-    if vdot is None:
-        vo2_cal = get_active_calibration(conn, "vo2max")
-        if not vo2_cal or not vo2_cal.get("value"):
-            return {"available": False, "missing": "No qualifying effort yet — run a 5–10 km at ≥ LTHR to anchor your paces."}
-        vdot = vo2_cal["value"]
-        vdot_source = "garmin"
+    # Paces come from the SINGLE standardized VDOT anchor every consumer reads
+    # (get_calibration_anchor) — the human-confirmed sticky value, or the
+    # windowed-max policy estimate when none is confirmed. This is the same
+    # number the VDOT Trend section and the forecast use, so the dashboard tells
+    # one consistent story. (Daniels off Garmin's optimistic VO2max would
+    # prescribe paces far too fast — see the anchor's reference-method exclusion.)
+    anchor = get_calibration_anchor(conn, "vdot")
+    if not anchor or anchor.get("value") is None:
+        return {"available": False, "missing": "No qualifying effort yet — run a 5–10 km at ≥ LTHR to anchor your paces."}
+    vdot = anchor["value"]
+    vdot_source = "garmin" if anchor.get("method") == "garmin_estimate" else "anchor"
 
     paces = compute_daniels_paces(vo2max=vdot)
     if not paces:
