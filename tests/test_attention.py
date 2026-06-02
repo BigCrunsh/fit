@@ -124,3 +124,63 @@ class TestPredictionConfidence:
         _add_race(db, days_ago=60)
         result = _prediction_confidence(db)
         assert result["reason"] == ""
+
+
+def _add_completed_race_with_activity(db, d, name, distance_km, avg_hr,
+                                      result_time=None, garmin_time=None):
+    """Insert a completed race + linked activity for race-attention tests."""
+    aid = f"act-{d}"
+    db.execute(
+        "INSERT INTO activities (id, date, type, name, distance_km, duration_min, avg_hr) "
+        "VALUES (?, ?, 'running', ?, ?, ?, ?)",
+        (aid, d, name, distance_km, distance_km * 5.5, avg_hr),
+    )
+    db.execute(
+        "INSERT INTO race_calendar (date, name, distance, distance_km, status, "
+        "activity_id, result_time, garmin_time) VALUES (?, ?, ?, ?, 'completed', ?, ?, ?)",
+        (d, name, f"{distance_km:g}km", distance_km, aid, result_time, garmin_time),
+    )
+    db.commit()
+
+
+class TestRaceMissingResultTime:
+    def test_flags_completed_race_without_official_time(self, db):
+        _add_completed_race_with_activity(db, "2026-03-22", "Müggelturm HM", 21.1, 173,
+                                          garmin_time="2:01:48")  # no result_time
+        items = _attention_items(db)
+        tags = {i["tag"] for i in items}
+        assert "race_missing_result_time" in tags
+
+    def test_no_flag_when_official_time_present(self, db):
+        _add_completed_race_with_activity(db, "2026-03-22", "HM", 21.1, 173,
+                                          result_time="1:50:00", garmin_time="2:01:48")
+        items = _attention_items(db)
+        assert "race_missing_result_time" not in {i["tag"] for i in items}
+
+
+class TestLthrSuggestion:
+    def test_suggests_lthr_from_recent_hm(self, db):
+        # Active LTHR 172; a recent HM at avg 173 implies ~175 (≥3 apart) → suggest.
+        _add_calibration(db, "lthr", 172, days_ago=200)
+        _add_completed_race_with_activity(db, "2026-03-22", "HM", 21.1, 173,
+                                          garmin_time="2:01:48")
+        items = _attention_items(db)
+        sug = [i for i in items if i["tag"] == "lthr_suggestion"]
+        assert sug, "expected an lthr_suggestion item"
+        assert "fit calibrate lthr 175" in sug[0]["command"]
+
+    def test_no_suggestion_when_close_to_active(self, db):
+        # HM avg 170 → ~172 (HM correction ×1.01 = 171.7→172), within 3 of active → no nudge.
+        _add_calibration(db, "lthr", 172, days_ago=200)
+        _add_completed_race_with_activity(db, "2026-03-22", "HM", 21.1, 170,
+                                          garmin_time="2:05:00")
+        items = _attention_items(db)
+        assert "lthr_suggestion" not in {i["tag"] for i in items}
+
+    def test_no_suggestion_from_sub_hm_race(self, db):
+        # A 12.5km steady "race" (Osterlauf-style) must NOT drive the suggestion.
+        _add_calibration(db, "lthr", 172, days_ago=200)
+        _add_completed_race_with_activity(db, "2026-04-04", "Osterlauf", 12.5, 166,
+                                          garmin_time="1:10:33")
+        items = _attention_items(db)
+        assert "lthr_suggestion" not in {i["tag"] for i in items}

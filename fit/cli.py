@@ -723,22 +723,36 @@ def races_list():
         t.add_column("#", style="dim", justify="right", no_wrap=True)
         t.add_column("Date", no_wrap=True)
         t.add_column("Dist", no_wrap=True)
-        t.add_column("Result", justify="right", no_wrap=True)
         t.add_column("Target", justify="right", no_wrap=True)
+        t.add_column("Official", justify="right", no_wrap=True)
+        t.add_column("Watch", justify="right", no_wrap=True)
         t.add_column("Name", ratio=1, overflow="ellipsis", no_wrap=True)
 
+        missing_official = 0
         for r in rows:
             sc = {"completed": "green", "registered": "cyan", "planned": "dim", "dns": "red", "dnf": "red"}.get(r["status"], "dim")
             matched = "[green]✓[/]" if r["activity_id"] else " "
-            result = r["result_time"] or r["garmin_time"] or "—"
             target = r["target_time"] or "—"
+            # Official (chip) time vs watch-recorded time, shown separately so a
+            # missing official time is visible (it's flagged on the dashboard too).
+            if r["result_time"]:
+                official = r["result_time"]
+            elif r["status"] == "completed" and r["activity_id"]:
+                official = "[yellow]—[/]"
+                missing_official += 1
+            else:
+                official = "—"
+            watch = r["garmin_time"] or "—"
             t.add_row(matched, str(r["id"]), r["date"], r["distance"],
-                      result, target, f"[{sc}]{r['name']}[/]")
+                      target, official, watch, f"[{sc}]{r['name']}[/]")
 
         console.print(Panel(t, title=f"[bold]Races[/] [dim]{len(rows)} total[/]", border_style="blue", padding=(0, 1)))
         unmatched = [r for r in rows if r["status"] == "completed" and not r["activity_id"]]
         if unmatched:
             console.print(f"\n  [yellow]⚠ {len(unmatched)} completed race(s) without matching activity (pre-sync period)[/yellow]")
+        if missing_official:
+            console.print(f"  [yellow]⚠ {missing_official} completed race(s) missing an official time[/yellow] "
+                          "[dim]— set with: fit races set-result <id> <H:MM:SS>[/dim]")
         console.print()
     finally:
         conn.close()
@@ -785,6 +799,51 @@ def races_add():
 
         console.print(f"\n  [green]✓ Race added: {name} on {race_date} (id={race_id})[/green]")
         console.print("  [dim]Use 'fit races' to view calendar, 'fit sync' to match with Garmin activities[/dim]")
+    finally:
+        conn.close()
+
+
+@races.command("set-result")
+@click.argument("race_id", type=int)
+@click.argument("result_time")
+def races_set_result(race_id, result_time):
+    """Set the official result time for a completed race (H:MM:SS or M:SS).
+
+    The official chip time feeds race-VDOT and the prediction Riegel points
+    more accurately than the watch-recorded time. Pass '-' or 'clear' to
+    remove it (predictions fall back to the watch time).
+    """
+    import re
+
+    conn = _conn()
+    try:
+        row = conn.execute(
+            "SELECT id, name, date, status, garmin_time FROM race_calendar WHERE id = ?",
+            (race_id,),
+        ).fetchone()
+        if not row:
+            console.print(f"[bold red]No race with id {race_id}.[/bold red] Run [bold]fit races[/bold] to list.")
+            raise SystemExit(1)
+
+        clearing = result_time.strip().lower() in ("-", "clear", "none")
+        value = None
+        if not clearing:
+            # Accept H:MM:SS or M:SS — validate so we don't store garbage that
+            # later breaks the _parse_time consumers.
+            if not re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", result_time.strip()):
+                console.print(f"[bold red]'{result_time}' isn't a valid time[/bold red] (use H:MM:SS or M:SS).")
+                raise SystemExit(1)
+            value = result_time.strip()
+
+        conn.execute("UPDATE race_calendar SET result_time = ? WHERE id = ?", (value, race_id))
+        conn.commit()
+        if clearing:
+            console.print(f"[green]✓[/green] Cleared official time for {row['name']} ({row['date']}).")
+            if row["garmin_time"]:
+                console.print(f"  [dim]Predictions fall back to watch time {row['garmin_time']}.[/dim]")
+        else:
+            console.print(f"[green]✓[/green] {row['name']} ({row['date']}) official time set to {value}.")
+            console.print("  [dim]Run [bold]fit report[/bold] to refresh predictions.[/dim]")
     finally:
         conn.close()
 

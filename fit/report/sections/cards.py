@@ -679,6 +679,76 @@ def _attention_items(conn):
     except Exception as e:
         logger.debug("vdot_anchor_disagreement check failed: %s", e)
 
+    # Completed races missing an official result_time. The watch time
+    # (garmin_time) covers predictions in the meantime, but the official chip
+    # time is more accurate for race-VDOT — flag so the athlete enters it.
+    try:
+        missing_times = conn.execute("""
+            SELECT id, date, name FROM race_calendar
+            WHERE status = 'completed' AND activity_id IS NOT NULL
+              AND (result_time IS NULL OR result_time = '')
+            ORDER BY date DESC
+        """).fetchall()
+        if missing_times:
+            latest = missing_times[0]
+            extra = f" (+{len(missing_times) - 1} more)" if len(missing_times) > 1 else ""
+            _add(
+                severity="info",
+                message=f"{len(missing_times)} race(s) missing an official time",
+                tag="race_missing_result_time",
+                command=f"fit races set-result {latest['id']} <H:MM:SS>",
+                detail=(
+                    f"Most recent: {latest['name']} ({latest['date']}){extra}. "
+                    "Race predictions currently fall back to the watch-recorded time; "
+                    "enter the official chip time for sharper race-VDOT."
+                ),
+                source="race_calendar rows: status=completed, matched activity, result_time IS NULL.",
+            )
+    except Exception as e:
+        logger.debug("race_missing_result_time check failed: %s", e)
+
+    # Option A — a recent half-marathon implies an LTHR materially different
+    # from the (human-confirmed) active value. Suggest confirming; never
+    # auto-apply. Gated to HM+ distance: it's the cleanest LTHR signal and
+    # avoids non-max efforts (e.g. a steady 12km logged as a race) dragging
+    # the suggestion down.
+    try:
+        from fit.calibration import get_active_calibration as _gac, extract_lthr_from_race
+        active_lthr = _gac(conn, "lthr")
+        hm = conn.execute(f"""
+            SELECT a.date, a.name, a.distance_km, a.avg_hr
+            FROM race_calendar rc JOIN activities a ON a.id = rc.activity_id
+            WHERE rc.status = 'completed' AND a.type IN {RUNNING_TYPES_SQL}
+              AND a.distance_km >= 20 AND a.avg_hr IS NOT NULL
+            ORDER BY a.date DESC LIMIT 1
+        """).fetchone()
+        if active_lthr and hm:
+            est = extract_lthr_from_race({
+                "type": "running", "run_type": "race",
+                "distance_km": hm["distance_km"], "avg_hr": hm["avg_hr"],
+            })
+            if est and abs(est - active_lthr["value"]) >= 3:
+                age = None
+                if active_lthr.get("date"):
+                    age = (date.today() - date.fromisoformat(active_lthr["date"])).days
+                _add(
+                    severity="info",
+                    message=f"Recent HM suggests LTHR ≈{est} (calibrated {active_lthr['value']:.0f})",
+                    tag="lthr_suggestion",
+                    command=f"fit calibrate lthr {est}",
+                    detail=(
+                        f"{hm['name']} ({hm['date']}, {hm['distance_km']:g}km @ avg HR "
+                        f"{hm['avg_hr']}) implies LTHR ≈{est}, vs your calibrated "
+                        f"{active_lthr['value']:.0f}"
+                        + (f" from {age}d ago" if age else "")
+                        + ". LTHR is human-confirmed — adopting it shifts every zone, "
+                        "so run the command to accept, or do a 30-min time trial."
+                    ),
+                    source="extract_lthr_from_race on the most recent ≥20km race vs the active LTHR.",
+                )
+    except Exception as e:
+        logger.debug("lthr_suggestion check failed: %s", e)
+
     # Coaching review staleness.
     try:
         db_path = conn.execute("PRAGMA database_list").fetchone()[2]

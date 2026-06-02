@@ -148,14 +148,29 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
                             logger.debug("Skipping LTHR extract for activity %s: bad date",
                                          enriched.get("id"))
                         else:
-                            add_calibration(
-                                conn, "lthr", candidate_lthr, "race_extract", "medium",
-                                cal_date,
-                                source_activity_id=enriched["id"],
-                                notes=f"Auto-extracted from {enriched.get('name')} ({enriched.get('distance_km', '?')}km)",
-                            )
-                            logger.info("LTHR auto-saved from race %s: %d bpm",
-                                        enriched.get("name"), candidate_lthr)
+                            # Write as informational history (race_estimate), NOT
+                            # an active calibration. LTHR is human-confirmed — the
+                            # athlete promotes a value via `fit calibrate lthr`
+                            # after the dashboard flags the suggestion. This keeps
+                            # a single non-max or noisy race from silently shifting
+                            # the whole zone model. (Backfilled the same way by
+                            # calibration.backfill_race_lthr.)
+                            already = conn.execute(
+                                "SELECT 1 FROM calibration WHERE metric='lthr' "
+                                "AND method='race_estimate' AND source_activity_id=? LIMIT 1",
+                                (enriched["id"],),
+                            ).fetchone()
+                            if not already:
+                                conn.execute("""
+                                    INSERT INTO calibration (metric, value, method,
+                                        confidence, date, source_activity_id, notes, active, flags)
+                                    VALUES ('lthr', ?, 'race_estimate', 'medium', ?, ?, ?, 0, '[]')
+                                """, (candidate_lthr, cal_date.isoformat(), enriched["id"],
+                                      f"Race estimate from {enriched.get('name')} "
+                                      f"({enriched.get('distance_km', '?')}km)"))
+                                conn.commit()
+                                logger.info("LTHR race estimate recorded (history) from %s: %d bpm",
+                                            enriched.get("name"), candidate_lthr)
             progress.advance(task_a)
         counts["activities"] = len(activities)
 
@@ -485,6 +500,19 @@ def _match_race_calendar(conn: sqlite3.Connection) -> None:
                          (activity["id"], garmin_time, pace, rc["id"]))
             conn.execute("UPDATE activities SET run_type = 'race' WHERE id = ?", (activity["id"],))
             logger.info("Race matched: %s → activity %s", rc["date"], activity["id"])
+
+    # Self-heal: every completed race with a linked activity must be tagged
+    # run_type='race'. The loop above only covers activity_id IS NULL, so a
+    # race whose tag a past re-enrichment stripped (classify_run_type never
+    # reproduces 'race') would otherwise stay mislabeled forever — it counts
+    # as easy/tempo/long in every stat and never feeds race calibration.
+    conn.execute(f"""
+        UPDATE activities SET run_type = 'race'
+        WHERE id IN (
+            SELECT activity_id FROM race_calendar
+            WHERE status = 'completed' AND activity_id IS NOT NULL
+        ) AND (run_type IS NULL OR run_type != 'race')
+    """)
     conn.commit()
 
 

@@ -19,9 +19,15 @@ def _prediction_summary(conn):
         target_race = get_target_race(conn)
         target_km = target_race["distance_km"] if target_race and target_race.get("distance_km") else 42.195
 
+        # Prefer official result_time; fall back to watch garmin_time so a race
+        # still contributes a prediction before its official time is entered
+        # (consistent with the Riegel chart; missing official times are flagged
+        # in the attention panel).
         races = conn.execute("""
-            SELECT distance_km, result_time FROM race_calendar
-            WHERE status = 'completed' AND result_time IS NOT NULL
+            SELECT distance_km, COALESCE(result_time, garmin_time) AS race_time
+            FROM race_calendar
+            WHERE status = 'completed'
+              AND COALESCE(result_time, garmin_time) IS NOT NULL
             ORDER BY date DESC LIMIT 5
         """).fetchall()
         vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
@@ -37,9 +43,9 @@ def _prediction_summary(conn):
         # Riegel extrapolation to TARGET distance
         all_secs = []
         for r in races:
-            if r["distance_km"] and r["result_time"]:
+            if r["distance_km"] and r["race_time"]:
                 d1 = r["distance_km"]
-                t1 = _parse_time(r["result_time"])
+                t1 = _parse_time(r["race_time"])
                 if d1 > 0 and t1 > 0 and d1 != target_km:
                     t2 = t1 * (target_km / d1) ** 1.06
                     all_secs.append(round(t2))
@@ -78,9 +84,11 @@ def _prediction_summary(conn):
 def _race_prediction(conn):
     """Generate race prediction table — adapts to target race distance."""
     races = conn.execute("""
-        SELECT rc.date, rc.name, rc.distance, rc.distance_km, rc.result_time
+        SELECT rc.date, rc.name, rc.distance, rc.distance_km,
+               COALESCE(rc.result_time, rc.garmin_time) AS result_time
         FROM race_calendar rc
-        WHERE rc.status = 'completed' AND rc.result_time IS NOT NULL
+        WHERE rc.status = 'completed'
+          AND COALESCE(rc.result_time, rc.garmin_time) IS NOT NULL
         ORDER BY rc.date DESC
     """).fetchall()
     vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()

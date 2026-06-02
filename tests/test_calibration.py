@@ -681,3 +681,99 @@ class TestExtractAetFromSteadyRun:
         activity = {"type": "track_running", "distance_km": 15.0, "avg_hr": 152}
         result = extract_aet_from_steady_run(activity, splits)
         assert result is not None
+
+
+# ════════════════════════════════════════════════════════════════
+# Informational methods (race_estimate) + LTHR history backfill
+# ════════════════════════════════════════════════════════════════
+
+
+def _add_race(db, activity_id, d, name, distance_km, avg_hr, status="completed"):
+    """Insert a completed race + its linked activity into the live-schema db."""
+    db.execute(
+        "INSERT INTO activities (id, date, type, name, distance_km, duration_min, avg_hr) "
+        "VALUES (?, ?, 'running', ?, ?, ?, ?)",
+        (activity_id, d, name, distance_km, distance_km * 5.5, avg_hr),
+    )
+    db.execute(
+        "INSERT INTO race_calendar (date, name, distance, distance_km, status, activity_id) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (d, name, f"{distance_km:g}km", distance_km, status, activity_id),
+    )
+    db.commit()
+
+
+class TestInformationalMethods:
+    def test_race_estimate_never_active(self, db):
+        """A recent race_estimate row must not displace an older authoritative one."""
+        add_calibration(db, "lthr", 172, "race_extract", "medium", date(2025, 10, 19))
+        db.execute(
+            "INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
+            "VALUES ('lthr', 164, 'race_estimate', 'medium', ?, 0, '[]')",
+            (date.today().isoformat(),),  # more recent — would win if eligible
+        )
+        db.commit()
+        active = get_active_calibration(db, "lthr")
+        assert active["value"] == 172
+        assert active["method"] == "race_extract"
+
+    def test_all_informational_returns_none(self, db):
+        """If only race_estimate rows exist, there's no active calibration."""
+        db.execute(
+            "INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
+            "VALUES ('lthr', 175, 'race_estimate', 'medium', ?, 0, '[]')",
+            (date.today().isoformat(),),
+        )
+        db.commit()
+        assert get_active_calibration(db, "lthr") is None
+
+    def test_history_still_includes_race_estimate(self, db):
+        """The chart history shows informational rows even though they're not active."""
+        add_calibration(db, "lthr", 172, "race_extract", "medium", date(2025, 10, 19))
+        db.execute(
+            "INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
+            "VALUES ('lthr', 175, 'race_estimate', 'medium', '2026-03-22', 0, '[]')",
+        )
+        db.commit()
+        hist = get_calibration_history(db, "lthr")
+        methods = {h["method"] for h in hist}
+        assert "race_estimate" in methods and "race_extract" in methods
+
+
+class TestBackfillRaceLthr:
+    def test_builds_history_without_changing_active(self, db):
+        from fit.calibration import backfill_race_lthr
+        add_calibration(db, "lthr", 172, "race_extract", "medium", date(2025, 10, 19))
+        _add_race(db, "r1", "2026-03-22", "Müggelturm HM", 21.15, 173)  # → 175
+        _add_race(db, "r2", "2025-07-26", "10k Race", 10.1, 175)        # → 173
+        added = backfill_race_lthr(db)
+        assert added == 2
+        # Active is unchanged — still the authoritative 172.
+        assert get_active_calibration(db, "lthr")["value"] == 172
+        # But history now carries the race estimates.
+        ests = [h for h in get_calibration_history(db, "lthr") if h["method"] == "race_estimate"]
+        assert sorted(e["value"] for e in ests) == [173, 175]
+
+    def test_idempotent(self, db):
+        from fit.calibration import backfill_race_lthr
+        _add_race(db, "r1", "2026-03-22", "HM", 21.15, 173)
+        assert backfill_race_lthr(db) == 1
+        assert backfill_race_lthr(db) == 0  # second run adds nothing
+
+    def test_excludes_sub_10km_races(self, db):
+        from fit.calibration import backfill_race_lthr
+        _add_race(db, "r1", "2026-04-19", "5K", 4.94, 171)  # too short for LTHR
+        assert backfill_race_lthr(db) == 0
+
+    def test_skips_races_without_avg_hr(self, db):
+        from fit.calibration import backfill_race_lthr
+        db.execute(
+            "INSERT INTO activities (id, date, type, name, distance_km, duration_min, avg_hr) "
+            "VALUES ('r1', '2026-03-22', 'running', 'HM', 21.0, 120, NULL)"
+        )
+        db.execute(
+            "INSERT INTO race_calendar (date, name, distance, distance_km, status, activity_id) "
+            "VALUES ('2026-03-22', 'HM', '21km', 21.0, 'completed', 'r1')"
+        )
+        db.commit()
+        assert backfill_race_lthr(db) == 0

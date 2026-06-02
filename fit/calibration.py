@@ -140,14 +140,23 @@ def derive_confidence(method: str, flags: list[str], has_prior_agreement: bool =
 
 _CONFIDENCE_RANK = {"high": 0, "medium": 1, "low": 2}
 
+# Methods that are recorded for history/context only and must NEVER be
+# auto-selected as the active calibration. `race_estimate` LTHR rows are
+# written from past races to populate the calibration-history chart, but the
+# active LTHR stays human-confirmed (run `fit calibrate lthr`) so a noisy or
+# non-max effort sitting in race_calendar can't silently shift the zone model.
+INFORMATIONAL_METHODS = {"race_estimate"}
+
 
 def get_active_calibration(conn: sqlite3.Connection, metric: str) -> dict | None:
     """Get the active calibration row for a metric, preferring higher confidence.
 
     Selection rule (subsumes the old date-only behavior):
-      1. Prefer non-stale rows over stale rows.
-      2. Within that pool, prefer higher confidence (high → medium → low).
-      3. Within tied confidence, prefer the most recent date.
+      1. Informational rows (INFORMATIONAL_METHODS) are excluded entirely —
+         they're chart history, never the active value.
+      2. Prefer non-stale rows over stale rows.
+      3. Within that pool, prefer higher confidence (high → medium → low).
+      4. Within tied confidence, prefer the most recent date.
 
     This keeps a single spurious low-confidence row (e.g., a strap-glitch
     220 bpm max_hr) from displacing a clean medium-confidence row written
@@ -157,6 +166,7 @@ def get_active_calibration(conn: sqlite3.Connection, metric: str) -> dict | None
     rows = conn.execute(
         "SELECT * FROM calibration WHERE metric = ?", (metric,),
     ).fetchall()
+    rows = [r for r in rows if (r["method"] or "") not in INFORMATIONAL_METHODS]
     if not rows:
         return None
 
@@ -417,3 +427,54 @@ def extract_lthr_from_race(activity: dict) -> float | None:
     logger.info("LTHR estimate from %s (%.1fkm): avg_hr=%d → estimated LTHR=%d",
                 activity.get("name"), distance, avg_hr, estimated_lthr)
     return estimated_lthr
+
+
+def backfill_race_lthr(conn: sqlite3.Connection) -> int:
+    """Populate LTHR *history* from past races for the calibration chart.
+
+    For every completed race ≥10km with a linked activity, write an
+    informational `race_estimate` LTHR row (a method get_active_calibration
+    ignores) dated at the race. This builds the LTHR-over-time series the
+    calibration chart shows WITHOUT touching the active calibration — under
+    the human-confirmed model (Option A) a noisy or non-max race can't shift
+    the zones. Idempotent: skips a race already represented by a race_estimate
+    row (matched on source_activity_id). Returns the number of rows added.
+
+    To promote one of these to the active LTHR, the athlete confirms it
+    deliberately via `fit calibrate lthr <value>`.
+    """
+    from fit.analysis import RUNNING_TYPES_SQL
+
+    races = conn.execute(f"""
+        SELECT a.id, a.date, a.name, a.distance_km, a.avg_hr
+        FROM race_calendar rc JOIN activities a ON a.id = rc.activity_id
+        WHERE rc.status = 'completed' AND a.type IN {RUNNING_TYPES_SQL}
+          AND a.distance_km >= 10 AND a.avg_hr IS NOT NULL
+        ORDER BY a.date ASC
+    """).fetchall()
+
+    added = 0
+    for r in races:
+        exists = conn.execute(
+            "SELECT 1 FROM calibration WHERE metric = 'lthr' AND method = 'race_estimate' "
+            "AND source_activity_id = ? LIMIT 1", (r["id"],),
+        ).fetchone()
+        if exists:
+            continue
+        est = extract_lthr_from_race({
+            "type": "running", "run_type": "race",
+            "distance_km": r["distance_km"], "avg_hr": r["avg_hr"], "name": r["name"],
+        })
+        if not est:
+            continue
+        # Plain insert with active=0 — do NOT call add_calibration (which would
+        # flip the active flag). These are history, not the active value.
+        conn.execute("""
+            INSERT INTO calibration (metric, value, method, confidence, date,
+                                     source_activity_id, notes, active, flags)
+            VALUES ('lthr', ?, 'race_estimate', 'medium', ?, ?, ?, 0, '[]')
+        """, (est, r["date"], r["id"],
+              f"Race estimate from {r['name']} ({r['distance_km']:.1f}km, avg HR {r['avg_hr']})"))
+        added += 1
+    conn.commit()
+    return added
