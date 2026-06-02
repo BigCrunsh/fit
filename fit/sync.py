@@ -164,7 +164,7 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
                                 conn.execute("""
                                     INSERT INTO calibration (metric, value, method,
                                         confidence, date, source_activity_id, notes, active, flags)
-                                    VALUES ('lthr', ?, 'race_estimate', 'medium', ?, ?, ?, 0, '[]')
+                                    VALUES ('lthr', ?, 'race_estimate', 'low', ?, ?, ?, 0, '[]')
                                 """, (candidate_lthr, cal_date.isoformat(), enriched["id"],
                                       f"Race estimate from {enriched.get('name')} "
                                       f"({enriched.get('distance_km', '?')}km)"))

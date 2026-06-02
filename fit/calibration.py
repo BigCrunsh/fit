@@ -469,10 +469,15 @@ def backfill_race_lthr(conn: sqlite3.Connection) -> int:
             continue
         # Plain insert with active=0 — do NOT call add_calibration (which would
         # flip the active flag). These are history, not the active value.
+        # confidence='low' is belt-and-suspenders: get_active_calibration
+        # already excludes race_estimate by method, but low confidence also
+        # keeps a real (medium/high) calibration winning under the plain
+        # confidence-then-recency rule — so even an older code path can't
+        # promote an estimate to active.
         conn.execute("""
             INSERT INTO calibration (metric, value, method, confidence, date,
                                      source_activity_id, notes, active, flags)
-            VALUES ('lthr', ?, 'race_estimate', 'medium', ?, ?, ?, 0, '[]')
+            VALUES ('lthr', ?, 'race_estimate', 'low', ?, ?, ?, 0, '[]')
         """, (est, r["date"], r["id"],
               f"Race estimate from {r['name']} ({r['distance_km']:.1f}km, avg HR {r['avg_hr']})"))
         added += 1
