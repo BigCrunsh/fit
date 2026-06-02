@@ -156,6 +156,40 @@ def _compose_run_story_text(story: dict, config: dict) -> str:
 # ── Periodization Feedback Loop ──
 
 
+def advance_phase_status(conn: sqlite3.Connection) -> int:
+    """Sync each training phase's status to today's calendar date.
+
+    completed (end < today) / active (start ≤ today ≤ end) / planned
+    (today < start). Nothing else advanced phases by date, so the active
+    phase went stale once its end date passed (Base Building stayed "active"
+    into the Volume block). Phases manually marked 'revised' are left alone.
+    Returns the number of rows changed.
+    """
+    today = date.today().isoformat()
+    rows = conn.execute(
+        "SELECT id, start_date, end_date, status FROM training_phases "
+        "WHERE status != 'revised'"
+    ).fetchall()
+    changed = 0
+    for r in rows:
+        if not r["start_date"] or not r["end_date"]:
+            continue
+        if r["end_date"] < today:
+            new_status = "completed"
+        elif r["start_date"] > today:
+            new_status = "planned"
+        else:
+            new_status = "active"
+        if new_status != r["status"]:
+            conn.execute(
+                "UPDATE training_phases SET status = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?", (new_status, r["id"]),
+            )
+            changed += 1
+    conn.commit()
+    return changed
+
+
 def evaluate_phase_readiness(conn: sqlite3.Connection) -> dict | None:
     """Detect if current phase should advance, extend, or deload.
 

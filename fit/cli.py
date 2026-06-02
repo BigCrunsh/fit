@@ -1581,6 +1581,13 @@ def recompute(recompute_all: bool, force: bool):
 
         conn.commit()
         console.print(f"  [green]✓[/green] Recomputed {len(week_set)} weeks")
+
+        # Advance training-phase status to today's date (completed/active/planned).
+        from fit.periodization import advance_phase_status
+        n_phases = advance_phase_status(conn)
+        if n_phases:
+            console.print(f"  [green]✓[/green] Updated {n_phases} training phase(s) to current date")
+
         console.print("[bold green]Done.[/bold green]")
     finally:
         conn.close()
