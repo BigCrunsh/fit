@@ -45,6 +45,21 @@ Active is sticky/last-confirmed for all four; the estimator produces only the *s
 - **WHEN** only one AeT drift-test estimate exists (below the policy's `min_samples`)
 - **THEN** the anchor returns that single row's value with `confidence='low'` rather than a degenerate one-element median
 
+### Requirement: Anchor changes are forward-only — history is reconstructable, not rewritten
+A calibration change SHALL NOT retroactively alter past derived classifications. Each activity SHALL be classified with the calibration active **as of its own date** (`get_active_calibration(conn, metric, asof=activity_date)`), and re-enrichment SHALL use that as-of anchor — so confirming a new LTHR/MaxHR/AeT does not reclassify past activities or shift the weekly/phase aggregates built from them. The value used SHALL remain stamped on the activity (`lthr_used`/`max_hr_used`), and the dated calibration rows SHALL be retained, so the reasoning behind a past zone or phase classification is reconstructable. `get_active_calibration` with no `asof` retains its prior "currently active" behaviour.
+
+#### Scenario: A later LTHR change does not reclassify a past activity
+- **WHEN** an activity dated 2025-02-01 was enriched with the then-active LTHR 170, and the athlete later confirms LTHR 180 dated 2025-06-01
+- **THEN** re-enriching (even `--force`) classifies the Feb activity with LTHR 170 (its as-of value), `lthr_used` stays 170, and the week's zone aggregate is unchanged
+
+#### Scenario: As-of reconstruction
+- **WHEN** `get_active_calibration(conn, 'lthr', asof=2025-03-01)` is called with confirmed rows dated 2025-01-01 (172) and 2025-06-01 (175)
+- **THEN** it returns 172 (the value active on 2025-03-01), not 175
+
+#### Scenario: Past phases stay classified as they were
+- **WHEN** an anchor changes after a phase has completed
+- **THEN** the completed phase's actuals (built from the frozen per-activity zones) do not change, so its classification/reasoning is preserved
+
 ## MODIFIED Requirements
 
 ### Requirement: VDOT from race results

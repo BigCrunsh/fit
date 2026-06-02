@@ -151,7 +151,8 @@ _CONFIDENCE_RANK = {"high": 0, "medium": 1, "low": 2}
 INFORMATIONAL_METHODS = {"race_estimate", "effort_estimate"}
 
 
-def get_active_calibration(conn: sqlite3.Connection, metric: str) -> dict | None:
+def get_active_calibration(conn: sqlite3.Connection, metric: str,
+                           asof: date | None = None) -> dict | None:
     """Get the active calibration row for a metric, preferring higher confidence.
 
     Selection rule (subsumes the old date-only behavior):
@@ -165,23 +166,41 @@ def get_active_calibration(conn: sqlite3.Connection, metric: str) -> dict | None
     220 bpm max_hr) from displacing a clean medium-confidence row written
     earlier. Falls back to pure date if no rows are within the staleness
     window.
+
+    `asof` enables POINT-IN-TIME reconstruction: it returns the row that was
+    active *as of* that date — only rows dated on/before `asof` are considered,
+    and staleness is judged relative to `asof`. This is how historical zone /
+    phase classifications stay stable when a calibration later changes: an
+    activity is classified with the anchor active on ITS date, not today's. With
+    no `asof` (the default) it returns the currently-active row as before.
     """
+    ref = asof or date.today()
     rows = conn.execute(
         "SELECT * FROM calibration WHERE metric = ?", (metric,),
     ).fetchall()
     rows = [r for r in rows if (r["method"] or "") not in INFORMATIONAL_METHODS]
+
+    # Point-in-time: only when reconstructing a past date do we exclude rows
+    # dated after it. The default (asof=None) keeps the exact prior behaviour
+    # (all rows eligible) so nothing about "current" selection changes.
+    if asof is not None:
+        def _on_or_before(r):
+            try:
+                return date.fromisoformat(r["date"]) <= ref
+            except (ValueError, TypeError):
+                return True  # undated rows always eligible
+        rows = [r for r in rows if _on_or_before(r)]
     if not rows:
         return None
 
     threshold = STALENESS_THRESHOLDS.get(metric, timedelta(days=365))
-    today = date.today()
 
     def _key(r):
         # Compound key: (stale flag, confidence rank, -ordinal). min() picks
         # non-stale before stale, then high → medium → low, then most recent.
         try:
             day = date.fromisoformat(r["date"])
-            stale_flag = 1 if (today - day) > threshold else 0
+            stale_flag = 1 if (ref - day) > threshold else 0
             day_neg = -day.toordinal()
         except (ValueError, TypeError):
             stale_flag, day_neg = 1, 0

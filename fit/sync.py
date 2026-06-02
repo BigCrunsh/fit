@@ -544,18 +544,38 @@ def enrich_existing_activities(conn: sqlite3.Connection, config: dict,
     """Re-enrich activities with the current calibration.
 
     Default (`force=False`) only re-enriches rows missing `hr_zone` — used
-    after sync to fill in any gaps. `force=True` re-enriches every activity,
-    which is what you want after a calibration change (e.g., max_hr just got
-    auto-raised by sync) so historical zones reflect the new physiology.
+    after sync to fill in any gaps. `force=True` re-enriches every activity.
+
+    POINT-IN-TIME: each activity is classified with the calibration that was
+    active AS OF ITS OWN DATE (get_active_calibration(..., asof=activity_date)),
+    NOT today's value. So changing an anchor (e.g. confirming a new LTHR) does
+    NOT retroactively reclassify past activities or shift past weekly/phase
+    aggregates — history stays as it was reasoned at the time, and the
+    `lthr_used`/`max_hr_used` stamp + the dated calibration rows reconstruct why.
+    Re-enriching is therefore idempotent across later anchor changes.
 
     Returns count of enriched activities.
     """
-    lthr_cal = get_active_calibration(conn, "lthr")
-    lthr = int(lthr_cal["value"]) if lthr_cal else None
-    max_hr_cal = get_active_calibration(conn, "max_hr")
-    max_hr = int(max_hr_cal["value"]) if max_hr_cal else config["profile"].get("max_hr")
-    aet_cal = get_active_calibration(conn, "aet")
-    aet = int(aet_cal["value"]) if aet_cal else None
+    cfg_max_hr = config["profile"].get("max_hr")
+    # Resolve the as-of anchor per activity date, cached by date (calibration
+    # changes are rare, activities cluster on few dates).
+    _asof_cache: dict[str, tuple] = {}
+
+    def _anchors_asof(day: str):
+        if day not in _asof_cache:
+            try:
+                ref = date.fromisoformat(day)
+            except (ValueError, TypeError):
+                ref = None
+            lc = get_active_calibration(conn, "lthr", asof=ref)
+            mc = get_active_calibration(conn, "max_hr", asof=ref)
+            ac = get_active_calibration(conn, "aet", asof=ref)
+            _asof_cache[day] = (
+                int(lc["value"]) if lc else None,
+                int(mc["value"]) if mc else cfg_max_hr,
+                int(ac["value"]) if ac else None,
+            )
+        return _asof_cache[day]
 
     where_clause = "" if force else "WHERE hr_zone IS NULL"
     # `run_type` is included so `enrich_activity` can preserve existing 'race'
@@ -572,6 +592,7 @@ def enrich_existing_activities(conn: sqlite3.Connection, config: dict,
     count = 0
     for row in rows:
         a = dict(row)
+        lthr, max_hr, aet = _anchors_asof(a["date"])
         enriched = enrich_activity(a, config, lthr=lthr, max_hr=max_hr, aet=aet)
         conn.execute("""
             UPDATE activities SET
