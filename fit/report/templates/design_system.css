@@ -223,21 +223,28 @@ td:first-child { border-radius:6px 0 0 6px; }
 td:last-child { border-radius:0 6px 6px 0; }
 
 /* Charts */
-.chart-box { background:rgba(255,255,255,0.018); border:1px solid rgba(255,255,255,0.05); border-radius:14px; padding:16px 14px 8px; margin-bottom:18px; }
-.chart-box canvas { width:100% !important; }
+.chart-box { background:rgba(255,255,255,0.018); border:1px solid rgba(255,255,255,0.05); border-radius:14px; padding:16px 14px 8px; margin-bottom:18px; position:relative; }
 
-/* Chart canvas size tiers. The inline `height` attribute drives Chart.js's
-   aspect ratio at init; the class sets a min-height fallback so the
-   container doesn't collapse on first paint or when JS fails. Use:
-     .chart-canvas-sm (140px) — diagnostic / supporting charts
-     .chart-canvas-md (160px) — default
-     .chart-canvas-lg (180px) — primary trend charts
-     .chart-canvas-xl (200px) — hero charts that need extra y-room
-*/
-.chart-canvas-sm { min-height:140px; }
-.chart-canvas-md { min-height:160px; }
-.chart-canvas-lg { min-height:180px; }
-.chart-canvas-xl { min-height:200px; }
+/* Chart canvas size tiers — the SINGLE source of chart height.
+   The tier class goes on the chart's CONTAINER (the .chart-box) and sets an
+   explicit height; the canvas fills it and charts run with
+   maintainAspectRatio:false, so the box fully determines the chart size — no
+   dependence on Chart.js's own aspect-ratio inference (which was timing-
+   dependent: inflated on resize, squashed on a plain create — the root of the
+   "stretched / squashed" inconsistency). Fixed px (not `aspect-ratio`) on
+   purpose: `aspect-ratio` on a box with a <canvas> child hits a replaced-
+   element edge case that collapses the box width. Heights match the
+   proportions the dashboard shipped with.
+   NOTE: charts must be created while their tab is visible (see the init pass
+   in dashboard.html) or the container is 0×0 and the chart collapses. */
+/* Heights include the .chart-box vertical padding (~24px) so the *canvas*
+   lands at the proportions the dashboard shipped with (≈400/453/510/566). */
+.chart-canvas-sm { height: 424px; }
+.chart-canvas-md { height: 477px; }
+.chart-canvas-lg { height: 534px; }
+.chart-canvas-xl { height: 590px; }
+.chart-canvas-sm > canvas, .chart-canvas-md > canvas,
+.chart-canvas-lg > canvas, .chart-canvas-xl > canvas { width:100% !important; height:100% !important; }
 
 /* Headline */
 .headline { background:rgba(129,140,248,0.05); border:1px solid rgba(129,140,248,0.12); border-radius:12px; padding:16px 20px; margin:14px 0; font-size:14px; line-height:1.6; color:#c4b5fd; }
@@ -350,9 +357,11 @@ details.insight-box .insight-title { font-size:14px; padding:2px 0; }
 /* Profile group surface — accent-tinted box used to group Fitness Profile / Objectives blocks */
 .profile-group-box { background:rgba(129,140,248,0.03); border:1px solid rgba(129,140,248,0.08); border-radius:14px; padding:14px 14px 16px; }
 
-/* Chart canvas height utility — replaces inline style="height:200px" wrappers */
-.chart-canvas-md { height:200px; }
-.chart-canvas-md canvas { width:100% !important; height:100% !important; }
+/* Mini chart wrapper (e.g. the Overview race-anchor prediction preview) —
+   a small fixed-height canvas box. Distinct from the .chart-canvas-* size
+   tiers used for full charts (don't reuse those names here). */
+.chart-canvas-mini { height:200px; position:relative; }
+.chart-canvas-mini canvas { width:100% !important; height:100% !important; }
 
 /* Sparkline grid */
 .sparkline-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:10px; margin:12px 0; }

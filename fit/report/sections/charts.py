@@ -23,14 +23,20 @@ def _week_to_iso_date(week_str):
 def _profile_x_range(conn):
     """Shared x-axis range for Profile-tab charts: (min_iso, max_iso).
 
-    Convention from CLAUDE.md: "Profile charts share a fixed range
-    (first phase - 2w → race + 10d)". Returns (None, None) when either
-    bound can't be computed; callers fall back to chart auto-fit.
+    Spans the WHOLE periodization so every training phase and the race are
+    visible: min = first phase start − 2 weeks, max = race (or the last phase
+    end) + 10 days of buffer. Do NOT cap the max near today — the empty space
+    to the right of today IS the plan (future phases + race), which is the
+    point of the unified timeline. Returns (None, None) when bounds can't be
+    computed; callers fall back to chart auto-fit.
     """
     from datetime import timedelta
     try:
         first_phase = conn.execute(
             "SELECT MIN(start_date) AS d FROM training_phases WHERE start_date IS NOT NULL"
+        ).fetchone()
+        last_phase = conn.execute(
+            "SELECT MAX(end_date) AS d FROM training_phases WHERE end_date IS NOT NULL"
         ).fetchone()
         target = conn.execute(
             "SELECT date FROM race_calendar WHERE status IN ('planned','target') "
@@ -38,12 +44,19 @@ def _profile_x_range(conn):
         ).fetchone() or conn.execute(
             "SELECT date FROM race_calendar ORDER BY date DESC LIMIT 1"
         ).fetchone()
+
         min_iso = None
-        max_iso = None
         if first_phase and first_phase["d"]:
             min_iso = (date.fromisoformat(first_phase["d"]) - timedelta(days=14)).isoformat()
+
+        # Max = the later of (race day, last phase end) + 10d buffer, so the
+        # full plan and the race marker fit on the axis.
+        ends = []
         if target and target["date"]:
-            max_iso = (date.fromisoformat(target["date"]) + timedelta(days=10)).isoformat()
+            ends.append(date.fromisoformat(target["date"]))
+        if last_phase and last_phase["d"]:
+            ends.append(date.fromisoformat(last_phase["d"]))
+        max_iso = (max(ends) + timedelta(days=10)).isoformat() if ends else None
         return min_iso, max_iso
     except Exception:
         return None, None
@@ -165,7 +178,14 @@ def _all_charts(conn):
                 "options": {"responsive": True,
                             "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}},
                                         "annotation": {"annotations": vol_annots} if vol_annots else {}},
-                            "scales": {"x": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}},
+                            # Bake the time scale + offset here (like chart-zones) so the
+                            # ISO-date labels map onto the week axis. A bar chart whose
+                            # x-scale is switched to 'time' AFTER construction (and without
+                            # offset) pins every bar at pixel 0 — the Volume Trend went blank.
+                            "scales": {"x": {"stacked": True, "type": "time", "offset": True,
+                                             "time": {"unit": "week", "displayFormats": {"week": "MMM d"},
+                                                      "tooltipFormat": "yyyy-MM-dd"},
+                                             "grid": {"color": "rgba(255,255,255,0.03)"}},
                                        "y": {"stacked": True, "beginAtZero": True,
                                              "grid": {"color": "rgba(255,255,255,0.03)"},
                                              "title": {"display": True, "text": "km/week"}}}}
@@ -896,10 +916,16 @@ def _all_charts(conn):
         GROUP BY month ORDER BY month
     """).fetchall()
 
-    # Riegel predictions from actual races (scatter points)
+    # Riegel predictions from actual races (scatter points). Prefer the
+    # official result_time; fall back to the watch-recorded garmin_time so a
+    # race still plots even before its official time is entered. (The dashboard
+    # flags missing official times separately in the attention panel.)
     race_points = conn.execute("""
-        SELECT date, name, distance_km, result_time FROM race_calendar
-        WHERE status = 'completed' AND result_time IS NOT NULL AND distance_km IS NOT NULL
+        SELECT date, name, distance_km,
+               COALESCE(result_time, garmin_time) AS race_time
+        FROM race_calendar
+        WHERE status = 'completed' AND distance_km IS NOT NULL
+          AND COALESCE(result_time, garmin_time) IS NOT NULL
         ORDER BY date
     """).fetchall()
 
@@ -939,7 +965,7 @@ def _all_charts(conn):
         riegel_points = []
         for r in race_points:
             d1 = r["distance_km"]
-            t1 = _parse_t(r["result_time"])
+            t1 = _parse_t(r["race_time"])
             if d1 > 0 and t1 > 0 and d1 != target_km:
                 t2 = t1 * (target_km / d1) ** 1.06
                 riegel_points.append({"x": r["date"], "y": round(t2 / 60, 1)})
