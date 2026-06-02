@@ -98,6 +98,72 @@ class TestVdotAnchor:
         assert a["suggestion"]["differs"] is False
 
 
+class TestMedianFamily:
+    def test_lthr_uses_median_not_max(self, db):
+        """A hot-day high LTHR estimate must NOT win — median resists it."""
+        for v, age in [(170, 20), (172, 60), (173, 100), (181, 10)]:  # 181 = hot-day outlier
+            _ins(db, "lthr", v, "race_estimate", days_ago=age)
+        a = get_calibration_anchor(db, "lthr")
+        assert a["suggestion"]["value"] == 172.5   # median of 170/172/173/181, NOT 181
+        assert a["suggestion"]["value"] < 181
+
+    def test_aet_median_of_noisy_drift_tests(self, db):
+        for v, age in [(146, 10), (155, 30), (152, 50)]:
+            _ins(db, "aet", v, "drift_test", days_ago=age)
+        a = get_calibration_anchor(db, "aet")
+        assert a["suggestion"]["value"] == 152      # median of 146/152/155
+
+    def test_below_min_samples_falls_back_to_recent_low_confidence(self, db):
+        """LTHR needs 3; with 2 it uses the most recent at low confidence."""
+        _ins(db, "lthr", 170, "race_estimate", days_ago=60)
+        _ins(db, "lthr", 174, "race_estimate", days_ago=10)
+        a = get_calibration_anchor(db, "lthr")
+        assert a["suggestion"]["value"] == 174       # most recent, not the median
+        assert a["suggestion"]["confidence"] == "low"
+
+    def test_maxhr_max_family_365d_window(self, db):
+        """MaxHR is a max over a 365-day window (not 180)."""
+        _ins(db, "max_hr", 192, "race_extract", days_ago=300)   # in 365d window
+        _ins(db, "max_hr", 188, "activity_max", days_ago=20)
+        a = get_calibration_anchor(db, "max_hr")
+        assert a["suggestion"]["value"] == 192       # 300d-old peak still counts
+
+
+class TestBackfillRaceVdot:
+    def _seed_race(self, db, aid, days_ago, km, result_time):
+        d = (date.today() - timedelta(days=days_ago)).isoformat()
+        db.execute(
+            "INSERT INTO activities (id, date, type, distance_km, duration_min) "
+            "VALUES (?, ?, 'running', ?, 60)", (aid, d, km))
+        db.execute(
+            "INSERT INTO race_calendar (date, name, distance, distance_km, status, result_time, activity_id) "
+            "VALUES (?, 'Race', ?, ?, 'completed', ?, ?)", (d, f"{km:g}km", km, result_time, aid))
+        db.commit()
+
+    def test_writes_informational_rows_idempotently(self, db):
+        from fit.calibration import backfill_race_vdot, get_active_calibration
+        self._seed_race(db, "r1", 60, 10.0, "0:45:00")
+        self._seed_race(db, "r2", 30, 21.1, "1:47:00")
+        assert backfill_race_vdot(db) == 2
+        assert backfill_race_vdot(db) == 0          # idempotent
+        rows = db.execute("SELECT value, method, active FROM calibration WHERE metric='vdot'").fetchall()
+        assert len(rows) == 2
+        assert all(r["method"] == "race_estimate" and r["active"] == 0 for r in rows)
+        # Informational → never the active calibration.
+        assert get_active_calibration(db, "vdot") is None
+
+    def test_skips_out_of_range_and_missing_time(self, db):
+        from fit.calibration import backfill_race_vdot
+        self._seed_race(db, "marathon", 40, 42.2, "3:30:00")   # > 25km
+        self._seed_race(db, "sprint", 20, 3.0, "0:12:00")      # < 5km
+        db.execute("INSERT INTO activities (id, date, type, distance_km) VALUES "
+                   "('dns', '2026-01-01', 'running', 10.0)")
+        db.execute("INSERT INTO race_calendar (date, name, distance, distance_km, status, activity_id) "
+                   "VALUES ('2026-01-01', 'DNS', '10km', 10.0, 'completed', 'dns')")  # no time
+        db.commit()
+        assert backfill_race_vdot(db) == 0
+
+
 class TestNoPolicyFallback:
     def test_metric_without_policy_uses_legacy_selection(self, db):
         """weight has no aggregation policy → legacy single-row, no suggestion."""

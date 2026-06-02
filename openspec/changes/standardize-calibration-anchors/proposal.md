@@ -30,16 +30,18 @@ Every consumer reads through it: the dashboard VDOT Trend section, Pace Zones, t
 
 ### Per-metric aggregation policy
 
-Each metric declares an `AGGREGATION_POLICY` describing its estimator, window, and outlier handling. The policy matches the metric's statistical nature:
+Each metric declares an `AGGREGATION_POLICY`. **One uniform shape:** a trailing window · `staleness = window` · sticky-confirm · no hard gates (plausibility and effort-hardness ride along as *confidence*, surfaced at the confirm prompt — never an auto-filter). Just two estimator families:
 
-| Metric | Nature | Estimator | Window / memory | Outlier handling |
-|---|---|---|---|---|
-| **VDOT** | performance, bounded **above** by fitness | **max within a trailing window** (suggestion); active is **sticky/last-confirmed** | 6-month window | none needed — a max ignores slow outliers; downward trends show up as strong efforts ageing out of the window → stale → re-test prompt |
-| **MaxHR** | true physiological **ceiling** | **max** of validated obs | long (years) + age decay (~1 bpm/yr) | reject readings implausibly above established ceiling / age-predicted max |
-| **LTHR** | noisy central **threshold** | **median** (or trimmed mean) of recent qualifying efforts | recent (~6–12 mo), recency-weighted | median is intrinsically robust |
-| **AeT** | noisiest central **threshold** (drift tests) | **median / trimmed mean** of recent tests | recent (~season), recency-weighted | trim extremes; negative-drift tests excluded upstream |
+| Metric | family | window = staleness | min_samples | differs | notes |
+|---|---|---|---|---|---|
+| **VDOT** | `max` | 180 d | 1 | 1.0 | one-sided (a race is bounded above by fitness) |
+| **MaxHR** | `max` | 365 d | 1 | 2 bpm | a ceiling, hit only ~yearly → longer window; strap glitches handled as low-confidence, not a hard gate |
+| **LTHR** | `median` | 180 d | 3 | 2 bpm | two-sided (a hot day inflates HR without raising the threshold) |
+| **AeT** | `median` | 180 d | 3 | 3 bpm | two-sided, noisiest signal |
 
-The unifying rule: *one-sided-bounded-above or literal-ceiling metrics take the **max**; two-sided physiological thresholds take a **robust center**.*
+The unifying rule: *one-sided / ceiling metrics take a **max**; two-sided noisy thresholds take a **median**.* Everything metric-specific reduces to three facts: **(1) max vs median** (which also sets `min_samples` 1 vs 3), **(2) MaxHR's 365-day window** (you hit max HR only ~yearly), and **(3) what physically measures it** (observation source). No age decay, no trim, no per-metric method allowlists, no auto-accept exception. Observations = the metric's rows minus reference-only methods (Garmin VO2max for VDOT); below `min_samples`, a median falls back to the most-recent single row at low confidence.
+
+**Confidence, not gates.** Plausibility envelopes (`_PLAUSIBLE`) and effort-hardness (HR vs LTHR, pace CV) are not filters — an out-of-envelope or off-effort observation is recorded at low confidence with a reason, and the confirm prompt explains it (*"MaxHR 240 — implausibly high vs 196, strap glitch?"*). The human decides; nothing is auto-dropped, so a real effort (e.g. a track 5k at HR just under LTHR) is never silently excluded.
 
 **VDOT specifics.** The *suggestion* is the max over qualifying efforts inside a 6-month window; the *active* value is **sticky** — the athlete's last-confirmed VDOT, never auto-overwritten by the window. Two consequences fall out, and neither needs manual tagging:
 

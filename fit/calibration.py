@@ -32,6 +32,7 @@ _PLAUSIBLE = {
     "lthr":   (130, 200),
     "aet":    (100, 180),  # typically 70-85% × LTHR for trained runners
     "vo2max": (25, 80),
+    "vdot":   (25, 80),    # same envelope as vo2max — VDOT is a pseudo-VO2max
     "weight": (35, 200),  # kg
 }
 
@@ -50,6 +51,7 @@ _AGREE_TOLERANCE = {
     "lthr": 2,
     "aet": 3,
     "vo2max": 1,
+    "vdot": 1,
     "weight": 0.5,
 }
 
@@ -199,54 +201,81 @@ def get_active_calibration(conn: sqlite3.Connection, metric: str) -> dict | None
 #   - LTHR / AeT are two-sided noisy thresholds (a hot day inflates avg HR
 #     without raising the threshold) → take a ROBUST CENTER (median/trimmed).
 #
-# Phase 1 ships the VDOT policy (max, recency-decayed). LTHR/AeT/MaxHR keep the
-# legacy single-row selection until their policies land (Phase 5); for those,
-# get_calibration_anchor falls back to get_active_calibration with no suggestion.
 # Methods that represent a human-owned, confirmed anchor. The active value is
-# *sticky* — it is whatever the athlete last confirmed and changes only when
-# they accept a new suggestion (never auto-overwritten by the windowed max).
+# *sticky* — whatever the athlete last confirmed; it changes only when they
+# accept a new suggestion (never auto-overwritten by the policy estimate).
 CONFIRMED_METHODS = {"manual", "confirmed"}
 
+# Reference-only observations: recorded for context but never fed to an
+# estimator. Garmin's wrist-HR VO2max is optimistic, so it never enters VDOT's
+# max — it's only a last-resort bootstrap value.
+REFERENCE_METHODS = {"garmin_estimate"}
+
+# Two estimator families, picked by the metric's statistics:
+#   - 'max'    — one-sided / ceiling metrics (VDOT, MaxHR). A slow/distorted
+#                effort can't be selected, so no gate is needed; downward trends
+#                surface as strong efforts ageing out of the window → stale.
+#   - 'median' — two-sided noisy thresholds (LTHR, AeT). A hot day inflates avg
+#                HR without raising the threshold; a max would bias the zone
+#                ceiling up, so we take a robust centre.
+# Uniform shape for all four: a trailing window, staleness == window, sticky
+# confirm, no hard gates (plausibility/effort-hardness ride along as confidence,
+# surfaced at the confirm prompt). Only three things vary: family (→ min_samples
+# 1 vs 3), MaxHR's longer 365d window (max HR is hit ~yearly), and the unit of
+# `differs` (reusing _AGREE_TOLERANCE). See standardize-calibration-anchors.
 AGGREGATION_POLICY = {
-    "vdot": {
-        # Suggestion = max over observations inside a trailing window. A max
-        # ignores slow/distorted efforts by construction (a trail or not-all-
-        # out race can't be selected); the window is what captures downward
-        # trends — a once-fast effort ages out and, if nothing fresh replaces
-        # it, the anchor goes stale and prompts a re-test rather than guessing.
-        "estimator": "max_window",
-        "window_days": 180,           # 6 months — drives suggestions AND staleness
-        # Garmin's wrist-HR estimate is reference-only (optimistic); it never
-        # enters the max and is used only as a last-resort bootstrap value.
-        "reference_methods": {"garmin_estimate"},
-        "min_samples": 1,
-        "differs_materially": 1.0,    # VDOT points before a suggestion is raised
-    },
+    "vdot":   {"family": "max",    "window_days": 180, "min_samples": 1, "differs": 1.0},
+    "max_hr": {"family": "max",    "window_days": 365, "min_samples": 1, "differs": 2.0},
+    "lthr":   {"family": "median", "window_days": 180, "min_samples": 3, "differs": 2.0},
+    "aet":    {"family": "median", "window_days": 180, "min_samples": 3, "differs": 3.0},
 }
 
 
+def _window_obs(rows, window_days, now):
+    """Observation rows inside the trailing window, each tagged with _age_days."""
+    floor = now - timedelta(days=window_days)
+    out = []
+    for r in rows:
+        try:
+            d = date.fromisoformat(r["date"])
+            float(r["value"])
+        except (ValueError, TypeError, KeyError):
+            continue
+        if d < floor or d > now:
+            continue
+        out.append(dict(r, _age_days=(now - d).days))
+    return out
+
+
 def _max_in_window(rows, window_days, now):
-    """Maximum observation value inside a trailing window.
+    """Maximum observation value inside a trailing window (one-sided metrics).
 
     Returns (value, [contributing rows in-window, best-first]) or (None, []).
     A max can't be dragged down by a slow/distorted effort; downward trends are
     captured by the window — old strong efforts age out of it.
     """
-    floor = now - timedelta(days=window_days)
-    scored = []
-    for r in rows:
-        try:
-            d = date.fromisoformat(r["date"])
-            v = float(r["value"])
-        except (ValueError, TypeError, KeyError):
-            continue
-        if d < floor or d > now:
-            continue
-        scored.append((v, (now - d).days, r))
-    if not scored:
+    obs = _window_obs(rows, window_days, now)
+    if not obs:
         return None, []
-    scored.sort(key=lambda s: s[0], reverse=True)
-    return round(scored[0][0], 1), [dict(s[2], _age_days=s[1]) for s in scored]
+    obs.sort(key=lambda r: float(r["value"]), reverse=True)
+    return round(float(obs[0]["value"]), 1), obs
+
+
+def _median_in_window(rows, window_days, now):
+    """Median observation value inside a trailing window (two-sided thresholds).
+
+    The median is intrinsically outlier-robust — a hot-day high reading can't
+    pull it up the way a max would. Returns (value, [rows recent-first]) or
+    (None, []).
+    """
+    obs = _window_obs(rows, window_days, now)
+    if not obs:
+        return None, []
+    vals = sorted(float(r["value"]) for r in obs)
+    n = len(vals)
+    med = vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2
+    obs.sort(key=lambda r: r["_age_days"])
+    return round(med, 1), obs
 
 
 def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> dict | None:
@@ -262,10 +291,12 @@ def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> dict | None
       window (or there is no in-window evidence) — the cue to prompt a re-test.
     - ``suggestion`` is the policy estimate from the trailing window plus whether
       it ``differs`` materially from the active value (what sync uses to prompt
-      accept/reject). None when no in-window observation exists.
+      accept/reject), a plain-language ``reason``, and a ``confidence`` carried
+      from the contributing rows (the confidence model is surfaced at the prompt,
+      not used to auto-filter). None when there is no in-window observation.
 
     Metrics without a policy fall back to the legacy single-row selection
-    (no suggestion), so nothing regresses before their policies land.
+    (no suggestion), so nothing regresses.
     """
     policy = AGGREGATION_POLICY.get(metric)
     active = get_active_calibration(conn, metric)
@@ -279,49 +310,66 @@ def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> dict | None
 
     rows = [dict(r) for r in conn.execute(
         "SELECT * FROM calibration WHERE metric = ?", (metric,)).fetchall()]
-    ref = policy.get("reference_methods", set())
-    observations = [r for r in rows if (r.get("method") or "") not in ref]
+    observations = [r for r in rows if (r.get("method") or "") not in REFERENCE_METHODS]
     now = date.today()
     window = policy["window_days"]
+    family = policy["family"]
+    estimator = _max_in_window if family == "max" else _median_in_window
 
     suggestion = None
-    if policy["estimator"] == "max_window" and len(observations) >= policy["min_samples"]:
-        val, contributors = _max_in_window(observations, window, now)
-        if val is not None:
+    val, contributors = estimator(observations, window, now)
+    if val is not None:
+        if len(contributors) >= policy["min_samples"]:
+            # Confidence rides from the contributing rows; lowest wins (a single
+            # implausible/low row keeps the suggestion cautious for the prompt).
+            confs = [c.get("confidence") or "low" for c in contributors]
+            sug_conf = max(confs, key=lambda c: _CONFIDENCE_RANK.get(c, 2))
+            verb = "max" if family == "max" else "median"
             top = contributors[0]
             suggestion = {
                 "value": val,
-                "reason": (f"max of {len(contributors)} effort(s) in last "
-                           f"{window}d: {top['value']:g} from {top['date']} "
-                           f"(~{top['_age_days']}d ago)"),
+                "confidence": sug_conf,
+                "reason": (f"{verb} of {len(contributors)} effort(s) in last {window}d"
+                           + (f" — best {top['value']:g} from {top['date']} (~{top['_age_days']}d ago)"
+                              if family == "max" else "")),
+                "inputs": contributors,
+            }
+        elif contributors:
+            # Below min_samples (median needs ≥N): don't fabricate a centre —
+            # fall back to the most recent single row at low confidence.
+            recent = min(contributors, key=lambda c: c["_age_days"])
+            suggestion = {
+                "value": round(float(recent["value"]), 1),
+                "confidence": "low",
+                "reason": (f"only {len(contributors)} of {policy['min_samples']} "
+                           f"needed in last {window}d — using most recent, low confidence"),
                 "inputs": contributors,
             }
 
     # Sticky active: a confirmed/manual row is the value, untouched by the
-    # window. Without one (bootstrap), fall back to the windowed suggestion.
+    # estimator. Without one (bootstrap), fall back to the policy suggestion.
     confirmed = active if (active and active.get("method") in CONFIRMED_METHODS) else None
     if confirmed:
-        value = confirmed["value"]
-        confidence = confirmed.get("confidence")
-        method = confirmed["method"]
-        src_date = confirmed.get("date")
+        value, confidence, method, src_date = (
+            confirmed["value"], confirmed.get("confidence"), confirmed["method"], confirmed.get("date"))
     elif suggestion is not None:
-        value, confidence, method, src_date = suggestion["value"], "medium", "policy", suggestion["inputs"][0]["date"]
+        value, confidence, method, src_date = (
+            suggestion["value"], suggestion["confidence"], "policy", suggestion["inputs"][0]["date"])
     elif active:
-        value, confidence, method, src_date = active["value"], active.get("confidence"), active.get("method"), active.get("date")
+        value, confidence, method, src_date = (
+            active["value"], active.get("confidence"), active.get("method"), active.get("date"))
     else:
         return {"value": None, "confidence": None, "method": None, "stale": True,
                 "inputs": [], "suggestion": suggestion}
 
     # Stale when the value's source effort has aged past the window.
-    stale = True
     try:
         stale = (now - date.fromisoformat(src_date)).days > window
     except (ValueError, TypeError):
         stale = True
 
     if suggestion is not None:
-        suggestion["differs"] = abs(suggestion["value"] - value) >= policy["differs_materially"]
+        suggestion["differs"] = abs(suggestion["value"] - value) >= policy["differs"]
 
     return {"value": value, "confidence": confidence, "method": method, "stale": stale,
             "inputs": suggestion["inputs"] if suggestion else ([confirmed] if confirmed else []),
@@ -621,6 +669,68 @@ def backfill_race_lthr(conn: sqlite3.Connection) -> int:
             VALUES ('lthr', ?, 'race_estimate', 'low', ?, ?, ?, 0, '[]')
         """, (est, r["date"], r["id"],
               f"Race estimate from {r['name']} ({r['distance_km']:.1f}km, avg HR {r['avg_hr']})"))
+        added += 1
+    conn.commit()
+    return added
+
+
+def _parse_hms(t: str | None) -> int | None:
+    """Parse 'H:MM:SS' or 'MM:SS' to seconds. None on bad input."""
+    if not t:
+        return None
+    try:
+        parts = [int(p) for p in t.split(":")]
+    except (ValueError, AttributeError):
+        return None
+    if len(parts) == 3:
+        return parts[0] * 3600 + parts[1] * 60 + parts[2]
+    if len(parts) == 2:
+        return parts[0] * 60 + parts[1]
+    return None
+
+
+def backfill_race_vdot(conn: sqlite3.Connection) -> int:
+    """Populate VDOT *observations* from past races for the anchor + history.
+
+    For every completed race in 5–25 km with a usable time, write an
+    informational `race_estimate` VDOT row (which get_active_calibration
+    ignores) dated at the race, computed via Daniels. These feed the VDOT
+    aggregation policy's windowed max and the calibration-history chart WITHOUT
+    becoming the active value — under the human-confirmed model the athlete
+    confirms the anchor via `fit calibrate vdot <value>` (or the sync prompt).
+    Official `result_time` is preferred over `garmin_time`. Idempotent on
+    source_activity_id. Returns the number of rows added.
+    """
+    from fit.fitness import compute_vdot_from_race
+
+    races = conn.execute("""
+        SELECT a.id, a.date, a.name, a.distance_km,
+               COALESCE(rc.result_time, rc.garmin_time) AS race_time
+        FROM race_calendar rc JOIN activities a ON a.id = rc.activity_id
+        WHERE rc.status = 'completed' AND a.distance_km >= 5 AND a.distance_km <= 25
+        ORDER BY a.date ASC
+    """).fetchall()
+
+    added = 0
+    for r in races:
+        secs = _parse_hms(r["race_time"])
+        if not secs:
+            continue
+        vdot = compute_vdot_from_race(r["distance_km"], secs)
+        if vdot is None:
+            continue
+        exists = conn.execute(
+            "SELECT 1 FROM calibration WHERE metric = 'vdot' AND method = 'race_estimate' "
+            "AND source_activity_id = ? LIMIT 1", (r["id"],),
+        ).fetchone()
+        if exists:
+            continue
+        conn.execute("""
+            INSERT INTO calibration (metric, value, method, confidence, date,
+                                     source_activity_id, notes, active, flags)
+            VALUES ('vdot', ?, 'race_estimate', 'low', ?, ?, ?, 0, '[]')
+        """, (round(vdot, 1), r["date"], r["id"],
+              f"Race estimate from {r['name']} ({r['distance_km']:.1f}km)"))
         added += 1
     conn.commit()
     return added

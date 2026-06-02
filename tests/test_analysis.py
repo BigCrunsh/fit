@@ -1294,12 +1294,14 @@ class TestDanielsPaces:
         # Use lo bounds (fastest end of each range)
         assert p["R"]["lo"] < p["I"]["lo"] < p["T"]["lo"] < p["M"]["lo"] < p["E"]["lo"]
 
-    def test_marathon_pace_matches_vdot_table(self):
-        """M pace = marathon_secs / 42.195, with M's lo == hi (single pace)."""
-        # VDOT=48 → 3:48 marathon → 13680/42.195 ≈ 324 sec/km (~5:24/km)
+    def test_marathon_pace_from_daniels_inverse(self):
+        """M pace = Daniels-equivalent marathon time / 42.195 (same formula as the
+        VDOT estimate), with M's lo == hi (single pace). VDOT 48 →
+        vdot_to_race_time ≈ 11848s → 281 sec/km (~4:41/km). NOT the old
+        conservative table (which gave ~324 sec/km / 5:24/km)."""
         p = compute_daniels_paces(vo2max=48)
         assert p["M"]["lo"] == p["M"]["hi"]
-        assert 322 <= p["M"]["lo"] <= 326
+        assert 279 <= p["M"]["lo"] <= 283
 
     def test_easy_pace_is_a_range(self):
         """Easy pace is a range (lo < hi), not a single value."""

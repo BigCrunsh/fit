@@ -430,6 +430,28 @@ def backfill_rpe(refresh: bool):
         conn.close()
 
 
+@backfill.command("vdot")
+def backfill_vdot():
+    """Backfill VDOT observations from past races (calibration history + anchor).
+
+    Writes an informational `race_estimate` VDOT row per completed 5–25 km race
+    (Daniels, from the official time). These feed the VDOT anchor's windowed max
+    and the calibration-history chart; they never become the active value —
+    confirm that with `fit calibrate vdot <value>` or the sync prompt.
+    """
+    from fit.calibration import backfill_race_vdot
+
+    conn = _conn()
+    try:
+        added = backfill_race_vdot(conn)
+        if added:
+            console.print(f"  [green]✓ Added {added} VDOT race estimate(s).[/green]")
+        else:
+            console.print("[dim]Nothing to backfill — all qualifying races already have a VDOT estimate.[/dim]")
+    finally:
+        conn.close()
+
+
 @main.group(invoke_without_command=True)
 @click.pass_context
 def checkin(ctx):
@@ -1594,33 +1616,55 @@ def recompute(recompute_all: bool, force: bool):
 
 
 @main.command()
-@click.argument("metric", type=click.Choice(["max_hr", "lthr"]))
-def calibrate(metric: str):
-    """Calibrate a physiological metric (max_hr or lthr)."""
+@click.argument("metric", type=click.Choice(["max_hr", "lthr", "vdot"]))
+@click.argument("value", type=float, required=False)
+def calibrate(metric: str, value: float | None):
+    """Confirm a physiological metric (max_hr, lthr, or vdot).
+
+    Pass VALUE to set it non-interactively (e.g. `fit calibrate vdot 41`);
+    omit it for the guided prompt. A confirmed value becomes the active anchor
+    and stays put until you confirm a new one.
+    """
     from datetime import date as d
 
     from rich.prompt import Prompt
 
-    from fit.calibration import add_calibration
+    from fit.calibration import add_calibration, get_calibration_anchor
 
     conn = _conn()
 
     try:
         if metric == "max_hr":
             console.print("\n[bold]Max HR Calibration[/bold]")
-            console.print("  Enter the highest HR you've observed in a recent race or hard effort.")
-            value = float(Prompt.ask("  Max HR (bpm)"))
-            method = Prompt.ask("  Method", choices=["race", "lab_test", "manual"], default="race")
+            if value is None:
+                console.print("  Enter the highest HR you've observed in a recent race or hard effort.")
+                value = float(Prompt.ask("  Max HR (bpm)"))
+            method = Prompt.ask("  Method", choices=["race", "lab_test", "manual"], default="race") if value else "manual"
             add_calibration(conn, "max_hr", value, method, "high", d.today())
             console.print(f"  [green]✓ Max HR calibrated: {value} bpm[/green]")
 
         elif metric == "lthr":
             console.print("\n[bold]LTHR Calibration (30-min Time Trial)[/bold]")
-            console.print("  Protocol: warm up 15min, run 30min all-out (even pace),")
-            console.print("  LTHR = average HR of the LAST 20 minutes.")
-            value = float(Prompt.ask("  LTHR (avg HR of last 20 min)"))
+            if value is None:
+                console.print("  Protocol: warm up 15min, run 30min all-out (even pace),")
+                console.print("  LTHR = average HR of the LAST 20 minutes.")
+                value = float(Prompt.ask("  LTHR (avg HR of last 20 min)"))
             add_calibration(conn, "lthr", value, "time_trial", "high", d.today())
             console.print(f"  [green]✓ LTHR calibrated: {value} bpm[/green]")
+
+        elif metric == "vdot":
+            console.print("\n[bold]VDOT Calibration[/bold]")
+            anchor = get_calibration_anchor(conn, "vdot")
+            if anchor and anchor.get("suggestion"):
+                s = anchor["suggestion"]
+                console.print(f"  Suggested from your races: [bold]{s['value']:g}[/bold] ({s['reason']})")
+            if value is None:
+                console.print("  Confirm your VDOT from a recent representative race "
+                              "(5–25 km road effort, near-max).")
+                value = float(Prompt.ask("  VDOT"))
+            # Confirmed → method 'manual', dated today; becomes the sticky active anchor.
+            add_calibration(conn, "vdot", value, "manual", "high", d.today())
+            console.print(f"  [green]✓ VDOT confirmed: {value:g}[/green]")
     finally:
         conn.close()
 

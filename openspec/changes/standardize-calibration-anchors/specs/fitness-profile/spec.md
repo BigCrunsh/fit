@@ -14,12 +14,16 @@ The system SHALL expose one function, `get_calibration_anchor(conn, metric)`, th
 ### Requirement: Per-metric aggregation policy matched to the metric's statistics
 Each metric SHALL declare an aggregation policy. Performance and ceiling metrics (one-sided / bounded) SHALL use a **max** estimator; noisy central-threshold metrics (two-sided) SHALL use a **robust center** (median or trimmed mean). Each policy SHALL declare a window/memory model and a `min_samples` below which it falls back to the single best-confidence row at `confidence='low'`.
 
-| Metric | Estimator | Window/memory | Notes |
-|---|---|---|---|
-| `vdot` | max within a trailing window (suggestion); active sticky/last-confirmed | 6-month window | one-sided: a race is bounded above by fitness; downward trends captured by efforts ageing out → stale |
-| `max_hr` | max, plausibility-gated | long (years) + age decay | true ceiling; reject high-side artifacts |
-| `lthr` | median / trimmed mean | recent, recency-weighted | two-sided threshold |
-| `aet` | median / trimmed mean | recent, recency-weighted | noisiest two-sided threshold |
+One uniform shape — trailing window, `staleness = window`, sticky-confirm, no hard gates (plausibility/effort-hardness ride as confidence) — and two families:
+
+| Metric | family | window = staleness | min_samples | differs |
+|---|---|---|---|---|
+| `vdot` | max | 180 d | 1 | 1.0 |
+| `max_hr` | max | 365 d | 1 | 2 |
+| `lthr` | median | 180 d | 3 | 2 |
+| `aet` | median | 180 d | 3 | 3 |
+
+Active is sticky/last-confirmed for all four; the estimator produces only the *suggestion*. Below `min_samples` a median falls back to the most-recent single row at low confidence. No age decay, no trim, no auto-filter.
 
 #### Scenario: VDOT suggestion is the max inside the window; a slow effort never wins
 - **WHEN** the qualifying VDOT estimates are a road effort 40.9 from ~2 months ago and a trail half 35.8 from this month, both inside the 6-month window

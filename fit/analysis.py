@@ -608,7 +608,17 @@ def compute_daniels_paces(vo2max: float | None, lthr: int | None = None) -> dict
     """
     if vo2max is None or vo2max <= 0:
         return None
-    marathon_secs = _vdot_to_marathon_seconds(vo2max)
+    # Marathon pace = the Daniels-equivalent marathon time for this VDOT, via the
+    # SAME formula the VDOT estimate uses (vdot_to_race_time inverts
+    # compute_vdot_from_race). The old _vdot_to_marathon_seconds table was a
+    # heavy, inconsistent pessimism (VDOT 38.9 → 6:54/km M-pace) that made
+    # training paces far too slow; training paces must reflect true VDOT
+    # equivalence, not a marathon-durability discount. (Local import: fitness
+    # imports analysis, so a module-level import would be circular.)
+    from fit.fitness import vdot_to_race_time
+    marathon_secs = vdot_to_race_time(vo2max, 42.195)
+    if not marathon_secs:
+        return None
     m_pace = marathon_secs / 42.195  # sec/km at marathon pace
     return {
         "E": {"lo": m_pace + 45, "hi": m_pace + 60},   # easy range
