@@ -425,10 +425,11 @@ def _calibration_history(conn):
     from fit.calibration import STALENESS_THRESHOLDS, get_active_calibration
 
     metric_labels = {
+        "vdot": "VDOT (race-anchored)",
         "lthr": "LTHR (Lactate Threshold)",
         "max_hr": "MaxHR (Peak HR)",
         "aet": "AeT (Aerobic Threshold)",
-        "vo2max": "VO2max",
+        "vo2max": "VO2max (Garmin)",
         "weight": "Weight",
     }
 
