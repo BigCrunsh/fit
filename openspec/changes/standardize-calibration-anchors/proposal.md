@@ -34,14 +34,17 @@ Each metric declares an `AGGREGATION_POLICY` describing its estimator, window, a
 
 | Metric | Nature | Estimator | Window / memory | Outlier handling |
 |---|---|---|---|---|
-| **VDOT** | performance, bounded **above** by fitness | **max**, recency-decayed | exponential decay (half-life ~6–9 mo), no hard cliff | conditions/terrain tag can exclude a race |
+| **VDOT** | performance, bounded **above** by fitness | **max within a trailing window** (suggestion); active is **sticky/last-confirmed** | 6-month window | none needed — a max ignores slow outliers; downward trends show up as strong efforts ageing out of the window → stale → re-test prompt |
 | **MaxHR** | true physiological **ceiling** | **max** of validated obs | long (years) + age decay (~1 bpm/yr) | reject readings implausibly above established ceiling / age-predicted max |
 | **LTHR** | noisy central **threshold** | **median** (or trimmed mean) of recent qualifying efforts | recent (~6–12 mo), recency-weighted | median is intrinsically robust |
 | **AeT** | noisiest central **threshold** (drift tests) | **median / trimmed mean** of recent tests | recent (~season), recency-weighted | trim extremes; negative-drift tests excluded upstream |
 
 The unifying rule: *one-sided-bounded-above or literal-ceiling metrics take the **max**; two-sided physiological thresholds take a **robust center**.*
 
-This corrects two flaws in today's VDOT logic specifically: the hard 180-day cliff (→ recency decay, so an 8-month-old 40.9 still outranks a fresh trail 35.8) and terrain-blindness (→ a conditions tag, at minimum the ability to mark a race non-anchoring).
+**VDOT specifics.** The *suggestion* is the max over qualifying efforts inside a 6-month window; the *active* value is **sticky** — the athlete's last-confirmed VDOT, never auto-overwritten by the window. Two consequences fall out, and neither needs manual tagging:
+
+- **Slow/distorted efforts are free to ignore.** A trail or not-all-out race produces a low VDOT, which a max never selects. (The Müggelturm 35.7 only became the anchor under the old "latest effort" rule.)
+- **Downward trends are captured by the window, not a decay model.** A once-fast effort ages out of the 6-month window; if nothing fresh replaces it, the active value goes **stale** and the dashboard prompts a re-test rather than guessing a decayed number. Detraining therefore surfaces as *staleness → re-test → confirm the new (lower) value* — consistent with "human confirms." This matches the physiology: VO₂max is maintained by continued training and falls only on a real layoff, so an unrefreshed value should prompt re-measurement, not silently drift.
 
 ### VDOT becomes a first-class calibration metric
 
@@ -51,9 +54,14 @@ This corrects two flaws in today's VDOT logic specifically: the hard 180-day cli
 
 The Profile-tab Calibration History (from `calibration-history`) SHALL render a time-series chart for **each** of VDOT, LTHR, MaxHR, AeT — observations over time, the active value highlighted, bounds/confidence encoded per the existing marker rubric. VDOT gains a history it never had.
 
-### `fit calibrate` suggests, the human confirms (governance)
+### Governance: anchors never change silently — confirmed at sync, not hand-selected
 
-`fit calibrate <metric>` SHALL display: the current active value, the **heuristic suggestion with its reasoning** (e.g. *"median of 4 drift tests in 90d = 152; latest single = 155"*, or *"best race in last 9 mo, recency-decayed = 40.4 (Müggelsee HM, 2025-10-19); the trail HM 35.8 is excluded as off-road"*), and the inputs used — then let the user **accept** (writes the active calibration) or **override** with a manual value (`confidence='high'`). The heuristic proposes; the human owns the active value.
+The active anchor SHALL never change on its own. After ingesting new data, `fit sync` SHALL compute each metric's policy suggestion and compare it to the current active value; when a suggestion **differs materially** from active (per-metric threshold), it raises a **pending calibration suggestion**. The athlete confirms with a single accept/reject — never by hand-picking from a list:
+
+- **Interactive `fit sync` (TTY):** prompts inline — *"VDOT: suggest 40.4 (Müggelsee HM, 2025-10-19, recency-decayed) — active is 35.8. Accept? [y/N]"*. Accept → writes the active calibration (`method='confirmed'`, `confidence='high'`). Reject → active unchanged.
+- **Non-interactive sync (cron/headless):** does NOT block. The suggestion is **persisted as pending** and surfaced in `fit status`, the dashboard Needs-Your-Attention panel, and `fit calibrate <metric>` for later one-tap accept/reject.
+
+A **suggestion ledger** prevents nagging: a rejected suggestion is recorded with its value; the same suggestion is not re-raised until the policy output **changes materially** from the rejected value. `fit calibrate <metric>` remains available for an explicit manual override at any time. The heuristic proposes; the human confirms; nothing auto-flips.
 
 ## Capabilities
 
@@ -84,16 +92,26 @@ The Profile-tab Calibration History (from `calibration-history`) SHALL render a 
 ## Risks / Trade-offs
 
 - **Recency-decay half-life is a free parameter.** Too short re-creates the cliff; too long lets a stale PR dominate. **Mitigation**: make it a per-metric config (`calibration.vdot_decay_half_life_days`, default ~210); show the decayed contributors in the `fit calibrate` suggestion so the choice is auditable.
-- **Terrain tagging is manual.** The system can't detect trail vs road reliably. **Mitigation**: recency-decay alone fixes the present case (road 40.9 outranks trail 35.8); the tag is an optional refinement, not a blocker. Default: all races anchor unless explicitly excluded.
+- **Terrain/conditions are invisible to the formula** — but need no manual fix. A max estimator can't be dragged down by a slow trail/hot race (it's never selected), and a spuriously *fast* race is caught at the sync-confirm prompt. No tagging chore; `exclude_from_anchor` is dropped.
 - **Median needs a minimum sample size.** With 1–2 LTHR/AeT estimates a median is just the latest. **Mitigation**: policy declares `min_samples`; below it, fall back to the single best-confidence row and mark confidence `low`.
-- **Changing `effective_vdot` shifts downstream numbers** (predictions, objectives, dimensions) the moment it ships. **Mitigation**: it shifts them toward *consistency* (one number everywhere); call it out in the changelog and annotate the VDOT history chart at the cutover.
-- **Governance friction.** Requiring confirmation on every calibration is tedious; auto-activating silently is what caused the drift. **Mitigation**: see Open Question 3 — propose auto-activate at high confidence, confirm only on low/conflicting.
+- **Changing `effective_vdot` shifts downstream numbers** (predictions, objectives, dimensions) the moment it ships. **Mitigation**: it shifts them toward *consistency* (one number everywhere); the first run surfaces the shift as a sync-confirm prompt rather than silently; annotate the VDOT history chart at the cutover.
+- **Sync prompt in non-interactive runs.** A blocking prompt would hang cron. **Mitigation**: TTY-detect — prompt interactively, else persist as a pending suggestion surfaced in `fit status` / attention panel; never block.
+- **Re-prompt fatigue.** Without memory, a rejected suggestion re-fires every sync. **Mitigation**: the suggestion ledger re-raises only when the policy output changes materially from the last rejected value.
+
+## Resolved Decisions
+
+- **Governance** (was Q3): never auto-flip. `fit sync` computes the policy suggestion and, when it differs materially from active, prompts accept/reject interactively or persists a pending suggestion when headless. A suggestion ledger prevents re-nagging. Manual `fit calibrate` override always available.
+- **Terrain** (was Q1b): no manual `exclude_from_anchor`. The VDOT max estimator ignores slow outliers by construction; a spuriously fast race is caught at the sync-confirm prompt.
+- **Interim pace-zones edit** (was Q6): committed as a documented interim (`ba220e5`); it is superseded when the VDOT policy lands and `_pace_zones` reads `get_calibration_anchor`.
+- **VDOT estimator** (was Q1): **max within a trailing window**, no decay model. The active value is **sticky/last-confirmed**; the window drives only the suggestion and the staleness flag. Detraining is captured by efforts ageing out → stale → re-test prompt.
+- **VDOT window = staleness = 6 months** (one parameter): defines which efforts may set the suggestion AND when the confirmed value is flagged stale.
+- **Bootstrap**: seed the active VDOT as a confirmed 41 (from the Oct road HM) — "as if confirmed". The trail 35.7 is an informational/rejected observation. So the live dashboard reads 41, flagged stale, prompting a refresh.
+- **Defaults** (configurable): VDOT window 180 d, `differs_materially` 1.0 VDOT; LTHR median over 270 d, `min_samples` 3, staleness 180 d; AeT trimmed median over 120 d, `min_samples` 3, staleness 56 d; MaxHR plausibility-gated all-time max, ~0.7 bpm/yr age decay, staleness 730 d.
 
 ## Open Questions
 
-1. **VDOT decay half-life** — 6 vs 9 months? And do we add a surface/conditions tag on `race_calendar` now, or rely on decay alone for v1?
-2. **LTHR / AeT** — median vs trimmed mean, window length (6–12 mo for LTHR, season for AeT), and `min_samples` before the heuristic is trusted.
-3. **Governance** — does the active value require explicit confirmation, or does the heuristic auto-activate at `high` confidence and only prompt on `low`/conflicting? (Friction vs. control.)
-4. **Per-metric staleness thresholds** — MaxHR long (years), LTHR/VDOT medium (~weeks–months), AeT short. Today they're near-uniform; set them explicitly.
-5. **MaxHR plausibility gate** — absolute ceiling (e.g. age-predicted + margin) vs. relative (reject > established max + N bpm)?
-6. **Interim code state** — the uncommitted Pace-Zones edit currently reads `get_fitness_anchors` (latest effort); revert to status-quo until this lands, or leave it pointing at the soon-to-be-standardized path?
+1. **LTHR / AeT** — median vs trimmed mean exact form, and `min_samples` (default 3) before the heuristic is trusted.
+2. **"Differs materially" thresholds** for raising a sync suggestion — per metric (VDOT ±1.0 set; LTHR/AeT/MaxHR ±2 bpm?).
+3. **MaxHR plausibility gate** — absolute (age-predicted + margin) vs relative (established max + N bpm), or both.
+4. **Do LTHR/AeT/MaxHR also become "sticky/last-confirmed"** like VDOT, or keep windowed-suggestion-as-active? (VDOT is sticky because a single bad effort is common; revisit per metric in Phase 5.)
+5. **Sequencing** — VDOT-first vertical slice (ship the live fix + prove the sync-confirm UX), then LTHR/AeT/MaxHR policies.

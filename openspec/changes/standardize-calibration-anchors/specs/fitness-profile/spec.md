@@ -16,14 +16,18 @@ Each metric SHALL declare an aggregation policy. Performance and ceiling metrics
 
 | Metric | Estimator | Window/memory | Notes |
 |---|---|---|---|
-| `vdot` | max, recency-decayed | exponential decay, no hard cliff | one-sided: a race is bounded above by fitness |
+| `vdot` | max within a trailing window (suggestion); active sticky/last-confirmed | 6-month window | one-sided: a race is bounded above by fitness; downward trends captured by efforts ageing out → stale |
 | `max_hr` | max, plausibility-gated | long (years) + age decay | true ceiling; reject high-side artifacts |
 | `lthr` | median / trimmed mean | recent, recency-weighted | two-sided threshold |
 | `aet` | median / trimmed mean | recent, recency-weighted | noisiest two-sided threshold |
 
-#### Scenario: VDOT takes the best, recency-decayed — not the latest
-- **WHEN** the qualifying VDOT estimates are a road effort 40.9 from ~8 months ago and a trail half 35.8 from this month
-- **THEN** with recency decay applied, the 40.9 (lightly discounted) outranks the fresh 35.8 and the active VDOT is ~40, NOT 35.8
+#### Scenario: VDOT suggestion is the max inside the window; a slow effort never wins
+- **WHEN** the qualifying VDOT estimates are a road effort 40.9 from ~2 months ago and a trail half 35.8 from this month, both inside the 6-month window
+- **THEN** the windowed-max suggestion is 40.9, NOT the fresher-but-slower 35.8
+
+#### Scenario: A once-fast effort ages out of the window → stale, not a stale-high anchor
+- **WHEN** the only fast effort (40.9) is now older than the 6-month window and the only in-window effort is a slow 35.8
+- **THEN** the suggestion is 35.8 and `differs` from the sticky confirmed value; the confirmed value is reported `stale=True` so the athlete is prompted to re-test rather than silently keeping a stale high or dropping to the trail value
 
 #### Scenario: LTHR takes a robust center — a hot-day high reading does not win
 - **WHEN** recent qualifying LTHR estimates are 170, 172, 173 and one hot-day outlier 181
@@ -46,13 +50,13 @@ The system SHALL compute VDOT from each completed race using Daniels tables, and
 - **WHEN** a completed 10K race result of 45:00 is synced
 - **THEN** a `{metric:'vdot', method:'race_estimate', confidence:'low', active:0}` row is written; `get_active_calibration('vdot')` excludes it from selection but it appears in the VDOT history chart
 
-#### Scenario: Active VDOT is the policy output, not Garmin
-- **WHEN** Garmin VO2max is 49 and the recency-decayed best race VDOT is ~40
-- **THEN** `get_calibration_anchor(conn,'vdot').value` is ~40; the dashboard shows it as the trusted VDOT with Garmin 49 shown only as a reference estimate
+#### Scenario: Active VDOT is the sticky confirmed value, not Garmin
+- **WHEN** Garmin VO2max is 49 and the athlete's confirmed VDOT is 41
+- **THEN** `get_calibration_anchor(conn,'vdot').value` is 41; the dashboard shows it as the trusted VDOT with Garmin 49 shown only as a reference estimate
 
-### Requirement: Effective VDOT blends sources
-`effective_vdot` SHALL be defined as the output of the VDOT aggregation policy: the best recent race VDOT with **recency decay** (no hard window cliff), falling back to a discounted Garmin estimate only when no race evidence exists. It SHALL NOT drop a strong older race abruptly at a fixed day boundary.
+### Requirement: Effective VDOT is the sticky confirmed anchor, refreshed via the window
+`effective_vdot` SHALL be the active VDOT anchor from `get_calibration_anchor` — the athlete's last-confirmed value, never auto-overwritten by the windowed max. The 6-month window drives the *suggestion* and the staleness flag, not the active value. When the confirmed value's source effort ages past the window, the anchor SHALL be reported `stale` (prompting a re-test) rather than silently dropping to whatever single effort remains in-window.
 
-#### Scenario: An older road best is not abruptly dropped by a window edge
-- **WHEN** the strongest road race is 185 days old (just past the old 180-day window) and the only newer race is a slow trail effort
-- **THEN** the older road best, recency-decayed, still contributes and the effective VDOT does not collapse to the trail value
+#### Scenario: A strong older confirmed value persists but is flagged stale
+- **WHEN** the confirmed VDOT (41) is from a race ~7.5 months old and the only in-window effort is a slow trail 35.8
+- **THEN** `value` stays 41 (sticky), `stale` is True, and the suggestion (35.8) is offered for accept/reject — the anchor neither drops to 35.8 nor pretends 41 is fresh

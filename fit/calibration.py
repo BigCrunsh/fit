@@ -187,6 +187,147 @@ def get_active_calibration(conn: sqlite3.Connection, metric: str) -> dict | None
     return dict(min(rows, key=_key))
 
 
+# ── Standardizing anchor layer (standardize-calibration-anchors) ──
+#
+# Every consumer obtains a fitness anchor through get_calibration_anchor(),
+# which applies a per-metric AGGREGATION_POLICY over that metric's observation
+# rows. The policy matches the metric's statistics:
+#
+#   - VDOT / MaxHR are one-sided (a race is bounded above by fitness; MaxHR is
+#     a literal ceiling) → take the MAX. A slow/trail race can't drag VDOT down
+#     because a max never selects it.
+#   - LTHR / AeT are two-sided noisy thresholds (a hot day inflates avg HR
+#     without raising the threshold) → take a ROBUST CENTER (median/trimmed).
+#
+# Phase 1 ships the VDOT policy (max, recency-decayed). LTHR/AeT/MaxHR keep the
+# legacy single-row selection until their policies land (Phase 5); for those,
+# get_calibration_anchor falls back to get_active_calibration with no suggestion.
+# Methods that represent a human-owned, confirmed anchor. The active value is
+# *sticky* — it is whatever the athlete last confirmed and changes only when
+# they accept a new suggestion (never auto-overwritten by the windowed max).
+CONFIRMED_METHODS = {"manual", "confirmed"}
+
+AGGREGATION_POLICY = {
+    "vdot": {
+        # Suggestion = max over observations inside a trailing window. A max
+        # ignores slow/distorted efforts by construction (a trail or not-all-
+        # out race can't be selected); the window is what captures downward
+        # trends — a once-fast effort ages out and, if nothing fresh replaces
+        # it, the anchor goes stale and prompts a re-test rather than guessing.
+        "estimator": "max_window",
+        "window_days": 180,           # 6 months — drives suggestions AND staleness
+        # Garmin's wrist-HR estimate is reference-only (optimistic); it never
+        # enters the max and is used only as a last-resort bootstrap value.
+        "reference_methods": {"garmin_estimate"},
+        "min_samples": 1,
+        "differs_materially": 1.0,    # VDOT points before a suggestion is raised
+    },
+}
+
+
+def _max_in_window(rows, window_days, now):
+    """Maximum observation value inside a trailing window.
+
+    Returns (value, [contributing rows in-window, best-first]) or (None, []).
+    A max can't be dragged down by a slow/distorted effort; downward trends are
+    captured by the window — old strong efforts age out of it.
+    """
+    floor = now - timedelta(days=window_days)
+    scored = []
+    for r in rows:
+        try:
+            d = date.fromisoformat(r["date"])
+            v = float(r["value"])
+        except (ValueError, TypeError, KeyError):
+            continue
+        if d < floor or d > now:
+            continue
+        scored.append((v, (now - d).days, r))
+    if not scored:
+        return None, []
+    scored.sort(key=lambda s: s[0], reverse=True)
+    return round(scored[0][0], 1), [dict(s[2], _age_days=s[1]) for s in scored]
+
+
+def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> dict | None:
+    """Canonical fitness anchor for a metric — the single way consumers read one.
+
+    Returns a payload::
+
+        {value, confidence, method, stale, inputs, suggestion}
+
+    - ``value`` is what consumers use: the human-confirmed *sticky* active value
+      when one exists, else the policy estimate so the dashboard is never blank.
+    - ``stale`` is True when the value's source effort is older than the policy
+      window (or there is no in-window evidence) — the cue to prompt a re-test.
+    - ``suggestion`` is the policy estimate from the trailing window plus whether
+      it ``differs`` materially from the active value (what sync uses to prompt
+      accept/reject). None when no in-window observation exists.
+
+    Metrics without a policy fall back to the legacy single-row selection
+    (no suggestion), so nothing regresses before their policies land.
+    """
+    policy = AGGREGATION_POLICY.get(metric)
+    active = get_active_calibration(conn, metric)
+
+    if not policy:
+        if not active:
+            return None
+        return {"value": active["value"], "confidence": active.get("confidence"),
+                "method": active.get("method"), "stale": None,
+                "inputs": [active], "suggestion": None}
+
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM calibration WHERE metric = ?", (metric,)).fetchall()]
+    ref = policy.get("reference_methods", set())
+    observations = [r for r in rows if (r.get("method") or "") not in ref]
+    now = date.today()
+    window = policy["window_days"]
+
+    suggestion = None
+    if policy["estimator"] == "max_window" and len(observations) >= policy["min_samples"]:
+        val, contributors = _max_in_window(observations, window, now)
+        if val is not None:
+            top = contributors[0]
+            suggestion = {
+                "value": val,
+                "reason": (f"max of {len(contributors)} effort(s) in last "
+                           f"{window}d: {top['value']:g} from {top['date']} "
+                           f"(~{top['_age_days']}d ago)"),
+                "inputs": contributors,
+            }
+
+    # Sticky active: a confirmed/manual row is the value, untouched by the
+    # window. Without one (bootstrap), fall back to the windowed suggestion.
+    confirmed = active if (active and active.get("method") in CONFIRMED_METHODS) else None
+    if confirmed:
+        value = confirmed["value"]
+        confidence = confirmed.get("confidence")
+        method = confirmed["method"]
+        src_date = confirmed.get("date")
+    elif suggestion is not None:
+        value, confidence, method, src_date = suggestion["value"], "medium", "policy", suggestion["inputs"][0]["date"]
+    elif active:
+        value, confidence, method, src_date = active["value"], active.get("confidence"), active.get("method"), active.get("date")
+    else:
+        return {"value": None, "confidence": None, "method": None, "stale": True,
+                "inputs": [], "suggestion": suggestion}
+
+    # Stale when the value's source effort has aged past the window.
+    stale = True
+    try:
+        stale = (now - date.fromisoformat(src_date)).days > window
+    except (ValueError, TypeError):
+        stale = True
+
+    if suggestion is not None:
+        suggestion["differs"] = abs(suggestion["value"] - value) >= policy["differs_materially"]
+
+    return {"value": value, "confidence": confidence, "method": method, "stale": stale,
+            "inputs": suggestion["inputs"] if suggestion else ([confirmed] if confirmed else []),
+            "suggestion": suggestion}
+
+
 def add_calibration(conn: sqlite3.Connection, metric: str, value: float,
                     method: str, confidence: str, cal_date: date,
                     source_activity_id: str | None = None,
