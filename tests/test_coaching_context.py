@@ -179,12 +179,11 @@ class TestZoneDistributionWindow:
 
 class TestFitnessAnchorLine:
     def test_anchor_line_present_with_gap(self, server, conn, monkeypatch):
-        """A qualifying effort + Garmin VO2max → anchor line with the gap."""
-        # 10k at avg HR 175 (>LTHR 172) ~10 days ago → qualifies as an anchor.
+        """A VDOT anchor + Garmin VO2max → anchor line with the gap."""
+        # The standardized anchor reads a vdot calibration row, not a raw activity.
         conn.execute(
-            "INSERT INTO activities (id, date, type, distance_km, duration_min, "
-            "avg_hr, max_hr, pace_sec_per_km, name, vo2max) VALUES "
-            "('a1', date('now','-10 days'), 'running', 10.0, 45.0, 175, 185, 270, 'TT', NULL)"
+            "INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
+            "VALUES ('vdot', 41, 'race_estimate', 'low', date('now','-10 days'), 0, '[]')"
         )
         conn.execute(
             "INSERT INTO activities (id, date, type, distance_km, duration_min, "
@@ -193,11 +192,11 @@ class TestFitnessAnchorLine:
         )
         conn.commit()
         text = _profile_text(server, conn, monkeypatch, LTHR_CONFIG)
-        assert "Fitness anchor" in text
+        assert "Fitness anchor: VDOT 41" in text
         assert "Garmin VO2max 49" in text
 
     def test_no_anchor_prompts_time_trial(self, server, conn, monkeypatch):
-        """No qualifying effort but a Garmin estimate → nudge a time trial."""
+        """No VDOT anchor but a Garmin estimate → nudge a race/effort to anchor."""
         conn.execute(
             "INSERT INTO activities (id, date, type, distance_km, duration_min, "
             "avg_hr, max_hr, pace_sec_per_km, name, vo2max) VALUES "
@@ -205,4 +204,4 @@ class TestFitnessAnchorLine:
         )
         conn.commit()
         text = _profile_text(server, conn, monkeypatch, LTHR_CONFIG)
-        assert "Fitness anchor: none in last 365d" in text
+        assert "Fitness anchor: none yet" in text

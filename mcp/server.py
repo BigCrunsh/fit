@@ -283,27 +283,30 @@ def _ctx_profile(conn) -> list[str]:
     else:
         s.append(f"IMPORTANT: easy runs must stay below {maxhr_ceiling} bpm (Z2 ceiling), NOT 150 bpm")
 
-    # Fitness anchor — latest qualifying effort (training or race) vs Garmin VO2max.
-    # The GAP is the signal: a large positive gap means Garmin's wrist-HR estimate
+    # Fitness anchor — the SINGLE standardized VDOT (get_calibration_anchor): the
+    # human-confirmed sticky value, or the windowed-max policy estimate. The GAP
+    # to Garmin's wrist-HR VO2max is the signal: a large positive gap means Garmin
     # is optimistic and prediction should trust the anchor (see dashboard VDOT Trend).
     try:
-        from fit.fitness import get_fitness_anchors
-        anchors = get_fitness_anchors(conn, days=365)
+        from fit.calibration import get_calibration_anchor
+        anchor = get_calibration_anchor(conn, "vdot")
         garmin_row = conn.execute(
             "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1"
         ).fetchone()
         garmin_vo2 = float(garmin_row["vo2max"]) if garmin_row and garmin_row["vo2max"] else None
-        if anchors:
-            latest = sorted(anchors, key=lambda a: a["date"], reverse=True)[0]
-            line = (f"Fitness anchor (latest qualifying effort): VDOT {latest['vdot']} from "
-                    f"{latest['date']} ({latest['distance_km']:g}km @ avg HR {latest['avg_hr']})")
+        if anchor and anchor.get("value") is not None:
+            stale = " — STALE, suggest a fresh 5–10k/threshold test" if anchor.get("stale") else ""
+            line = (f"Fitness anchor: VDOT {anchor['value']:g} "
+                    f"({anchor.get('method')}, confidence {anchor.get('confidence')}){stale}")
             if garmin_vo2:
-                gap = garmin_vo2 - latest["vdot"]
+                gap = garmin_vo2 - anchor["value"]
                 line += f"; Garmin VO2max {garmin_vo2:.0f} (gap {gap:+.0f} — trust the anchor)"
+            if anchor.get("suggestion") and anchor["suggestion"].get("differs"):
+                line += f"; pending suggestion {anchor['suggestion']['value']:g} (run `fit calibrate vdot`)"
             s.append(line)
         elif garmin_vo2:
-            s.append(f"Fitness anchor: none in last 365d; Garmin VO2max {garmin_vo2:.0f} only "
-                     "(schedule a 5-10k effort at ≥LTHR to anchor VDOT)")
+            s.append(f"Fitness anchor: none yet; Garmin VO2max {garmin_vo2:.0f} only "
+                     "(race a 5-10k at ≥LTHR to anchor VDOT)")
     except Exception:
         pass
 

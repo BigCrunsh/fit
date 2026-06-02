@@ -39,6 +39,17 @@ def get_fitness_profile(conn: sqlite3.Connection) -> dict:
     race_vdot, race_vdot_date = _get_race_vdot(conn)
     effective = _compute_effective_vdot(garmin_vo2, race_vdot, race_vdot_date)
 
+    # effective_vdot IS the standardized anchor (the single confirmed/windowed-max
+    # VDOT every consumer reads). Fall back to the legacy blend only when no
+    # anchor exists yet. (Local import: calibration imports fitness lazily.)
+    try:
+        from fit.calibration import get_calibration_anchor
+        anchor = get_calibration_anchor(conn, "vdot")
+        if anchor and anchor.get("value") is not None:
+            effective = anchor["value"]
+    except Exception as e:
+        logger.debug("vdot anchor unavailable, using legacy effective_vdot: %s", e)
+
     profile["garmin_vo2max"] = garmin_vo2
     profile["race_vdot"] = race_vdot
     profile["race_vdot_date"] = race_vdot_date
