@@ -601,6 +601,11 @@ def compute_daniels_paces(vo2max: float | None, lthr: int | None = None) -> dict
     Returns dict keyed by pace name with `{lo, hi}` range in sec/km (single
     value paces have lo == hi). `None` when vo2max is missing.
 
+    DANIELS-BASED: these are the paces a runner of this VDOT trains at, ASSUMING
+    population-average economy (see compute_vdot_from_race). They are a training
+    prescription from current fitness — NOT a race-day forecast (that's the
+    durability-aware Riegel model in predict_race_time).
+
     `lthr` is accepted but not currently used in the derivation — Daniels
     anchors on VDOT, not LTHR. It's part of the signature so future
     refinements (e.g., adjusting T pace when LTHR-derived speed diverges
@@ -654,7 +659,7 @@ def _vdot_to_marathon_seconds(vo2max: float) -> float:
 def predict_race_time(conn: sqlite3.Connection | None = None,
                       races: list[dict] | None = None,
                       vo2max: float | None = None) -> dict:
-    """Predict race time using Riegel formula and Daniels VDOT table.
+    """Predict race time using the Riegel power law (+ a Daniels-VDOT estimate).
 
     Args:
         conn: Optional DB connection for data-quantity confidence assessment.
@@ -664,6 +669,22 @@ def predict_race_time(conn: sqlite3.Connection | None = None,
     Returns:
         Dict with predictions: riegel (from each race), vdot (from VO2max),
         confidence band, and a recommended range.
+
+    RIEGEL-BASED ASSUMPTIONS (the marathon forecast / durability model):
+      - **Power law:** T₂ = T₁ · (D₂/D₁)^b — race time scales with distance
+        raised to an exponent b (the "fatigue factor").
+      - **Exponent b = 1.06 = population-average endurance fade.** This is the
+        textbook default. The personalized version fits b to the athlete's OWN
+        multi-distance races: b > 1.06 ⇒ they fade more than average ⇒ a slower
+        marathon. That fitted exponent IS the durability signal Daniels' fixed
+        endurance curve can't express per-athlete.
+      - **Clean source races.** A terrain/heat-distorted long race (e.g. a trail
+        HM) overstates fade and inflates the forecast — gate it by the same
+        calibration confidence, not blindly.
+      - **Durability vs fitness:** Riegel here answers "what will race day give,
+        accounting for how I fade?"; Daniels VDOT (the anchor + pace zones)
+        answers "how sharp is my engine right now?". Complementary, not
+        redundant — they agree only for a single race at the default exponent.
     """
     if races is None:
         races = []

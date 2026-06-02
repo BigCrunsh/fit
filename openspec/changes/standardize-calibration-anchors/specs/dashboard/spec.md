@@ -21,3 +21,14 @@ The Profile-tab Calibration History SHALL render a time-series chart for each of
 #### Scenario: Each anchor shows its own series
 - **WHEN** Calibration History renders
 - **THEN** VDOT, LTHR, MaxHR and AeT each have a series; none is silently omitted when it has data
+
+### Requirement: Model assumptions are stated on the dashboard
+Sections whose numbers depend on a model SHALL state the model and its key assumptions in their definition popover (`def-box`), so the athlete can judge the figure. The VDOT Trend and Pace Zones sections SHALL note they are **Daniels-based** and assume **population-average running economy** (VDOT is a performance index, not a measured VO₂max). The Marathon Prediction section SHALL note it is **Riegel-based** (power law, default fatigue exponent 1.06; personalized exponent = durability) and that a distorted long race overstates fade.
+
+#### Scenario: VDOT/pace sections disclose the Daniels economy assumption
+- **WHEN** the VDOT Trend or Pace Zones definition popover is opened
+- **THEN** it states the model is Daniels and that paces/VDOT assume population-average economy, with the athlete's real economy tracked in Aerobic Efficiency
+
+#### Scenario: Marathon Prediction discloses the Riegel/durability assumption
+- **WHEN** the Marathon Prediction definition popover is opened
+- **THEN** it states the forecast is Riegel-based with a fatigue exponent (default 1.06, personalizable), and that the short-vs-long-race gap is durability

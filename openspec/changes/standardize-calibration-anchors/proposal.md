@@ -48,6 +48,15 @@ The unifying rule: *one-sided / ceiling metrics take a **max**; two-sided noisy 
 - **Slow/distorted efforts are free to ignore.** A trail or not-all-out race produces a low VDOT, which a max never selects. (The Müggelturm 35.7 only became the anchor under the old "latest effort" rule.)
 - **Downward trends are captured by the window, not a decay model.** A once-fast effort ages out of the 6-month window; if nothing fresh replaces it, the active value goes **stale** and the dashboard prompts a re-test rather than guessing a decayed number. Detraining therefore surfaces as *staleness → re-test → confirm the new (lower) value* — consistent with "human confirms." This matches the physiology: VO₂max is maintained by continued training and falls only on a real layoff, so an unrefreshed value should prompt re-measurement, not silently drift.
 
+### Two models, complementary — Daniels and Riegel (not redundant)
+
+VDOT's downstream uses run on two models with different jobs; both stay, and their assumptions are documented in code (at each entry point) and surfaced on the dashboard (the section `def-box`s):
+
+- **Daniels** (`compute_vdot_from_race` → `vdot_to_race_time`) drives the **anchor + pace zones** — "how sharp is my engine now." *Assumes population-average running economy* (VDOT is a performance index, not a measured VO₂max; real economy ±10–15%, tracked separately as Aerobic Efficiency) and a clean, evenly-paced effort on a flat fair-conditions course.
+- **Riegel** (`predict_race_time`) drives the **marathon forecast + durability** — "what will race day give, accounting for how I fade." *Assumes* the power law `T₂ = T₁·(D₂/D₁)^b`; default `b = 1.06` (population-average fade), with the personalized exponent fit to the athlete's own multi-distance races as the durability signal Daniels' fixed endurance curve can't express. Assumes clean source races (a terrain/heat-distorted long race overstates fade).
+
+They agree per-race only at the default exponent (within ~2 min); the value of keeping both is that Daniels-VDOT trending up = fitter, Riegel-exponent trending down = more durable — two distinct, useful signals.
+
 ### VDOT becomes a first-class calibration metric
 
 `vdot` joins `lthr`/`max_hr`/`aet`/`weight` in the `calibration` table. Race results write **informational** `race_estimate` VDOT rows (the same Option-A pattern as LTHR — they never auto-activate, they feed the aggregation and the history chart). The Garmin VO2max estimate is retained as an informational row too, clearly labelled. The active VDOT is produced by the VDOT aggregation policy, confirmable by the human.

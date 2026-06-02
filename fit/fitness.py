@@ -212,6 +212,21 @@ def compute_vdot_from_race(distance_km: float, time_seconds: int) -> float | Non
 
     VDOT = oxygen_cost(velocity) / vo2max_fraction(time)
     This is the exact formula from Daniels' Running Formula, not a table lookup.
+
+    DANIELS-BASED ASSUMPTIONS (see also _oxygen_cost / _vo2max_fraction):
+      - **Population-average running economy.** oxygen_cost is the Daniels &
+        Gilbert regression — an AVERAGE cost of running at a given speed. Real
+        economy varies ±10-15% between runners, so VDOT is a performance INDEX
+        (pseudo-VO2max), not a measured VO2max. The athlete's actual economy is
+        tracked separately (the speed_per_bpm / Aerobic Efficiency dimension).
+      - **Average endurance.** vo2max_fraction is a fixed %VO2max-vs-duration
+        curve — assumes the athlete sustains the population-average fraction for
+        a given race duration. Personal endurance/durability is NOT modelled
+        here (the Riegel forecast captures that — see predict_race_time).
+      - **Clean effort.** Assumes a near-maximal, evenly-paced effort on a flat,
+        accurately-measured course in fair conditions. Hills / heat / trail /
+        pacing blow-ups depress VDOT; they're handled as calibration CONFIDENCE
+        (surfaced at the confirm prompt), never silently excluded.
     """
     if distance_km <= 0 or time_seconds <= 0:
         return None
