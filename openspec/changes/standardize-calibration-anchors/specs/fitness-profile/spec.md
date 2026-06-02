@@ -60,6 +60,10 @@ A calibration change SHALL NOT retroactively alter past derived classifications.
 - **WHEN** an anchor changes after a phase has completed
 - **THEN** the completed phase's actuals (built from the frozen per-activity zones) do not change, so its classification/reasoning is preserved
 
+#### Scenario: A back-dated correction reclassifies only its window
+- **WHEN** the athlete records a corrected anchor with `fit calibrate <metric> <value> --date <past-date>` and runs `fit recompute --force`
+- **THEN** activities in that anchor's window are reclassified with the corrected value (as-of), and activities outside it are unchanged — `--force` re-derives via the historical anchor, never today's
+
 ## MODIFIED Requirements
 
 ### Requirement: VDOT from race results

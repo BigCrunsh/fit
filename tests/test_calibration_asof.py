@@ -49,3 +49,33 @@ class TestEnrichHistoricalStability:
         # history is stable across the anchor change.
         lthr_used_2 = db.execute("SELECT lthr_used FROM activities WHERE id='old'").fetchone()[0]
         assert lthr_used_2 == 170
+
+    def test_force_reclassifies_each_period_by_its_own_anchor(self, db, config):
+        """`recompute --force` (enrich force=True) re-derives via the AS-OF anchor,
+        so a past-dated CORRECTION reclassifies its window with the *historical*
+        value — never the single current/latest one."""
+        # Three confirmed LTHRs: an early value, a past correction, and "current".
+        add_calibration(db, "lthr", 170, "manual", "high", date(2025, 1, 1))
+        add_calibration(db, "lthr", 150, "manual", "high", date(2025, 4, 1))  # correction
+        add_calibration(db, "lthr", 180, "manual", "high", date(2025, 8, 1))  # current
+        # Same effort (avg HR 145) in three periods.
+        for aid, day in [("feb", "2025-02-01"), ("may", "2025-05-01"), ("sep", "2025-09-01")]:
+            db.execute(
+                "INSERT INTO activities (id, date, type, distance_km, duration_min, avg_hr) "
+                "VALUES (?, ?, 'running', 10.0, 50.0, 145)", (aid, day))
+        db.commit()
+
+        enrich_existing_activities(db, config, force=True)
+
+        def used(aid):
+            return db.execute("SELECT lthr_used FROM activities WHERE id=?", (aid,)).fetchone()[0]
+        def zone(aid):
+            return db.execute("SELECT hr_zone_lthr FROM activities WHERE id=?", (aid,)).fetchone()[0]
+
+        # Each activity uses ITS period's anchor, not the latest (180).
+        assert used("feb") == 170
+        assert used("may") == 150   # the past correction, applied to its window
+        assert used("sep") == 180
+        # Same HR (145) → different LTHR-zone per period, proving the
+        # classification (not just the stamp) follows the historical anchor.
+        assert zone("feb") != zone("may")   # 145 is Z2 @170 but Z4 @150

@@ -1619,12 +1619,17 @@ def recompute(recompute_all: bool, force: bool):
 @main.command()
 @click.argument("metric", type=click.Choice(["max_hr", "lthr", "vdot"]))
 @click.argument("value", type=float, required=False)
-def calibrate(metric: str, value: float | None):
+@click.option("--date", "cal_date", default=None,
+              help="Effective-from date YYYY-MM-DD (default today). Use a PAST date to "
+                   "record a historical correction, then `fit recompute --force` to "
+                   "reclassify only that window with this value.")
+def calibrate(metric: str, value: float | None, cal_date: str | None):
     """Confirm a physiological metric (max_hr, lthr, or vdot).
 
     Pass VALUE to set it non-interactively (e.g. `fit calibrate vdot 41`);
     omit it for the guided prompt. A confirmed value becomes the active anchor
-    and stays put until you confirm a new one.
+    and stays put until you confirm a new one. `--date` back-dates it so a
+    correction applies to the period it belongs to, not today.
     """
     from datetime import date as d
 
@@ -1632,6 +1637,12 @@ def calibrate(metric: str, value: float | None):
 
     from fit.calibration import (add_calibration, get_calibration_anchor,
                                  evaluate_suggestions, accept_suggestion, reject_suggestion)
+
+    try:
+        eff_date = d.fromisoformat(cal_date) if cal_date else d.today()
+    except ValueError:
+        console.print(f"[red]Invalid --date '{cal_date}' — use YYYY-MM-DD.[/red]")
+        return
 
     conn = _conn()
 
@@ -1658,7 +1669,7 @@ def calibrate(metric: str, value: float | None):
                 console.print("  Enter the highest HR you've observed in a recent race or hard effort.")
                 value = float(Prompt.ask("  Max HR (bpm)"))
             method = Prompt.ask("  Method", choices=["race", "lab_test", "manual"], default="race") if value else "manual"
-            add_calibration(conn, "max_hr", value, method, "high", d.today())
+            add_calibration(conn, "max_hr", value, method, "high", eff_date)
             console.print(f"  [green]✓ Max HR calibrated: {value} bpm[/green]")
 
         elif metric == "lthr":
@@ -1667,7 +1678,7 @@ def calibrate(metric: str, value: float | None):
                 console.print("  Protocol: warm up 15min, run 30min all-out (even pace),")
                 console.print("  LTHR = average HR of the LAST 20 minutes.")
                 value = float(Prompt.ask("  LTHR (avg HR of last 20 min)"))
-            add_calibration(conn, "lthr", value, "time_trial", "high", d.today())
+            add_calibration(conn, "lthr", value, "time_trial", "high", eff_date)
             console.print(f"  [green]✓ LTHR calibrated: {value} bpm[/green]")
 
         elif metric == "vdot":
@@ -1680,9 +1691,13 @@ def calibrate(metric: str, value: float | None):
                 console.print("  Confirm your VDOT from a recent representative race "
                               "(5–25 km road effort, near-max).")
                 value = float(Prompt.ask("  VDOT"))
-            # Confirmed → method 'manual', dated today; becomes the sticky active anchor.
-            add_calibration(conn, "vdot", value, "manual", "high", d.today())
+            # Confirmed → method 'manual'; becomes the sticky active anchor.
+            add_calibration(conn, "vdot", value, "manual", "high", eff_date)
             console.print(f"  [green]✓ VDOT confirmed: {value:g}[/green]")
+
+        if eff_date < d.today():
+            console.print(f"  [dim]Back-dated to {eff_date}. Run [bold]fit recompute --force[/bold] "
+                          f"to reclassify that window with this value.[/dim]")
     finally:
         conn.close()
 
