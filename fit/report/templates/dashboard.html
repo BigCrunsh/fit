@@ -422,24 +422,29 @@
   <nav class="anchor-nav" aria-label="Profile sections">
     <a class="anchor-link" href="#prof-today">Today</a>
     <a class="anchor-link" href="#prof-dimensions">Dimensions</a>
-    <a class="anchor-link" href="#prof-pace-zones">Pace Zones</a>
-    <a class="anchor-link" href="#prof-vo2max">VO2max</a>
-    <a class="anchor-link" href="#prof-aerobic">Aerobic</a>
+    <a class="anchor-link" href="#prof-prediction">Forecast</a>
+    <a class="anchor-link" href="#prof-vo2max">VDOT</a>
+    <a class="anchor-link" href="#prof-aerobic">Efficiency</a>
     <a class="anchor-link" href="#prof-drift">Resilience</a>
     <a class="anchor-link" href="#prof-zones">Zones</a>
-    <a class="anchor-link" href="#prof-weight">Weight</a>
+    <a class="anchor-link" href="#prof-pace-zones">Pace Zones</a>
     <a class="anchor-link" href="#prof-cadence">Cadence</a>
     <a class="anchor-link" href="#prof-pacecv">Pace CV</a>
+    <a class="anchor-link" href="#prof-weight">Weight</a>
     <a class="anchor-link" href="#prof-effort-gap">Effort Gap</a>
-    <a class="anchor-link" href="#prof-prediction">Prediction</a>
     <a class="anchor-link" href="#prof-cal-history">Calibrations</a>
   </nav>
 
-  <!-- 2. TODAY'S CAPABILITY -->
+  <!-- ════════════════════════════════════════════════════════════════
+       SNAPSHOT — where am I right now
+       ════════════════════════════════════════════════════════════════ -->
+
+  <!-- TODAY'S CAPABILITY -->
   {% if todays_capability %}
   {% set tc = todays_capability %}
   <div id="prof-today" class="sec"><h2>What You Can Run Today</h2><div class="line"></div></div>
-  <div class="cards" style="margin-bottom:16px">
+  <div class="sec-sub">Today's working ceiling — the easy pace that sits aerobic and how far before HR decouples.</div>
+  <div class="cards" style="margin-bottom:8px">
     <div class="card" style="min-width:160px">
       <div class="card-label">Sustainable Pace</div>
       {% if tc.z2_pace %}
@@ -459,11 +464,13 @@
       {% endif %}
     </div>
   </div>
+  {% if profile_takeaways.today %}<div class="sec-takeaway">{{ profile_takeaways.today }}</div>{% endif %}
   {% endif %}
 
-  <!-- 3. FITNESS DIMENSIONS — Gap Analysis -->
+  <!-- FITNESS DIMENSIONS — Gap Analysis -->
   {% if fitness_gaps %}
   <div id="prof-dimensions" class="sec"><h2>Fitness Dimensions</h2><div class="line"></div></div>
+  <div class="sec-sub">The four engines a marathon draws on, each against what the goal race needs. The shortest bar is the limiter.</div>
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin:10px 0">
     {% for dim in fitness_gaps %}
     <div class="dim-row">
@@ -485,36 +492,40 @@
     {% if dim.sowhat %}<div class="dim-sowhat">{{ dim.sowhat }}</div>{% endif %}
     {% endfor %}
   </div>
+  {% if profile_takeaways.dimensions %}<div class="sec-takeaway">{{ profile_takeaways.dimensions }}</div>{% endif %}
   {% endif %}
 
-  <!-- 3b. Daniels Pace Zones — workout target paces derived from VDOT -->
-  {% if pace_zones %}
-  <div id="prof-pace-zones" class="sec"><h2>Pace Zones (Daniels)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Training paces derived from VDOT via Daniels' Running Formula. E (easy) is the bulk of weekly volume. M (marathon) is goal-race pace. T (threshold) is sustainable for ~1 hour all-out. I (interval) at vVO2max for 3-5 min reps. R (repetition) for fast 30s-2min neuromuscular reps.</div><div class="line"></div></div>
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:8px 14px;margin:10px 0">
-    {% if pace_zones.available %}
-    {% for r in pace_zones.rows %}
-    <div class="pace-zone-row zone-{{ r.key }}">
-      <div class="pace-zone-key">{{ r.key }}</div>
-      <div class="pace-zone-label">{{ r.label }}</div>
-      <div class="pace-zone-range">{{ r.range }}/km</div>
-      <div class="pace-zone-desc">{{ r.desc }}</div>
-    </div>
-    {% endfor %}
-    <div style="font-size:10px;color:var(--text-dim);padding:8px 10px 4px">Anchored on VDOT {{ pace_zones.vo2max }}. Recalibrate by syncing a recent race.</div>
-    {% else %}
-    <div class="empty-row">{{ pace_zones.missing }}</div>
+  <!-- ════════════════════════════════════════════════════════════════
+       HEADLINE — what will race day deliver
+       ════════════════════════════════════════════════════════════════ -->
+
+  <!-- Marathon Prediction — the forecast, up front -->
+  <div id="prof-prediction" class="sec"><h2>Marathon Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">VDOT-derived predictions over time (Daniels formula) plus Riegel projections from actual race results, scaled to your target distance. Y-axis is reverse-scaled — lower = faster.</div><div class="line"></div></div>
+  <div class="sec-sub">What time would my current fitness deliver? Lower line = faster prediction. Race dots are anchors; the line is Garmin VO2max-derived.</div>
+  <div class="chart-box chart-canvas-lg"><canvas id="chart-marathon-pred"></canvas></div>
+  {% if profile_takeaways.prediction %}
+  <div class="sec-takeaway">{{ profile_takeaways.prediction }}{% if prediction_confidence %} <span class="sec-takeaway-meta">· confidence {{ prediction_confidence.level }}{% if prediction_confidence.reason %} ({{ prediction_confidence.reason }}){% endif %}</span>{% endif %}</div>
+  {% elif race_countdown and race_countdown.prediction_mid and race_countdown.target_time %}
+  <div class="forecast-closing">
+    <span class="forecast-closing-label">Forecast:</span>
+    <span class="forecast-closing-value">{{ race_countdown.prediction_mid }}</span>
+    <span class="forecast-closing-target">· target {{ race_countdown.target_time }}</span>
+    {% if race_countdown.gap_minutes is defined and race_countdown.gap_minutes is not none %}
+    <span class="forecast-closing-gap" style="color:{% if race_countdown.gap_minutes <= 0 %}var(--safe){% elif race_countdown.gap_minutes <= 5 %}var(--caution){% else %}var(--danger){% endif %}">{{ '%+d' | format(race_countdown.gap_minutes) }} min</span>
     {% endif %}
   </div>
   {% endif %}
 
   <!-- ════════════════════════════════════════════════════════════════
-       ACT 2 — How am I trending aerobically? (the core fitness story)
+       THE ENGINE, EXPLAINED — why that forecast
        ════════════════════════════════════════════════════════════════ -->
+  <div class="sec-group">The engine, explained</div>
 
   <!-- VDOT Trend — Anchor (training+race effort) vs Garmin source comparison -->
   <div id="prof-vo2max" class="sec"><h2>VDOT Trend — Anchor vs Garmin</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Two estimates of aerobic capacity. <strong>Anchor VDOT</strong> (solid line) is performance-anchored — derived from any running activity (training or race) that meets the criteria: 5–25 km, avg HR ≥ LTHR, consistent pacing. Larger dots = race-day efforts. <strong>Garmin VO2max</strong> (dashed) is a physiology estimate from wrist HR — less reliable, shown for comparison. When they disagree, trust the anchor VDOT.</div><div class="line"></div></div>
   <div class="sec-sub">Where is my aerobic engine, in performance terms? Anchor VDOT (solid) comes from any race-effort run; Garmin (dashed) is a reference.</div>
   <div class="chart-box chart-canvas-xl"><canvas id="chart-vo2"></canvas></div>
+  {% if profile_takeaways.vdot %}<div class="sec-takeaway">{{ profile_takeaways.vdot }}</div>{% endif %}
   {% if vdot_comparison %}
   <div class="vdot-compare-card">
     {% if vdot_comparison.race %}
@@ -542,9 +553,6 @@
       <span class="vdot-compare-prediction">{{ vdot_comparison.garmin_marathon }}</span>
     </div>
     {% endif %}
-    {% if vdot_comparison.interpretation %}
-    <div class="vdot-compare-interpretation">{{ vdot_comparison.interpretation }}</div>
-    {% endif %}
   </div>
   {% endif %}
 
@@ -552,6 +560,7 @@
   <div id="prof-aerobic" class="sec"><h2>Aerobic Efficiency (Z2 speed/bpm)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.speed_per_bpm }}</div><div class="line"></div></div>
   <div class="sec-sub">Am I faster at the same heart rate? Higher = more efficient aerobic engine.</div>
   <div class="chart-box chart-canvas-lg"><canvas id="chart-efficiency"></canvas></div>
+  {% if profile_takeaways.efficiency %}<div class="sec-takeaway">{{ profile_takeaways.efficiency }}</div>{% endif %}
 
   <!-- Long-Run Resilience (cardiac drift) — when does HR start rising? -->
   <div id="prof-drift" class="sec"><h2>Long-Run Resilience</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.cardiac_drift }}</div><div class="line"></div></div>
@@ -559,24 +568,66 @@
   <div class="chart-box chart-canvas-xl"><canvas id="chart-drift"></canvas></div>
   {% set drift_chart = charts | selectattr('id', 'equalto', 'chart-drift') | first %}
   {% if drift_chart and drift_chart.n_runs is defined %}
-  <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">Averaged over {{ drift_chart.n_runs }} run{{ 's' if drift_chart.n_runs != 1 else '' }} from last 4 weeks. Individual runs shown as thin lines.{% if split_data and split_data.drift and split_data.drift.drift_onset_km %} Drift onset at km {{ split_data.drift.drift_onset_km }}.{% endif %}</div>
+  <div class="sec-method">Averaged over {{ drift_chart.n_runs }} run{{ 's' if drift_chart.n_runs != 1 else '' }} from last 4 weeks. Individual runs shown as thin lines.{% if split_data and split_data.drift and split_data.drift.drift_onset_km %} Drift onset at km {{ split_data.drift.drift_onset_km }}.{% endif %}</div>
   {% endif %}
   <div class="chart-box chart-canvas-md"><canvas id="chart-drift-trend"></canvas></div>
-  <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">Drift onset = first km where HR exceeds first-half average + 5 bpm. Higher = better aerobic endurance. Green band = onset after km 15 (good base).</div>
+  <div class="sec-method">Drift onset = first km where HR exceeds first-half average + 5 bpm. Higher = better aerobic endurance. Green band = onset after km 15 (good base).</div>
+  {% if profile_takeaways.drift %}<div class="sec-takeaway">{{ profile_takeaways.drift }}</div>{% endif %}
 
   <!-- Zone Distribution — training mix -->
   <div id="prof-zones" class="sec"><h2>Zone Distribution</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.zones }}</div><div class="line"></div></div>
   <div class="sec-sub">How is weekly time split across intensities? Polarized base = mostly Z1/Z2 with some Z4/Z5; aim for the phase-target band.</div>
   <div class="chart-box chart-canvas-lg"><canvas id="chart-zones"></canvas></div>
+  {% if profile_takeaways.zones %}<div class="sec-takeaway">{{ profile_takeaways.zones }}</div>{% endif %}
 
   <!-- ════════════════════════════════════════════════════════════════
-       ACT 3 — Body & form (secondary axes)
+       HOW TO TRAIN IT — turning the engine into paces
        ════════════════════════════════════════════════════════════════ -->
+  <div class="sec-group">How to train it</div>
+
+  <!-- Daniels Pace Zones — workout target paces derived from VDOT -->
+  {% if pace_zones %}
+  <div id="prof-pace-zones" class="sec"><h2>Pace Zones (Daniels)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Training paces derived from VDOT via Daniels' Running Formula. E (easy) is the bulk of weekly volume. M (marathon) is goal-race pace. T (threshold) is sustainable for ~1 hour all-out. I (interval) at vVO2max for 3-5 min reps. R (repetition) for fast 30s-2min neuromuscular reps.</div><div class="line"></div></div>
+  <div class="sec-sub">The pace each workout type should hit, derived from current VDOT. Easy is most of the week; the rest are dosed sparingly.</div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:8px 14px;margin:10px 0">
+    {% if pace_zones.available %}
+    {% for r in pace_zones.rows %}
+    <div class="pace-zone-row zone-{{ r.key }}">
+      <div class="pace-zone-key">{{ r.key }}</div>
+      <div class="pace-zone-label">{{ r.label }}</div>
+      <div class="pace-zone-range">{{ r.range }}/km</div>
+      <div class="pace-zone-desc">{{ r.desc }}</div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="empty-row">{{ pace_zones.missing }}</div>
+    {% endif %}
+  </div>
+  {% if profile_takeaways.pace_zones %}<div class="sec-takeaway">{{ profile_takeaways.pace_zones }}</div>{% endif %}
+  {% endif %}
+
+  <!-- ════════════════════════════════════════════════════════════════
+       FORM & BODY — the supporting axes
+       ════════════════════════════════════════════════════════════════ -->
+  <div class="sec-group">Form &amp; body</div>
+
+  <!-- Cadence — form indicator -->
+  <div id="prof-cadence" class="sec"><h2>Cadence Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.cadence }}</div><div class="line"></div></div>
+  <div class="sec-sub">Steps per minute. Drifting higher with experience usually means better running economy.</div>
+  <div class="chart-box chart-canvas-md"><canvas id="chart-cadence"></canvas></div>
+  {% if profile_takeaways.cadence %}<div class="sec-takeaway">{{ profile_takeaways.cadence }}</div>{% endif %}
+
+  <!-- Pace Consistency (CV%) — pacing form indicator -->
+  <div id="prof-pacecv" class="sec"><h2>Pace Consistency (CV%)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.pacecv }}</div><div class="line"></div></div>
+  <div class="sec-sub">How even are my splits within a run? Lower = better pacing discipline; spikes mean uneven effort or terrain.</div>
+  <div class="chart-box chart-canvas-md"><canvas id="chart-pacecv"></canvas></div>
+  {% if profile_takeaways.pacecv %}<div class="sec-takeaway">{{ profile_takeaways.pacecv }}</div>{% endif %}
 
   <!-- Weight + Body Composition -->
   {% if body_comp %}
   {% set bc = body_comp %}
   <div id="prof-weight" class="sec"><h2>Weight + Body Composition</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.weight }}</div><div class="line"></div></div>
+  <div class="sec-sub">Body mass and composition over time — every kilo off is free pace, but not at the cost of fuelling the training.</div>
   <div class="cards">
     <div class="card">
       <div class="card-label">Weight</div>
@@ -599,50 +650,22 @@
     {% endif %}
   </div>
   <div class="chart-box chart-canvas-lg"><canvas id="chart-weight"></canvas></div>
+  {% if profile_takeaways.weight %}<div class="sec-takeaway">{{ profile_takeaways.weight }}</div>{% endif %}
   {% endif %}
 
-  <!-- Cadence — form indicator -->
-  <div id="prof-cadence" class="sec"><h2>Cadence Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.cadence }}</div><div class="line"></div></div>
-  <div class="sec-sub">Steps per minute. Drifting higher with experience usually means better running economy.</div>
-  <div class="chart-box chart-canvas-md"><canvas id="chart-cadence"></canvas></div>
-
-  <!-- Pace Consistency (CV%) — pacing form indicator -->
-  <div id="prof-pacecv" class="sec"><h2>Pace Consistency (CV%)</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.pacecv }}</div><div class="line"></div></div>
-  <div class="sec-sub">How even are my splits within a run? Lower = better pacing discipline; spikes mean uneven effort or terrain.</div>
-  <div class="chart-box chart-canvas-md"><canvas id="chart-pacecv"></canvas></div>
-
   <!-- ════════════════════════════════════════════════════════════════
-       ACT 4 — What does this mean for race day?  (caveat + forecast)
+       SIGNALS & DIAGNOSTICS — caveats and the calibration audit
        ════════════════════════════════════════════════════════════════ -->
+  <div class="sec-group">Signals &amp; diagnostics</div>
 
-  <!-- Effort Gap — comes BEFORE the prediction as its caveat -->
+  <!-- Effort Gap — felt-harder-than-watch signal -->
   <div id="prof-effort-gap" class="sec"><h2>Effort Gap — Hidden Fatigue Signal</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.effort_gap }}</div><div class="line"></div></div>
-  <div class="sec-sub">Did the run feel harder than the watch thinks? Bars above zero = my RPE exceeds Garmin's Training Effect — a hidden-fatigue signal the prediction can't see.</div>
+  <div class="sec-sub">Did the run feel harder than the watch thinks? RPE above Garmin's Training Effect is a hidden-fatigue signal the prediction can't see.</div>
   <div class="chart-box chart-canvas-md"><canvas id="chart-effort-gap"></canvas></div>
-  <div style="font-size:10px;color:var(--text-dim);margin-top:-10px;margin-bottom:16px;padding:0 14px">A run or two above zero is normal. Three or more consecutive = check sleep, recovery, accumulated load before the next hard session.</div>
+  <div class="sec-method">A run or two above the watch is normal. Three or more consecutive = check sleep, recovery, accumulated load before the next hard session.</div>
+  {% if profile_takeaways.effort_gap %}<div class="sec-takeaway">{{ profile_takeaways.effort_gap }}</div>{% endif %}
 
-  <!-- Marathon Prediction — the forecast with target annotation -->
-  <div id="prof-prediction" class="sec"><h2>Marathon Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">VDOT-derived predictions over time (Daniels formula) plus Riegel projections from actual race results, scaled to your target distance. Y-axis is reverse-scaled — lower = faster.</div><div class="line"></div></div>
-  <div class="sec-sub">What time would my current fitness deliver? Lower line = faster prediction. Race dots are anchors; the line is Garmin VO2max-derived.</div>
-  <div class="chart-box chart-canvas-lg"><canvas id="chart-marathon-pred"></canvas></div>
-  {% if race_countdown and race_countdown.prediction_mid and race_countdown.target_time %}
-  <div class="forecast-closing">
-    <span class="forecast-closing-label">Forecast:</span>
-    <span class="forecast-closing-value">{{ race_countdown.prediction_mid }}</span>
-    <span class="forecast-closing-target">· target {{ race_countdown.target_time }}</span>
-    {% if race_countdown.gap_minutes is defined and race_countdown.gap_minutes is not none %}
-    <span class="forecast-closing-gap" style="color:{% if race_countdown.gap_minutes <= 0 %}var(--safe){% elif race_countdown.gap_minutes <= 5 %}var(--caution){% else %}var(--danger){% endif %}">{{ '%+d' | format(race_countdown.gap_minutes) }} min</span>
-    {% endif %}
-    {% if prediction_confidence %}
-    <span class="forecast-closing-confidence level-{{ prediction_confidence.level }}">· confidence {{ prediction_confidence.level }}{% if prediction_confidence.reason %} ({{ prediction_confidence.reason }}){% endif %}</span>
-    {% endif %}
-  </div>
-  {% endif %}
-
-  <!-- ════════════════════════════════════════════════════════════════
-       ACT 5 — Diagnostics: calibration history (collapsible)
-       ════════════════════════════════════════════════════════════════ -->
-
+  {% if profile_takeaways.calibration %}<div class="sec-takeaway" style="margin-bottom:8px">{{ profile_takeaways.calibration }}</div>{% endif %}
   {% if calibration_history %}
   <details id="prof-cal-history" class="cal-history-details">
     <summary class="cal-history-summary"><h2>Calibration History</h2></summary>

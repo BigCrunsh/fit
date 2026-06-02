@@ -917,14 +917,31 @@ def _pace_zones(conn):
     """
     from fit.analysis import compute_daniels_paces
     from fit.calibration import get_active_calibration
+    from fit.fitness import get_fitness_anchors
 
-    vo2_cal = get_active_calibration(conn, "vo2max")
-    if not vo2_cal or not vo2_cal.get("value"):
-        return {"available": False, "missing": "Calibrate VO2max (sync a Garmin running activity)."}
+    # Anchor training paces to the SAME performance VDOT the rest of the
+    # dashboard trusts (latest qualifying race/training effort), not Garmin's
+    # wrist-HR VO2max. Garmin's estimate runs optimistic (e.g. 49 vs an anchor
+    # of ~36), and Daniels paces off 49 would prescribe paces far too fast for
+    # the athlete's real fitness. Falls back to the VO2max calibration only
+    # when there's no qualifying effort to anchor on.
+    anchors = get_fitness_anchors(conn, days=365)
+    vdot = None
+    vdot_source = None
+    if anchors:
+        latest = sorted(anchors, key=lambda a: a["date"], reverse=True)[0]
+        vdot = latest["vdot"]
+        vdot_source = "anchor"
+    if vdot is None:
+        vo2_cal = get_active_calibration(conn, "vo2max")
+        if not vo2_cal or not vo2_cal.get("value"):
+            return {"available": False, "missing": "No qualifying effort yet — run a 5–10 km at ≥ LTHR to anchor your paces."}
+        vdot = vo2_cal["value"]
+        vdot_source = "garmin"
 
-    paces = compute_daniels_paces(vo2max=vo2_cal["value"])
+    paces = compute_daniels_paces(vo2max=vdot)
     if not paces:
-        return {"available": False, "missing": "VO2max value out of derivation range."}
+        return {"available": False, "missing": "VDOT value out of derivation range."}
 
     def _fmt(s):
         m, sec = divmod(int(round(s)), 60)
@@ -935,7 +952,8 @@ def _pace_zones(conn):
 
     return {
         "available": True,
-        "vo2max": vo2_cal["value"],
+        "vo2max": vdot,
+        "vdot_source": vdot_source,
         "rows": [
             {"key": "E", "label": "Easy", "desc": "Conversational. The bulk of weekly volume.", **_row("E", paces["E"]["lo"], paces["E"]["hi"])},
             {"key": "M", "label": "Marathon", "desc": "Goal race pace. Sustainable for ~3-4 h.", **_row("M", paces["M"]["lo"], paces["M"]["hi"])},
@@ -2427,6 +2445,280 @@ def _body_comp_data(conn):
     except Exception as e:
         logger.debug("body_comp_data failed: %s", e)
         return None
+
+
+def _profile_takeaways(conn):
+    """One-line, data-driven verdict per Profile section ('▸ takeaway').
+
+    The dashboard standardizes every section as title → one-line read →
+    visual → takeaway. This builder produces the takeaway text. Every value
+    is derived from the SAME builder/query that feeds the section's visual —
+    no invented numbers. A section is omitted from the returned dict when its
+    data is missing, so the template renders the takeaway line only when there
+    is something true to say.
+    """
+    out = {}
+
+    def _safe(key, fn):
+        try:
+            v = fn()
+            if v:
+                out[key] = v
+        except Exception as e:  # one bad section must not blank the rest
+            logger.debug("takeaway %s failed: %s", key, e)
+
+    # ── Snapshot: what can I run today ───────────────────────────────
+    def _today():
+        tc = _todays_capability(conn)
+        if not tc:
+            return None
+        parts = []
+        if tc.get("z2_pace"):
+            t = f"~{tc['z2_pace']}/km sits easy"
+            if tc.get("threshold_trend") == "improving":
+                t += " and is getting quicker"
+            parts.append(t)
+        if tc.get("distance_ceiling"):
+            parts.append(f"durable to ~{tc['distance_ceiling']} km before HR decouples")
+        if not parts:
+            return None
+        return "Train inside this today — " + "; ".join(parts) + "."
+
+    # ── Snapshot: the four dimensions → name the limiter ─────────────
+    def _dimensions():
+        dims = _fitness_gap_analysis(conn)
+        if not dims:
+            return None
+        scored = [d for d in dims if d.get("pct") is not None]
+        if not scored:
+            return None
+        weakest = min(scored, key=lambda d: d["pct"])
+        if weakest["pct"] >= 100:
+            return "All four dimensions are at or above what the goal race needs — hold the build."
+        gap_txt = ""
+        if weakest.get("current") is not None and weakest.get("required") is not None:
+            gap_txt = f" ({weakest['current']} vs {weakest['required']} needed)"
+        return (f"Current limiter: {weakest['name']}{gap_txt} at {weakest['pct']}% of "
+                f"target — the dimension with the most to gain.")
+
+    # ── Headline: the forecast ───────────────────────────────────────
+    def _prediction():
+        rc = _race_countdown(conn)
+        if not rc or not rc.get("prediction_mid") or not rc.get("target_time"):
+            return None
+        base = f"Current fitness projects ~{rc['prediction_mid']} vs your {rc['target_time']} target"
+        gap = rc.get("gap_minutes")
+        if gap is not None:
+            if gap <= 0:
+                base += f" — {abs(gap)} min to spare"
+            else:
+                base += f" — {gap} min short"
+        if rc.get("trend_badge"):
+            base += f" ({rc['trend_badge']})"
+        return base + "."
+
+    # ── Engine: VDOT anchor vs Garmin ────────────────────────────────
+    def _vdot():
+        vc = _vdot_comparison(conn)
+        if not vc:
+            return None
+        anchor = vc.get("race")
+        if anchor and vc.get("garmin_vo2"):
+            gap = vc["garmin_vo2"] - anchor["vdot"]
+            if abs(gap) < 2:
+                return (f"Anchor VDOT {anchor['vdot']} and Garmin {vc['garmin_vo2']:g} "
+                        f"agree closely — confidence is high.")
+            return (f"Trust the anchor: VDOT {anchor['vdot']} from your latest race-effort run; "
+                    f"Garmin reads {vc['garmin_vo2']:g} ({gap:+.0f}), the wrist-HR estimate.")
+        if anchor:
+            return f"Anchor VDOT {anchor['vdot']} from your latest qualifying effort drives the prediction."
+        return None
+
+    # ── Engine: aerobic efficiency (economy dimension) ───────────────
+    def _efficiency():
+        dims = _fitness_gap_analysis(conn) or []
+        eco = next((d for d in dims if d["name"].lower() == "economy"), None)
+        if not eco or eco.get("current") is None:
+            return None
+        trend = eco.get("trend")
+        if trend == "improving":
+            verdict = "trending up — you're covering ground for fewer heartbeats"
+        elif trend == "declining":
+            verdict = "drifting down — watch fatigue or heat masking economy"
+        else:
+            verdict = "holding steady"
+        rate = ""
+        if eco.get("rate_per_month"):
+            rate = f" ({eco['rate_per_month']:+.3f}/mo)"
+        return f"{eco['current']:.2f} m/min·bpm at Z2{rate} — {verdict}."
+
+    # ── Engine: long-run resilience (cardiac drift onset) ────────────
+    def _drift():
+        sd = _split_data(conn)
+        onset = (sd or {}).get("drift", {}).get("drift_onset_km") if sd else None
+        if onset is None:
+            dims = _fitness_gap_analysis(conn) or []
+            res = next((d for d in dims if d["name"].lower() == "resilience"), None)
+            onset = res.get("current") if res else None
+        if onset is None:
+            return None
+        if onset >= 15:
+            verdict = "strong aerobic base — late-marathon durability looks solid"
+        elif onset >= 10:
+            verdict = "decent base; pushing the onset later is the long-run goal"
+        else:
+            verdict = "an early rise — prioritise easy long-run volume to push it later"
+        return f"HR holds flat to ~{onset} km before drifting — {verdict}."
+
+    # ── Engine: zone distribution vs phase target ────────────────────
+    def _zones():
+        from fit.analysis import compute_rolling_week
+        rolling = compute_rolling_week(conn) or {}
+        z12 = rolling.get("z12_pct")
+        ph = conn.execute(
+            "SELECT name, z12_pct_target FROM training_phases "
+            "WHERE status = 'active' LIMIT 1"
+        ).fetchone()
+        if z12 is None or not ph or not ph["z12_pct_target"]:
+            return None
+        tgt = ph["z12_pct_target"]
+        if z12 >= tgt:
+            verdict = f"on target for the {ph['name']} phase ({tgt:.0f}% easy)"
+        elif z12 >= tgt - 10:
+            verdict = f"just under the {tgt:.0f}% {ph['name']}-phase target"
+        else:
+            verdict = f"well under the {tgt:.0f}% {ph['name']}-phase target — add easy volume"
+        return f"{z12:.0f}% of training time easy this week — {verdict}."
+
+    # ── How to train it: pace zones reference ────────────────────────
+    def _pace_zones_t():
+        pz = _pace_zones(conn)
+        if not pz or not pz.get("available"):
+            return None
+        if pz.get("vdot_source") == "garmin":
+            return (f"Paces from Garmin VDOT {pz['vo2max']:g} — no qualifying effort yet; "
+                    f"run a 5–10 km at ≥ LTHR to anchor them to real fitness.")
+        return (f"Workout paces anchored to your performance VDOT {pz['vo2max']:g} — the same "
+                f"number the VDOT trend trusts. Recalibrate by racing a recent effort.")
+
+    # ── Form: cadence trend ──────────────────────────────────────────
+    def _cadence():
+        rows = conn.execute(
+            f"SELECT date, avg_cadence FROM activities "
+            f"WHERE type IN {RUNNING_TYPES_SQL} AND avg_cadence IS NOT NULL "
+            f"AND date >= date('now','-90 days') ORDER BY date"
+        ).fetchall()
+        if len(rows) < 3:
+            return None
+        latest = rows[-1]["avg_cadence"]
+        first = rows[0]["avg_cadence"]
+        delta = latest - first
+        if delta >= 2:
+            verdict = "drifting up over 90 days — usually a sign of improving economy"
+        elif delta <= -2:
+            verdict = "drifting down over 90 days — check for overstriding when tired"
+        else:
+            verdict = "steady over 90 days"
+        return f"Latest {latest:.0f} spm — {verdict}."
+
+    # ── Form: pace consistency (CV%) ─────────────────────────────────
+    def _pacecv():
+        rows = conn.execute(
+            "SELECT a.id, a.date FROM activities a "
+            f"WHERE a.type IN {RUNNING_TYPES_SQL} "
+            "AND a.id IN (SELECT DISTINCT activity_id FROM activity_splits) "
+            "ORDER BY a.date DESC LIMIT 1"
+        ).fetchall()
+        if not rows:
+            return None
+        paces = [r["pace_sec_per_km"] for r in conn.execute(
+            "SELECT pace_sec_per_km FROM activity_splits "
+            "WHERE activity_id = ? AND pace_sec_per_km IS NOT NULL", (rows[0]["id"],)
+        ).fetchall()]
+        if len(paces) < 3:
+            return None
+        mean_p = sum(paces) / len(paces)
+        if mean_p <= 0:
+            return None
+        cv = (sum((p - mean_p) ** 2 for p in paces) / len(paces)) ** 0.5 / mean_p * 100
+        if cv < 5:
+            verdict = "tight, well-controlled splits"
+        elif cv < 8:
+            verdict = "moderate variation — terrain or effort drift"
+        else:
+            verdict = "uneven splits — work on even pacing"
+        return f"Last run's split CV {cv:.1f}% — {verdict}."
+
+    # ── Form: weight + body composition ──────────────────────────────
+    def _weight():
+        bc = _body_comp_data(conn)
+        if not bc or bc.get("weight") is None:
+            return None
+        base = f"{bc['weight']} kg"
+        if bc.get("weight_change") is not None and bc.get("weight_change_span"):
+            base += f" ({bc['weight_change']:+.1f} kg /{bc['weight_change_span']})"
+        if bc.get("weight_target"):
+            diff = bc["weight"] - bc["weight_target"]
+            if abs(diff) < 0.5:
+                base += f" — at your {bc['weight_target']} kg target"
+            elif diff > 0:
+                base += f" — {diff:.1f} kg above the {bc['weight_target']} kg target"
+            else:
+                base += f" — {abs(diff):.1f} kg under the {bc['weight_target']} kg target"
+        return base + "."
+
+    # ── Diagnostics: effort gap (felt-harder-than-watch) ─────────────
+    def _effort_gap():
+        rows = conn.execute(
+            f"SELECT aerobic_te, rpe FROM activities "
+            f"WHERE type IN {RUNNING_TYPES_SQL} AND aerobic_te IS NOT NULL AND rpe IS NOT NULL "
+            f"ORDER BY date DESC LIMIT 6"
+        ).fetchall()
+        if not rows:
+            return None
+        consecutive = 0
+        for r in rows:  # most-recent first
+            if r["rpe"] / 2 > r["aerobic_te"]:
+                consecutive += 1
+            else:
+                break
+        if consecutive >= 3:
+            return (f"{consecutive} recent runs in a row felt harder than the watch logged — "
+                    f"check sleep, recovery and load before the next hard session.")
+        if consecutive >= 1:
+            return f"Last {consecutive} run(s) felt a touch harder than the watch — normal, keep an eye on it."
+        return "Effort and the watch's read are aligned — no hidden-fatigue signal."
+
+    # ── Diagnostics: calibration anchor ──────────────────────────────
+    def _calibration():
+        from fit.calibration import get_active_calibration
+        lthr = get_active_calibration(conn, "lthr")
+        if not lthr or not lthr.get("value"):
+            return None
+        days = None
+        if lthr.get("date"):
+            try:
+                days = (date.today() - date.fromisoformat(lthr["date"])).days
+            except Exception:
+                days = None
+        age = f" (set {days}d ago)" if days is not None else ""
+        stale = " — getting old, re-test from a recent race" if (days or 0) > 180 else ""
+        return f"Zones anchored to LTHR {lthr['value']:g}{age}{stale}."
+
+    _safe("today", _today)
+    _safe("dimensions", _dimensions)
+    _safe("prediction", _prediction)
+    _safe("vdot", _vdot)
+    _safe("efficiency", _efficiency)
+    _safe("drift", _drift)
+    _safe("zones", _zones)
+    _safe("pace_zones", _pace_zones_t)
+    _safe("cadence", _cadence)
+    _safe("pacecv", _pacecv)
+    _safe("weight", _weight)
+    _safe("effort_gap", _effort_gap)
+    _safe("calibration", _calibration)
+    return out
 
 
 def _weekly_plan_adherence(conn):

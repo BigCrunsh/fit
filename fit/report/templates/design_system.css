@@ -442,6 +442,28 @@ details.insight-box .insight-title { font-size:14px; padding:2px 0; }
 /* Section subtitle — one-line "what this answers" under each chart heading */
 .sec-sub { font-size:11px; color:var(--text-muted); margin:-4px 0 10px 0; line-height:1.5; max-width:720px; }
 
+/* Section template pieces — every Profile section reads:
+   group divider → title (.sec) → one-line read (.sec-sub) → visual →
+   methodology footnote (.sec-method, optional) → takeaway verdict (.sec-takeaway). */
+
+/* Group divider — a "chapter break" above a cluster of related sections.
+   More prominent than .sec so the grouping reads above the section titles. */
+.sec-group { display:flex; align-items:center; gap:12px; margin:44px 0 6px; font-size:11px;
+  font-weight:700; color:var(--accent); text-transform:uppercase; letter-spacing:0.16em; }
+.sec-group::before, .sec-group::after { content:""; flex:1; height:1px; }
+.sec-group::before { background:linear-gradient(to left, rgba(129,140,248,0.28), transparent); }
+.sec-group::after  { background:linear-gradient(to right, rgba(129,140,248,0.28), transparent); }
+
+/* Takeaway — the standardized "so what" verdict that closes each section. */
+.sec-takeaway { font-size:12px; color:var(--text); line-height:1.55; margin:4px 0 18px;
+  padding:9px 13px 9px 32px; position:relative; background:var(--surface);
+  border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:8px; max-width:760px; }
+.sec-takeaway::before { content:"\25B8"; position:absolute; left:13px; top:9px; color:var(--accent); font-weight:700; }
+.sec-takeaway-meta { color:var(--text-dim); font-size:10px; }
+
+/* Methodology footnote — small print under a chart explaining how it's built. */
+.sec-method { font-size:10px; color:var(--text-dim); margin:-8px 0 10px; padding:0 14px; line-height:1.5; max-width:720px; }
+
 /* Dimension "so what" caption — one-liner under each Fitness Dimensions row */
 .dim-sowhat { font-size:10px; color:var(--text-dim); margin:-2px 0 6px 88px; line-height:1.5; font-style:italic; }
 
