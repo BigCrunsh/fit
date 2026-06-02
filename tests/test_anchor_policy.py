@@ -164,6 +164,40 @@ class TestBackfillRaceVdot:
         assert backfill_race_vdot(db) == 0
 
 
+class TestBackfillEffortVdot:
+    def _ins_activity(self, db, aid, days_ago, km, dur, hr):
+        d = (date.today() - timedelta(days=days_ago)).isoformat()
+        db.execute(
+            "INSERT INTO activities (id, date, type, distance_km, duration_min, avg_hr) "
+            "VALUES (?, ?, 'running', ?, ?, ?)", (aid, d, km, dur, hr))
+        db.commit()
+
+    def test_writes_effort_estimate_for_hard_training(self, db):
+        from fit.calibration import add_calibration, backfill_effort_vdot, get_active_calibration
+        add_calibration(db, "lthr", 172, "manual", "high", date.today())
+        # A hard 10k at HR ≥ LTHR, no race_calendar row → qualifies as a training effort.
+        self._ins_activity(db, "hard10k", 20, 10.0, 45.0, 178)
+        added = backfill_effort_vdot(db)
+        assert added == 1
+        assert backfill_effort_vdot(db) == 0          # idempotent
+        row = db.execute("SELECT method, active FROM calibration WHERE metric='vdot'").fetchone()
+        assert row["method"] == "effort_estimate" and row["active"] == 0
+        # Informational → never the active calibration.
+        assert get_active_calibration(db, "vdot") is None
+
+    def test_skips_effort_already_a_race(self, db):
+        from fit.calibration import add_calibration, backfill_effort_vdot
+        add_calibration(db, "lthr", 172, "manual", "high", date.today())
+        self._ins_activity(db, "dup", 20, 10.0, 45.0, 178)
+        # Already represented by a race_estimate row for the same activity.
+        db.execute("INSERT INTO calibration (metric, value, method, confidence, date, "
+                   "source_activity_id, active, flags) VALUES "
+                   "('vdot', 41, 'race_estimate', 'low', ?, 'dup', 0, '[]')",
+                   ((date.today() - timedelta(days=20)).isoformat(),))
+        db.commit()
+        assert backfill_effort_vdot(db) == 0          # not double-counted
+
+
 class TestNoPolicyFallback:
     def test_metric_without_policy_uses_legacy_selection(self, db):
         """weight has no aggregation policy → legacy single-row, no suggestion."""

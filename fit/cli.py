@@ -439,15 +439,16 @@ def backfill_vdot():
     and the calibration-history chart; they never become the active value —
     confirm that with `fit calibrate vdot <value>` or the sync prompt.
     """
-    from fit.calibration import backfill_race_vdot
+    from fit.calibration import backfill_race_vdot, backfill_effort_vdot
 
     conn = _conn()
     try:
-        added = backfill_race_vdot(conn)
-        if added:
-            console.print(f"  [green]✓ Added {added} VDOT race estimate(s).[/green]")
+        races = backfill_race_vdot(conn)
+        efforts = backfill_effort_vdot(conn)
+        if races or efforts:
+            console.print(f"  [green]✓ Added {races} race + {efforts} hard-effort VDOT estimate(s).[/green]")
         else:
-            console.print("[dim]Nothing to backfill — all qualifying races already have a VDOT estimate.[/dim]")
+            console.print("[dim]Nothing to backfill — all qualifying efforts already have a VDOT estimate.[/dim]")
     finally:
         conn.close()
 

@@ -147,7 +147,7 @@ _CONFIDENCE_RANK = {"high": 0, "medium": 1, "low": 2}
 # written from past races to populate the calibration-history chart, but the
 # active LTHR stays human-confirmed (run `fit calibrate lthr`) so a noisy or
 # non-max effort sitting in race_calendar can't silently shift the zone model.
-INFORMATIONAL_METHODS = {"race_estimate"}
+INFORMATIONAL_METHODS = {"race_estimate", "effort_estimate"}
 
 
 def get_active_calibration(conn: sqlite3.Connection, metric: str) -> dict | None:
@@ -733,6 +733,44 @@ def backfill_race_vdot(conn: sqlite3.Connection) -> int:
             VALUES ('vdot', ?, 'race_estimate', 'low', ?, ?, ?, 0, '[]')
         """, (round(vdot, 1), r["date"], r["id"],
               f"Race estimate from {r['name']} ({r['distance_km']:.1f}km)"))
+        added += 1
+    conn.commit()
+    return added
+
+
+def backfill_effort_vdot(conn: sqlite3.Connection, days: int = 720) -> int:
+    """Populate VDOT observations from qualifying hard TRAINING efforts.
+
+    Races are covered by backfill_race_vdot (official times). This adds the
+    other half of "races ∪ hard efforts": any non-race effort that passes the
+    physiological qualifier (5–25 km, avg HR ≥ LTHR, consistent pace) per
+    get_fitness_anchors, written as an informational `effort_estimate` vdot row.
+    A max estimator means a slow effort is harmless (never selected); a genuine
+    hard solo time-trial can only sharpen the anchor. Idempotent on
+    source_activity_id, and skips activities already represented by a race row.
+    Returns rows added.
+    """
+    from fit.fitness import get_fitness_anchors
+
+    anchors = [a for a in get_fitness_anchors(conn, days=days)
+               if a.get("source") == "training"]
+    added = 0
+    for a in anchors:
+        aid = a["activity_id"]
+        exists = conn.execute(
+            "SELECT 1 FROM calibration WHERE metric = 'vdot' "
+            "AND method IN ('race_estimate', 'effort_estimate') "
+            "AND source_activity_id = ? LIMIT 1", (aid,),
+        ).fetchone()
+        if exists:
+            continue
+        conn.execute("""
+            INSERT INTO calibration (metric, value, method, confidence, date,
+                                     source_activity_id, notes, active, flags)
+            VALUES ('vdot', ?, 'effort_estimate', 'low', ?, ?, ?, 0, '[]')
+        """, (round(a["vdot"], 1), a["date"], aid,
+              f"Hard-effort estimate from {a.get('name') or 'training effort'} "
+              f"({a['distance_km']:.1f}km, avg HR {a['avg_hr']})"))
         added += 1
     conn.commit()
     return added

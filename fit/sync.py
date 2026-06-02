@@ -371,6 +371,16 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     except Exception as e:
         logger.debug("sRPE computation skipped: %s", e)
 
+    # 8a2. Record VDOT observations from races ∪ hard efforts (informational
+    #      rows feeding the standardized anchor + calibration history). Idempotent.
+    try:
+        from fit.calibration import backfill_race_vdot, backfill_effort_vdot
+        v = backfill_race_vdot(conn) + backfill_effort_vdot(conn)
+        if v:
+            counts["vdot_estimates"] = v
+    except Exception as e:
+        logger.debug("VDOT observation backfill skipped: %s", e)
+
     # 8b. Sync planned workouts from Garmin Calendar (Runna)
     try:
         from fit.plan import sync_planned_workouts
