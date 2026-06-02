@@ -1628,13 +1628,30 @@ def calibrate(metric: str, value: float | None):
     """
     from datetime import date as d
 
-    from rich.prompt import Prompt
+    from rich.prompt import Prompt, Confirm
 
-    from fit.calibration import add_calibration, get_calibration_anchor
+    from fit.calibration import (add_calibration, get_calibration_anchor,
+                                 evaluate_suggestions, accept_suggestion, reject_suggestion)
 
     conn = _conn()
 
     try:
+        # Review flow: with no explicit value, if a policy suggestion is pending,
+        # accept (→ confirmed anchor) or reject (→ ledger, no re-nag) it.
+        if value is None:
+            pending = {p["metric"]: p for p in evaluate_suggestions(conn)}
+            if metric in pending:
+                p = pending[metric]
+                console.print(f"\n[bold]{metric.upper()} suggestion[/bold]")
+                console.print(f"  Suggested [bold]{p['value']:g}[/bold] (active {p['active']}) — {p['reason']}")
+                if Confirm.ask("  Accept as your confirmed anchor?", default=True):
+                    accept_suggestion(conn, metric)
+                    console.print(f"  [green]✓ {metric} confirmed: {p['value']:g}[/green]")
+                else:
+                    reject_suggestion(conn, metric)
+                    console.print("  [dim]Dismissed — won't re-ask until it changes.[/dim]")
+                return
+
         if metric == "max_hr":
             console.print("\n[bold]Max HR Calibration[/bold]")
             if value is None:
@@ -1766,6 +1783,17 @@ def status():
         console.print(Panel(
             header, border_style="bright_blue", padding=(0, 2),
         ))
+
+        # Calibration suggestions awaiting confirmation (anchors never auto-flip)
+        from fit.calibration import evaluate_suggestions
+        pend = evaluate_suggestions(conn)
+        if pend:
+            lines = "\n".join(
+                f"  {p['metric']}: suggest [bold]{p['value']:g}[/] (active {p['active']}) "
+                f"— review with [bold]fit calibrate {p['metric']}[/]"
+                for p in pend)
+            console.print(Panel(lines, title="Calibration suggestions",
+                                border_style="yellow", padding=(0, 1)))
 
         # Alerts (safety first)
         try:

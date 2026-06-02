@@ -592,6 +592,20 @@ def _attention_items(conn):
                  detail=c.get("retest_prompt"),
                  source=f"calibration row dated {c['date']} · staleness threshold {c.get('threshold_days')}d.")
 
+    # Calibration suggestions awaiting confirm — anchors never auto-flip, so a
+    # policy suggestion that differs from the confirmed value is surfaced here.
+    try:
+        from fit.calibration import evaluate_suggestions
+        for p in evaluate_suggestions(conn):
+            _add(severity="info",
+                 message=f"{p['metric'].upper()} suggestion: {p['value']:g} (active {p['active']})",
+                 tag=f"cal_suggest_{p['metric']}",
+                 command=f"fit calibrate {p['metric']}",
+                 detail=f"Accept to update the anchor, or dismiss. {p.get('reason') or ''}".strip(),
+                 source="get_calibration_anchor suggestion differs from the confirmed value.")
+    except Exception as e:
+        logger.debug("calibration suggestion attention item skipped: %s", e)
+
     # Data freshness — table-driven dispatch.
     sources_by_name = {s["source"]: s for s in check_data_sources(conn)}
     for src in sources_by_name.values():

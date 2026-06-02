@@ -381,6 +381,19 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     except Exception as e:
         logger.debug("VDOT observation backfill skipped: %s", e)
 
+    # 8a3. Anchors never change silently — surface any metric whose suggestion
+    #      now differs from the confirmed value for the human to accept/reject.
+    try:
+        from fit.calibration import evaluate_suggestions
+        pending = evaluate_suggestions(conn)
+        if pending:
+            counts["calibration_suggestions"] = len(pending)
+            for p in pending:
+                logger.info("Calibration suggestion: %s %s (active %s) — review with "
+                            "`fit calibrate %s`", p["metric"], p["value"], p["active"], p["metric"])
+    except Exception as e:
+        logger.debug("Calibration suggestion check skipped: %s", e)
+
     # 8b. Sync planned workouts from Garmin Calendar (Runna)
     try:
         from fit.plan import sync_planned_workouts

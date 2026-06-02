@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import sqlite3
 from datetime import date, timedelta
 
@@ -774,3 +775,93 @@ def backfill_effort_vdot(conn: sqlite3.Connection, days: int = 720) -> int:
         added += 1
     conn.commit()
     return added
+
+
+# ── Suggest → confirm governance (standardize-calibration-anchors) ──
+#
+# Anchors never change silently. After ingest, evaluate_suggestions() finds the
+# metrics whose policy suggestion differs materially from the active value. The
+# human accepts (writes a confirmed anchor) or rejects (recorded in a ledger so
+# the same value isn't re-raised until it moves). State lives in a small JSON
+# sidecar next to the DB — no schema change, easy to inspect.
+
+def _review_path() -> str:
+    from fit.config import get_config
+    try:
+        db = get_config().get("sync", {}).get("db_path")
+    except Exception:
+        db = None
+    db = db or os.path.expanduser("~/.fit/fitness.db")
+    return os.path.join(os.path.dirname(os.path.abspath(db)), "calibration_review.json")
+
+
+def load_review(path: str | None = None) -> dict:
+    path = path or _review_path()
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def save_review(data: dict, path: str | None = None) -> None:
+    path = path or _review_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+    except OSError as e:
+        logger.debug("could not persist calibration review: %s", e)
+
+
+def evaluate_suggestions(conn: sqlite3.Connection, review: dict | None = None) -> list[dict]:
+    """Metrics whose policy suggestion differs materially from the active value
+    and hasn't been dismissed at (within differs of) the same value.
+
+    Returns a list of {metric, value, active, reason, confidence}. Pure read —
+    does not write anything.
+    """
+    review = review if review is not None else load_review()
+    out = []
+    for metric, policy in AGGREGATION_POLICY.items():
+        anchor = get_calibration_anchor(conn, metric)
+        sug = anchor.get("suggestion") if anchor else None
+        if not sug or not sug.get("differs"):
+            continue
+        dismissed = review.get(metric)
+        if (dismissed and dismissed.get("state") == "dismissed"
+                and abs(dismissed.get("value", 1e9) - sug["value"]) < policy["differs"]):
+            continue  # already rejected at ~this value; don't re-nag
+        out.append({
+            "metric": metric,
+            "value": sug["value"],
+            "active": anchor.get("value"),
+            "reason": sug.get("reason"),
+            "confidence": sug.get("confidence"),
+        })
+    return out
+
+
+def accept_suggestion(conn: sqlite3.Connection, metric: str, path: str | None = None) -> float | None:
+    """Confirm the current policy suggestion as the active anchor (sticky)."""
+    anchor = get_calibration_anchor(conn, metric)
+    sug = anchor.get("suggestion") if anchor else None
+    if not sug:
+        return None
+    add_calibration(conn, metric, sug["value"], "confirmed", "high", date.today())
+    review = load_review(path)
+    review.pop(metric, None)
+    save_review(review, path)
+    return sug["value"]
+
+
+def reject_suggestion(conn: sqlite3.Connection, metric: str, path: str | None = None) -> None:
+    """Dismiss the current suggestion; ledger suppresses it until it moves."""
+    anchor = get_calibration_anchor(conn, metric)
+    sug = anchor.get("suggestion") if anchor else None
+    if not sug:
+        return
+    review = load_review(path)
+    review[metric] = {"state": "dismissed", "value": sug["value"],
+                      "date": date.today().isoformat()}
+    save_review(review, path)
