@@ -1,4 +1,9 @@
-## ADDED Requirements
+# data-ingestion Specification
+
+## Purpose
+TBD — normalized from archived change deltas; update Purpose.
+
+## Requirements
 
 ### Requirement: SQLite schema defines all fitness data tables
 The system SHALL create and maintain a SQLite database at the path specified in config (`sync.db_path`, default `~/.fit/fitness.db`). The schema SHALL define 10 tables (`activities`, `daily_health`, `checkins`, `body_comp`, `weather`, `goals`, `training_phases`, `goal_log`, `calibration`, `weekly_agg`) and 2 views (`v_run_days`, `v_all_training`) as specified in `migrations/001_schema.sql`.
@@ -479,7 +484,6 @@ Body composition data SHALL be imported via the explicit `fit import-health <Exp
 - **WHEN** `fit sync` runs and the latest body_comp row has a date in the future (typo, bad timezone import)
 - **THEN** the sync output includes a distinct warning about the future-dated row, separate from the "stale" warning — so the bogus row is not silently treated as fresh
 
-## Post-Phase 2 Additions
 
 ### Requirement: track_running and trail_running treated as running
 The system SHALL treat `track_running` and `trail_running` activity types as running everywhere: queries, views, enrichment (zone computation, efficiency, run_type classification), and weekly_agg aggregation. These are running variants and must not be excluded from running statistics.

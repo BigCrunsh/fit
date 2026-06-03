@@ -1,4 +1,9 @@
-## ADDED Requirements
+# dashboard Specification
+
+## Purpose
+TBD — normalized from archived change deltas; update Purpose.
+
+## Requirements
 
 ### Requirement: fit report generates a self-contained HTML dashboard
 `fit report` SHALL generate a single self-contained HTML file with Chart.js 4.4.7 (+ chartjs-plugin-annotation for event markers + chartjs-adapter-date-fns for time-scaled x-axes) for charting. All three JS libraries are vendored and inlined. The dashboard SHALL use a dark theme (`#07070c` background), monospace numerics (JetBrains Mono), and an information-dense layout. The output file SHALL be viewable in any browser without a build step or server. Generation uses Jinja2 templates (`fit/report/templates/dashboard.html`).
@@ -294,7 +299,6 @@ Each chart's info icon (`i`) SHALL expand a definition that references the user'
 ### Requirement: Dashboard color constants
 The generator SHALL define color constants matching the two-palette system: `SAFE = "#22c55e"`, `CAUTION = "#eab308"`, `DANGER = "#ef4444"` (safety palette), `Z12 = "#38bdf8"`, `Z3 = "#f59e0b"`, `Z45 = "#f97316"` (intensity palette), `ACCENT = "#818cf8"` (highlight/info).
 
-## Post-Phase 2 Additions
 
 ### Requirement: Decomposed generator as sections/ package
 The dashboard generator SHALL be decomposed into a `fit/report/sections/` package: `engine.py` (main `generate_dashboard()` orchestrator + template loading, ~117 lines), `cards.py` (status cards, milestone cards, alert cards), `charts.py` (all chart data generation), `predictions.py` (race prediction + pacing strategy section). The top-level `generator.py` becomes a thin wrapper re-exporting from sections/.

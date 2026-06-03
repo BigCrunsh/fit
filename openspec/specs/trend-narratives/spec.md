@@ -1,4 +1,9 @@
-## ADDED Requirements
+# trend-narratives Specification
+
+## Purpose
+TBD — normalized from archived change deltas; update Purpose.
+
+## Requirements
 
 ### Requirement: "This Month" trend summary as pill badges
 The system SHALL generate a rule-based monthly summary displayed as compact pill-style badges (not paragraph text): "Efficiency +8%" green, "VO2max flat" gray, "Z2 72% ↑" green, "Volume 28km/wk" blue. Expandable detail on click. Each metric has a minimum-data threshold (e.g., 4+ weeks for efficiency trend). Below threshold: "Keep logging — 3 more weeks until trends emerge."
@@ -99,7 +104,6 @@ All sparklines in the rolling correlation grid SHALL use a consistent y-axis ran
 - **WHEN** alcohol→HRV is r=-0.6 and sleep→efficiency is r=0.2
 - **THEN** both sparklines use -1 to +1 y-axis, making the alcohol effect visually stronger
 
-## Post-Phase 2 Additions
 
 ### Requirement: Run Timeline zone color legend
 The Run Timeline visualization SHALL display a color legend mapping zone ranges to colors: Z1-Z2 (blue), Z3 (amber), Z4-Z5 (orange). The legend is rendered inline above or below the timeline chart.

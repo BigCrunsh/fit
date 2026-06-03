@@ -1,4 +1,9 @@
-## ADDED Requirements
+# race-model Specification
+
+## Purpose
+TBD — normalized from archived change deltas; update Purpose.
+
+## Requirements
 
 ### Requirement: Target race as organizing anchor
 The system SHALL identify a target race from `race_calendar` (next registered by date) and orient the entire dashboard around it. All objectives, phases, and predictions reference this race. `get_target_race(conn)` returns the anchor race.
@@ -54,7 +59,6 @@ Migration 007 SHALL consolidate ALL Phase 2a schema changes into ONE migration: 
 - **WHEN** migration 007 runs
 - **THEN** goals, activities, and weekly_agg all have their new columns in one transaction
 
-## Post-Phase 2 Additions
 
 ### Requirement: Race CRUD via CLI
 The `fit races` command SHALL be a Click group with subcommands for full CRUD operations on the `race_calendar` table.

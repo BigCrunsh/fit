@@ -1,4 +1,9 @@
-## ADDED Requirements
+# coaching-signals Specification
+
+## Purpose
+TBD — normalized from archived change deltas; update Purpose.
+
+## Requirements
 
 ### Requirement: sRPE as validated internal load metric
 The system SHALL compute sRPE (session RPE × duration_min) for running activities where RPE data exists. Stored on activities.srpe column. Join strategy: checkin RPE → most recent same-day activity (if multiple, assign to the one with highest training_load). Shown in weekly_agg alongside Garmin EPOC load.
@@ -136,7 +141,6 @@ The system SHALL translate a marathon prediction into a race-day plan: target sp
 - **WHEN** prediction is 3:52
 - **THEN** show: "5km splits: 27:20 | HR ceiling: 165 | Fuel: gel at 45min, then every 30min"
 
-## Post-Phase 2 Additions
 
 ### Requirement: Auto-populate weight calibration from Apple Health import
 When Apple Health body comp data is imported (via `fit import-health` or auto-sync), the system SHALL automatically create or update a weight calibration entry with `method = 'scale'`, `confidence = 'high'`, using the most recent weight value.

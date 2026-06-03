@@ -1,4 +1,9 @@
-## ADDED Requirements
+# fitdays-auto-import Specification
+
+## Purpose
+TBD — normalized from archived change deltas; update Purpose.
+
+## Requirements
 
 ### Requirement: Apple Health XML import as primary body comp source
 Apple Health XML export (`Export.zip`) is the body comp source. `fit/apple_health.py` parses the Apple Health XML and extracts weight, body fat percentage, lean body mass, and BMI into `body_comp` with `source = 'apple_health'`. Records with the same date upsert via `ON CONFLICT(date)`, preserving prior fields with `COALESCE`.
@@ -29,7 +34,6 @@ Body fat % is plotted as a second y-axis line on the Body tab weight chart (fain
 - **WHEN** body_fat_pct decreased from 20.5% to 19.2% over 8 weeks while lean_body_mass_kg stable
 - **THEN** coaching context: "Body fat ↓1.3% with stable lean mass — healthy composition change"
 
-## Historical Context
 
 ### Decision: FitDays CSV import removed (2026-05-31)
 An earlier iteration of this capability accepted a FitDays scale CSV export (`sync.weight_csv_path`, `_auto_import_weight`). It proved unreliable — column names varied between FitDays app versions, the manual export step rarely got done, and Apple Health already aggregates the same scale data via HealthKit when the FitDays app is connected. The CSV importer and its config key were removed; Apple Health XML is now the only body comp ingest path.

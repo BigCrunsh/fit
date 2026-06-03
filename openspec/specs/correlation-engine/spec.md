@@ -1,4 +1,9 @@
-## MODIFIED Requirements
+# correlation-engine Specification
+
+## Purpose
+TBD — normalized from archived change deltas; update Purpose.
+
+## Requirements
 
 ### Requirement: Rolling correlation windows
 The existing static correlation computation SHALL be extended with rolling 8-week windows showing "this correlation is getting stronger/weaker." Displayed as sparkline small-multiples grid (one per pair, consistent y-axis -1.0 to +1.0). Incremental computation: store `window_end_date` and `data_hash` per pair per window. On recompute, skip if hash unchanged.

@@ -1,4 +1,9 @@
-## ADDED Requirements
+# runna-integration Specification
+
+## Purpose
+TBD — normalized from archived change deltas; update Purpose.
+
+## Requirements
 
 ### Requirement: Auto-sync planned workouts from Garmin Calendar
 The system SHALL sync planned workouts by fetching Garmin Calendar items via `/calendar-service/year/{y}/month/{m}`. Filter for workout-type items. Parse Runna naming convention ("W 2 Mi. Intervalle - 1-km-Wiederholungen (7,5 km)") to extract: week number, day (Mo/Di/Mi/Do/Fr/Sa/So), workout type (Dauerlauf/Tempo/Intervalle/Langer Lauf), target distance. Fetch structured segments via `get_workout_by_id()` for warmup/intervals/cooldown detail.
@@ -88,7 +93,6 @@ Detect phase transition readiness: "Phase 1 objectives met (Z2 ≥80%, volume �
 - **WHEN** weekly km below phase target for 3+ consecutive weeks
 - **THEN** coaching: "Below volume target for 3 weeks — consider extending Phase 1"
 
-## Post-Phase 2 Additions
 
 ### Requirement: Plan adherence tracks zone/intensity compliance
 Plan adherence SHALL track not just distance compliance but also zone and intensity compliance per workout. Two new fields per adherence record: `zone_match` (boolean: did actual HR zone match planned zone?) and `intensity_override` (boolean: was a planned easy/Z2 workout executed at Z3+ intensity?).

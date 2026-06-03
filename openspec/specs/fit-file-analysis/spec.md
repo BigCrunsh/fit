@@ -1,4 +1,9 @@
-## ADDED Requirements
+# fit-file-analysis Specification
+
+## Purpose
+TBD — normalized from archived change deltas; update Purpose.
+
+## Requirements
 
 ### Requirement: .fit file download with opt-in and caching
 The system SHALL download .fit files gated behind `sync.download_fit_files` config toggle (default false) or `fit sync --splits` flag. Files cached in `~/.fit/fit-files/{activity_id}.fit`. Track status via `fit_file_path` and `splits_status` columns on activities (pending/parsed/failed/skipped). Max downloads per sync: configurable (default 20). Backfill: `fit splits --backfill` with rate control (max 20 per batch, 2s delay to avoid Garmin throttling).
@@ -78,7 +83,6 @@ Bundle a minimal synthetic .fit fixture in tests/fixtures/ (not real files — k
 - **WHEN** test parses the synthetic .fit fixture
 - **THEN** correct splits, drift detection, and DB storage verified
 
-## Post-Phase 2 Additions
 
 ### Requirement: Garmin .fit file ZIP extraction
 Garmin downloads .fit files as ZIP archives, not raw .fit files. The system SHALL detect ZIP files using `zipfile.is_zipfile()` and automatically extract the .fit file before parsing.

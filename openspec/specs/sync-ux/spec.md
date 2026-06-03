@@ -1,4 +1,9 @@
-## ADDED Requirements
+# sync-ux Specification
+
+## Purpose
+TBD — normalized from archived change deltas; update Purpose.
+
+## Requirements
 
 ### Requirement: Sync pipeline decomposition
 `run_sync()` SHALL be decomposed into composable pipeline stages: fetch, enrich, store, weather, aggregate, correlate, alert, plan_sync. Each stage is independently testable. New stages (Phase 2b .fit downloads, Phase 2c plan sync) plug in without increasing blast radius of existing stages. The aggregate stage SHALL continue to materialize `weekly_agg` rows by ISO week for historical queries. A new `compute_rolling_week(conn, end_date=None, window_days=7)` function SHALL be added to `analysis.py` to compute the same metric structure (run_km, run_count, z12_pct, z45_pct, ACWR) from raw `activities` data for any arbitrary 7-day window. All "current week" consumers (dashboard hero card, alerts, CLI status, MCP coaching) SHALL call `compute_rolling_week()` instead of reading the current ISO week from `weekly_agg`.
@@ -62,7 +67,6 @@ The sync pipeline SHALL include the following correctness fixes:
 - **WHEN** rolling 7-day ACWR is 0.4 on a Tuesday
 - **THEN** the undertraining alert fires immediately — no suppression until Thursday
 
-## Post-Phase 2 Additions
 
 ### Requirement: Doctor expects 17 tables
 `fit doctor` SHALL check for 17 tables (was 14): the original 14 plus `race_calendar`, `activity_splits`, and `planned_workouts`. Schema version check SHALL expect 9 migrations.

@@ -1,4 +1,9 @@
-## ADDED Requirements
+# daily-checkin Specification
+
+## Purpose
+TBD — normalized from archived change deltas; update Purpose.
+
+## Requirements
 
 ### Requirement: Interactive daily check-in CLI
 The system SHALL provide a `fit checkin` CLI command that interactively prompts for daily wellness inputs and stores them via INSERT ON CONFLICT into the `checkins` table. Inputs SHALL be split across three moments: morning (sleep quality, legs, energy), post-run (session notes only), and evening (hydration, eating, alcohol, alcohol detail, water). RPE is NOT prompted in any check-in moment — it is sourced per-activity from Garmin during sync.

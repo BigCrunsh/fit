@@ -1,4 +1,9 @@
-## ADDED Requirements
+# mcp-server Specification
+
+## Purpose
+TBD — normalized from archived change deltas; update Purpose.
+
+## Requirements
 
 ### Requirement: MCP server exposes fitness.db to Claude
 The MCP server (`mcp/server.py`) SHALL expose `fitness.db` as a set of tools accessible from Claude Chat and Claude Code. It SHALL use the MCP SDK and connect to the database at the path specified in config (`sync.db_path`). The server replaces the legacy `garmy-localdb` MCP server entirely.
@@ -118,7 +123,6 @@ The `get_coaching_context()` tool SHALL include 5 sections: (1) **Profile** — 
 - **WHEN** Claude calls `save_coaching_notes()` with an insight that has a title but no body
 - **THEN** the tool returns an error listing the invalid insight and explaining the body requirement
 
-## Post-Phase 2 Additions
 
 ### Requirement: get_coaching_context() includes today's run and plan
 `get_coaching_context()` SHALL include: (1) today's completed run (if any) with distance, pace, HR, zone, run_type, (2) the full week's plan (next 10 days of planned_workouts), (3) previous coaching summary (titles from last session's coaching.json for continuity). The partial-week ACWR flag is removed — ACWR uses a rolling 7-day window and is always based on complete data.
