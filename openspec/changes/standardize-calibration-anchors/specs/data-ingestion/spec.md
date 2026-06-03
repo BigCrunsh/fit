@@ -15,20 +15,20 @@ The sync pipeline SHALL write an informational `vdot` calibration row (`method='
 - **WHEN** a race row has status `dns` or a missing/zero result time and no Garmin time
 - **THEN** no `vdot` estimate row is written for it
 
-### Requirement: Calibration anchors change only on confirmation, surfaced at sync
-The active calibration anchor SHALL NOT change automatically. After ingesting new data, `fit sync` SHALL compute each metric's policy suggestion via `get_calibration_anchor` and compare it to the current active value. When the suggestion differs from active beyond the per-metric "differs materially" threshold, the system SHALL raise a pending calibration suggestion. In an interactive (TTY) sync it SHALL prompt accept/reject inline; in a non-interactive sync it SHALL persist the suggestion as pending (surfaced by `fit status`, the dashboard attention panel, and `fit calibrate`) and SHALL NOT block. Accepting writes the active calibration (`method='confirmed'`, `confidence='high'`); rejecting leaves active unchanged. A suggestion ledger SHALL record a rejected value and suppress re-raising the same suggestion until the policy output changes materially from it.
+### Requirement: Calibration anchors change only on confirmation, surfaced for review
+The active calibration anchor SHALL NOT change automatically. After ingesting new data, `fit sync` SHALL compute each metric's policy suggestion via `get_calibration_anchor` and, when it differs from the active value beyond the per-metric "differs materially" threshold, SHALL surface it for the athlete to review — never blocking the sync. Surfacing is non-interactive and live: `fit sync` logs a notice and a count; `fit status` and the dashboard attention panel list the pending suggestion (computed live via `evaluate_suggestions`); and `fit calibrate <metric>` is the accept/reject review flow. Accepting writes the active calibration (`method='confirmed'`, `confidence='high'`); rejecting records the value in a ledger (a JSON sidecar) that suppresses re-surfacing the same suggestion until the policy output changes materially from it.
 
-#### Scenario: Interactive sync prompts and the athlete accepts
-- **WHEN** a new road race lifts the VDOT policy suggestion to 40.4 while active VDOT is 35.8, and `fit sync` runs in a TTY
-- **THEN** sync prompts "VDOT: suggest 40.4 … active 35.8. Accept? [y/N]"; on `y` it writes `{metric:'vdot', value:40.4, method:'confirmed', confidence:'high', active:1}`
+#### Scenario: Sync surfaces a differing suggestion without blocking
+- **WHEN** a new effort lifts the VDOT policy suggestion to 40.4 while active VDOT is 35.8 and `fit sync` runs
+- **THEN** sync does not prompt or block; it logs a notice + count, and the suggestion appears in `fit status` and the dashboard attention panel for review via `fit calibrate vdot`
 
-#### Scenario: Headless sync persists a pending suggestion, never blocks
-- **WHEN** the same suggestion arises during a cron/non-TTY sync
-- **THEN** sync does not prompt or block; the suggestion is stored as pending and appears in `fit status` and the dashboard attention panel for later accept/reject
+#### Scenario: Accepting via `fit calibrate` confirms the anchor
+- **WHEN** the athlete runs `fit calibrate vdot` and accepts the suggested 40.4
+- **THEN** a row `{metric:'vdot', value:40.4, method:'confirmed', confidence:'high'}` is written and becomes the sticky active anchor
 
-#### Scenario: A rejected suggestion is not re-raised until it changes
+#### Scenario: A rejected suggestion is not re-surfaced until it changes
 - **WHEN** the athlete rejects the VDOT 40.4 suggestion and the next sync recomputes the same ~40.4
-- **THEN** no prompt is raised again; the ledger suppresses it until the policy output moves materially away from 40.4
+- **THEN** it is not surfaced again; the ledger suppresses it until the policy output moves materially away from 40.4
 
 #### Scenario: A slow trail race never lowers the anchor (no prompt)
 - **WHEN** a slow trail half produces a VDOT estimate of 35.8 while the recency-decayed max is 40.4

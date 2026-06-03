@@ -1,47 +1,46 @@
 # Tasks — standardize-calibration-anchors
 
-Sequencing: **VDOT-first vertical slice** (ships the live 49/35.7/35.8 fix end-to-end and proves the sync-confirm UX), then extend policies to LTHR/AeT/MaxHR.
+> The original VDOT-first phased plan evolved during implementation: the marathon
+> *forecast* was split into its own change (`marathon-durability-model`), and two
+> requirements emerged mid-build (suggest→confirm governance, point-in-time
+> integrity). This list reflects what was actually built and shipped.
 
-## Phase 1 — Shared anchor layer + VDOT policy
+## Shared anchor layer + per-metric policy
+- [x] `get_calibration_anchor()` — single read path; payload `{value, confidence, method, stale, inputs, suggestion}`
+- [x] Two estimator families: `max` (VDOT, MaxHR) and `median` (LTHR, AeT); `_max_in_window` / `_median_in_window` / `_window_obs`
+- [x] `AGGREGATION_POLICY` for all four metrics (windowed, staleness=window, sticky-confirm, differs); min_samples fallback
+- [x] vdot added to `_PLAUSIBLE` / `_AGREE_TOLERANCE`
+- [x] Tests: `test_anchor_policy.py` (max + median families, fallback, garmin exclusion, staleness)
 
-- [ ] 1.1 `fit/calibration.py`: `AGGREGATION_POLICY` table (per-metric estimator, window, min_samples, staleness, "differs-materially" threshold). VDOT entry first.
-- [ ] 1.2 Estimator helper `_max_recency_decayed(rows, half_life_days, now)` — exp-decay weighting; returns value + contributing inputs.
-- [ ] 1.3 `get_calibration_anchor(conn, metric) -> {value, confidence, method, inputs, suggestion}` applying the policy over the metric's rows (informational rows included as observations).
-- [ ] 1.4 Config keys: `calibration.vdot_decay_half_life_days` (210), `vdot` staleness (120). Defaults if absent.
-- [ ] 1.5 Tests: `tests/test_calibration.py::TestAnchorPolicyVDOT` — decay weighting, older-road-best beats fresh-trail, garmin-only fallback, min_samples fallback, suggestion payload shape.
+## VDOT as a first-class metric
+- [x] `backfill_race_vdot` + `backfill_effort_vdot` (races ∪ hard efforts); `effort_estimate`/`race_estimate` informational
+- [x] `fit backfill vdot`; sync writes VDOT observations go-forward
+- [x] `fit calibrate vdot [value] [--date]` confirms the sticky anchor (back-dating for corrections)
 
-## Phase 2 — VDOT as a first-class calibration metric
+## Daniels pace fix (option 1, paces)
+- [x] `compute_daniels_paces` anchors marathon pace on `vdot_to_race_time` (Daniels inverse), not the miscalibrated table
+- [x] Pace test updated to the inverse
 
-- [ ] 2.1 `fit/sync.py`: write informational `vdot` `race_estimate` rows from completed races (mirror LTHR path; idempotent by `source_activity_id`). Garmin VO2max persisted as informational `vdot` row too.
-- [ ] 2.2 `fit backfill vdot` CLI (mirror `fit backfill rpe`).
-- [ ] 2.3 `fit/fitness.py`: `_get_race_vdot`/`_compute_effective_vdot` reimplemented via the VDOT policy (recency decay, no 180d cliff); `get_fitness_profile` reads `get_calibration_anchor`. `get_fitness_anchors` kept only as the qualifying-effort detector feeding estimate rows.
-- [ ] 2.4 Tests: `tests/test_fitness.py` — effective_vdot no longer cliffs at 180d; trail race doesn't lower it.
+## Suggest→confirm governance + ledger
+- [x] `evaluate_suggestions` / `accept_suggestion` / `reject_suggestion` + JSON ledger (`~/.fit/calibration_review.json`)
+- [x] Surfaced: `fit sync` notice, `fit status` panel, dashboard attention panel, `fit calibrate` review flow
+- [x] Tests: `test_calibration_governance.py`
 
-## Phase 3 — Governance: confirm-at-sync (cross-metric, build once)
+## Point-in-time integrity (forward-only anchors)
+- [x] `get_active_calibration(..., asof=)` — value active as of a past date
+- [x] `enrich_existing_activities` classifies each activity with its as-of anchor (history not rewritten)
+- [x] `fit calibrate --date` back-dating + `recompute --force` reclassifies only that window
+- [x] Tests: `test_calibration_asof.py` (three-anchor period proof), `test_calibrate_cli.py`
 
-- [ ] 3.1 Pending-suggestion store + ledger (rejected value/date per metric) — schema or a small JSON sidecar; decide in 3.0.
-- [ ] 3.2 `fit/sync.py`: after ingest, compare suggestion vs active per `differs_materially`; TTY → prompt accept/reject; non-TTY → persist pending, never block.
-- [ ] 3.3 Accept writes `{method:'confirmed', confidence:'high', active:1}`; reject records ledger entry.
-- [ ] 3.4 Surface pending suggestions in `fit status`, dashboard attention panel, and `fit calibrate <metric>`.
-- [ ] 3.5 Tests: interactive-accept, headless-persist, ledger-no-renag, slow-trail-no-prompt.
+## Dashboard + consumers
+- [x] `_pace_zones`, `_vdot_comparison` read `get_calibration_anchor`
+- [x] VDOT calibration-history chart (+ LTHR/AeT/weight); MaxHR/VO2max stat cards
+- [x] Daniels/Riegel model assumptions in code + dashboard def-boxes
+- [x] `effective_vdot` and the MCP coaching anchor line read `get_calibration_anchor`
 
-## Phase 4 — Dashboard reads + VDOT history
-
-- [ ] 4.1 `_vdot_comparison`, `_pace_zones`, `_race_countdown` read `get_calibration_anchor(conn,'vdot')` (replaces the interim `get_fitness_anchors` edit from `ba220e5`).
-- [ ] 4.2 Calibration History: add a `vdot` series.
-- [ ] 4.3 Update `tests/test_pace_anchor.py` to assert paces follow the standardized anchor (not latest-effort).
-- [ ] 4.4 `mcp/server.py`: coaching context reads the shared anchor (keep MCP/skill contract per CLAUDE.md).
-
-## Phase 5 — Extend policies to LTHR / AeT / MaxHR
-
-- [ ] 5.1 `_robust_center(rows, window, trim)` (median/trimmed mean) — LTHR (270d, min 3), AeT (120d, min 3).
-- [ ] 5.2 `_plausibility_gated_max(rows, age_decay)` — MaxHR (all-time, ~0.7 bpm/yr, reject implausible highs).
-- [ ] 5.3 Wire LTHR/AeT/MaxHR into `AGGREGATION_POLICY`; their consumers already read `get_calibration_anchor`.
-- [ ] 5.4 Calibration History series for all four; per-metric staleness thresholds set explicitly.
-- [ ] 5.5 Tests per estimator (hot-day-high doesn't win LTHR; strap-glitch rejected for MaxHR; AeT trimmed median).
+## Deferred (intentionally, to `marathon-durability-model`)
+- [ ] Marathon *forecast* re-sourcing (Bayesian model) — owns the forecast; consumes the LTHR anchor
 
 ## Validation
-
-- [ ] `openspec validate standardize-calibration-anchors --strict`
-- [ ] full `pytest` green
-- [ ] dashboard renders; VDOT consistent across VDOT section / Pace Zones / forecast
+- [x] `openspec validate standardize-calibration-anchors --strict`
+- [x] full `pytest` green (982); dashboard renders; VDOT consistent across VDOT section / Pace Zones / status / MCP

@@ -1,11 +1,11 @@
 ## ADDED Requirements
 
-### Requirement: Dashboard reads one standardized VDOT anchor everywhere
-The dashboard's VDOT Trend section, Pace Zones table, and marathon forecast SHALL all obtain VDOT from `get_calibration_anchor(conn, 'vdot')` — a single value. The forecast SHALL NOT use raw Garmin VO2max while the VDOT section shows a different anchor. Pace Zones SHALL derive Daniels paces from that same active VDOT.
+### Requirement: Dashboard reads one standardized VDOT anchor
+The dashboard's VDOT Trend section and Pace Zones table SHALL both obtain VDOT from `get_calibration_anchor(conn, 'vdot')` — a single value — so they never disagree. Pace Zones SHALL derive Daniels paces from that same active VDOT and never from the optimistic raw Garmin VO2max. (The marathon *forecast* is out of scope here — it is re-sourced by the separate `marathon-durability-model` change, which consumes the same anchor.)
 
-#### Scenario: Forecast, VDOT section, and Pace Zones agree
+#### Scenario: VDOT section and Pace Zones agree
 - **WHEN** the active VDOT anchor is 40
-- **THEN** the VDOT Trend section headline, the Pace Zones table, and the marathon forecast all reflect VDOT 40 (no three-way split between 49 / 35.7 / 35.8)
+- **THEN** the VDOT Trend section headline and the Pace Zones table both reflect VDOT 40 (no split between 49 / 35.7 / the windowed value)
 
 #### Scenario: Pace Zones never built from the optimistic Garmin estimate
 - **WHEN** Garmin VO2max is 49 but the active VDOT anchor is 40
