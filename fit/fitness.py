@@ -59,25 +59,44 @@ def get_fitness_profile(conn: sqlite3.Connection) -> dict:
 
 
 # ── Dimension Computations ──
+#
+# DIMENSION_WINDOW: fitness dimensions are ungoverned display readouts (no
+# staleness flag, no human-confirm), and they're fed by near-daily runs — so the
+# window IS their freshness guarantee and is short (4 weeks ≈ one mesocycle).
+# This is deliberately shorter than the governed *anchors* (VDOT/LTHR/AeT 180d,
+# MaxHR 365d), which can afford long windows because they have a staleness
+# backstop. The "current" value is the MEDIAN over the window (not the latest
+# single reading): VO2max/speed-per-bpm are two-sided (terrain/tailwind/strap
+# inflate, heat/fatigue deflate), so a median is the robust current state — a
+# max would chase a downhill run, and the latest is just noise. (Resilience is
+# the lone dimension using a max — its drift onset is pace-CV-gated, so it can't
+# be inflated; see _compute_resilience.)
+DIMENSION_WINDOW_DAYS = 28
+
+
+def _median(nums: list[float]) -> float:
+    s = sorted(nums)
+    n = len(s)
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
 
 
 def _compute_aerobic(conn: sqlite3.Connection) -> dict:
-    """Aerobic capacity: VO2max trend + VDOT from races."""
-    rows = conn.execute("""
-        SELECT date, vo2max FROM activities
-        WHERE vo2max IS NOT NULL AND date >= date('now', '-56 days')
-        ORDER BY date
-    """).fetchall()
+    """Aerobic capacity: Garmin VO2max, median over the dimension window."""
+    rows = conn.execute(
+        "SELECT date, vo2max FROM activities "
+        "WHERE vo2max IS NOT NULL AND date >= date('now', ?) ORDER BY date",
+        (f"-{DIMENSION_WINDOW_DAYS} days",),
+    ).fetchall()
 
     if not rows:
-        return _empty_dimension("No VO2max data in last 8 weeks")
+        return _empty_dimension("No VO2max data in last 4 weeks")
 
     values = [(r["date"], r["vo2max"]) for r in rows]
-    current = values[-1][1]
+    current = _median([v for _, v in values])
     trend, rate = _compute_trend(values)
 
     return {
-        "current_value": current,
+        "current_value": round(current, 1),
         "trend": trend,
         "rate_per_month": rate,
         "unit": "ml/kg/min",
@@ -93,15 +112,15 @@ def _compute_threshold(conn: sqlite3.Connection) -> dict:
         SELECT date, speed_per_bpm_z2 FROM activities
         WHERE type IN {RUNNING_TYPES_SQL}
         AND speed_per_bpm_z2 IS NOT NULL
-        AND date >= date('now', '-56 days')
+        AND date >= date('now', '-{DIMENSION_WINDOW_DAYS} days')
         ORDER BY date
     """).fetchall()
 
     if len(rows) < 3:
-        return _empty_dimension("Need 3+ Z2 runs in last 8 weeks")
+        return _empty_dimension("Need 3+ Z2 runs in last 4 weeks")
 
     values = [(r["date"], r["speed_per_bpm_z2"]) for r in rows]
-    current = values[-1][1]
+    current = _median([v for _, v in values])
     trend, rate = _compute_trend(values)
 
     return {
@@ -121,15 +140,15 @@ def _compute_economy(conn: sqlite3.Connection) -> dict:
         SELECT date, speed_per_bpm FROM activities
         WHERE type IN {RUNNING_TYPES_SQL}
         AND speed_per_bpm IS NOT NULL
-        AND date >= date('now', '-56 days')
+        AND date >= date('now', '-{DIMENSION_WINDOW_DAYS} days')
         ORDER BY date
     """).fetchall()
 
     if len(rows) < 3:
-        return _empty_dimension("Need 3+ runs with HR data in last 8 weeks")
+        return _empty_dimension("Need 3+ runs with HR data in last 4 weeks")
 
     values = [(r["date"], r["speed_per_bpm"]) for r in rows]
-    current = values[-1][1]
+    current = _median([v for _, v in values])
     trend, rate = _compute_trend(values)
 
     return {
@@ -151,7 +170,7 @@ def _compute_resilience(conn: sqlite3.Connection) -> dict:
         WHERE a.type IN {RUNNING_TYPES_SQL}
         AND a.splits_status = 'done'
         AND a.distance_km >= 8
-        AND a.date >= date('now', '-56 days')
+        AND a.date >= date('now', '-{DIMENSION_WINDOW_DAYS} days')
         ORDER BY a.date
     """).fetchall()
 
@@ -183,7 +202,14 @@ def _compute_resilience(conn: sqlite3.Connection) -> dict:
     if not drift_points:
         return _empty_dimension("No drift data from recent long runs")
 
-    current = drift_points[-1][1]
+    # Drift onset is ONE-SIDED (bounded above by true durability): heat, fatigue,
+    # a bad day or a short run only push it EARLIER, and a short run physically
+    # caps how late it can be. So the BEST recent onset is the truest signal —
+    # same logic as the VDOT anchor's max. Taking the latest run (or a median)
+    # lets a short/easy run mask the durability a long run actually demonstrated
+    # (e.g. an 18 km holding to km 11 shouldn't be overwritten by a 10 km
+    # drifting at km 6). Trend still runs over the chronological points.
+    current = max(v for _, v in drift_points)
     trend, rate = _compute_trend(drift_points) if len(drift_points) >= 2 else ("insufficient_data", None)
 
     return {
