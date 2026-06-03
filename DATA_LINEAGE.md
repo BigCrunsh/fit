@@ -16,6 +16,86 @@ when the computation layer changes.
 
 ---
 
+## 0. Visual overview
+
+### The four-layer pipeline
+
+```mermaid
+flowchart LR
+  subgraph SRC[" Sources "]
+    A[activities]
+    SPL[activity_splits]
+    DH[daily_health]
+    WK[weekly_agg]
+    CAL[(calibration)]
+    RC[race_calendar]
+    MISC[training_phases · goals · planned_workouts · checkins · body_comp · weather]
+  end
+  subgraph PRIM[" Primitives "]
+    ANL["analysis — zones · spb · aggregate · ACWR · predict"]
+    FIT["fitness — VDOT · 4 dims · anchors · profile"]
+    CALC["calibration — get_calibration_anchor"]
+    OTH["periodization · narratives · plan · goals · alerts"]
+  end
+  subgraph BLD[" Builders — cards / charts / predictions "]
+    BO[Overview]
+    BP[Profile]
+    BT[Training]
+    BR[Readiness]
+    BC[Coach]
+  end
+  subgraph TAB[" Tabs "]
+    TO[Overview]
+    TP[Profile]
+    TT[Training]
+    TR[Readiness]
+    TC[Coach]
+  end
+  SRC --> PRIM --> BLD --> TAB
+```
+
+### Where the same concept is computed more than once (the §4 backlog, visual)
+
+Green = the value the dashboard should converge on. Red = a competing / alternative path that can disagree.
+
+```mermaid
+flowchart TB
+  classDef canon fill:#0c2b1c,stroke:#22c55e,color:#dcfce7
+  classDef dup fill:#2c1010,stroke:#ef4444,color:#fecaca
+
+  subgraph D1["D1 · VDOT → marathon time"]
+    d1f["vdot_to_race_time — Daniels formula (paces, anchor card)"]:::canon
+    d1t["_vdot_to_marathon_seconds — table, pessimistic (forecast)"]:::dup
+  end
+  subgraph D2["D2 · 'current VDOT' — 5 reads"]
+    d2b["get_calibration_anchor('vdot') ✔"]:::canon
+    d2c["effective_vdot  (= anchor) ✔"]:::canon
+    d2a["activities.vo2max — raw Garmin"]:::dup
+    d2d["_compute_aerobic — median Garmin"]:::dup
+    d2e["get_fitness_anchors — latest effort"]:::dup
+  end
+  subgraph D3["D3 · race prediction — 6 builders"]
+    d3a["_prediction_summary / _race_prediction"]:::dup
+    d3b["_race_countdown — upper bound"]:::dup
+    d3c["_race_readiness_hero — effective_vdot"]:::dup
+    d3d["chart-marathon-pred / _prediction_trend_data"]:::dup
+  end
+  subgraph D4["D4 · durability"]
+    d4a["_compute_resilience — drift onset ✔"]:::canon
+    d4b["run-story inline onset"]:::dup
+    d4c["walk-break proxy"]:::dup
+    d4d["Riegel exp 1.06 / future beta_d"]:::dup
+  end
+  subgraph D6["D6 / D11 · load · ACWR"]
+    d6a["compute_rolling_acwr — live ✔"]:::canon
+    d6b["_compute_acwr — stored / dismiss path"]:::dup
+    d6c["total_load — cycling unweighted"]:::dup
+    d6d["strain — cycling weighted"]:::dup
+  end
+```
+
+---
+
 ## 1. Sources
 
 - **`activities`** — distance_km, duration_min, pace_sec_per_km, avg_hr, max_hr, avg_cadence, vo2max, aerobic_te, rpe, srpe, training_load, speed_per_bpm, speed_per_bpm_z2, hr_zone(_lthr/_maxhr), effort_class, run_type, type, compliance_score, temp_at_start_c, splits_status, lthr_used/max_hr_used.
