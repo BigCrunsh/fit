@@ -16,82 +16,131 @@ when the computation layer changes.
 
 ---
 
-## 0. Visual overview
+## 0. Lineage diagrams (per concept family)
 
-### The four-layer pipeline
+Concrete DAGs: each node is a real column / function / output; **each edge is the transform**. <span style="color:#22c55e">Green</span> = the canonical value to converge on; <span style="color:#ef4444">red</span> = a competing/alternative path that can disagree (the §4 backlog); grey = source; blue = a displayed quantity.
+
+### A. VDOT / prediction (D1·D2·D3)
 
 ```mermaid
 flowchart LR
-  subgraph SRC[" Sources "]
-    A[activities]
-    SPL[activity_splits]
-    DH[daily_health]
-    WK[weekly_agg]
-    CAL[(calibration)]
-    RC[race_calendar]
-    MISC[training_phases · goals · planned_workouts · checkins · body_comp · weather]
-  end
-  subgraph PRIM[" Primitives "]
-    ANL["analysis — zones · spb · aggregate · ACWR · predict"]
-    FIT["fitness — VDOT · 4 dims · anchors · profile"]
-    CALC["calibration — get_calibration_anchor"]
-    OTH["periodization · narratives · plan · goals · alerts"]
-  end
-  subgraph BLD[" Builders — cards / charts / predictions "]
-    BO[Overview]
-    BP[Profile]
-    BT[Training]
-    BR[Readiness]
-    BC[Coach]
-  end
-  subgraph TAB[" Tabs "]
-    TO[Overview]
-    TP[Profile]
-    TT[Training]
-    TR[Readiness]
-    TC[Coach]
-  end
-  SRC --> PRIM --> BLD --> TAB
+  classDef src fill:#0b1220,stroke:#64748b,color:#cbd5e1
+  classDef fn fill:#0c2b1c,stroke:#22c55e,color:#dcfce7
+  classDef dup fill:#2c1010,stroke:#ef4444,color:#fecaca
+  classDef out fill:#11162a,stroke:#818cf8,color:#c7d2fe
+  RT["activities<br/>distance_km · duration_min"]:::src
+  HR["activities.avg_hr"]:::src
+  LT["calibration[lthr]"]:::src
+  VO2["activities.vo2max<br/>(Garmin wrist-HR)"]:::src
+  RT -->|"compute_vdot_from_race<br/>Daniels O₂cost(v) ÷ %VO₂max(t)"| PV["per-effort VDOT"]:::fn
+  HR -->|"qualify HR≥LTHR"| GFA["get_fitness_anchors<br/>5–25km · CV≤15%"]:::fn
+  LT --> GFA
+  PV --> GFA
+  GFA -->|"backfill_*_vdot write rows"| CV["calibration[vdot]<br/>race/effort rows"]:::src
+  CV -->|"get_calibration_anchor<br/>max-in-180d + sticky-confirm"| AN["VDOT anchor = 38.9"]:::fn
+  AN --> EF["effective_vdot (= anchor)"]:::fn
+  AN -->|"compute_daniels_paces"| PZ["Pace Zones E/M/T/I/R"]:::out
+  AN -->|"vdot_to_race_time(42.195)<br/>Daniels inverse"| ME["marathon-equiv 3:55"]:::fn
+  ME --> VC["VDOT card (_vdot_comparison)"]:::out
+  EF -->|"vdot_to_race_time"| RH["Race-readiness hero"]:::out
+  VO2 -->|"raw — bypasses anchor"| PR["predict_race_time"]:::dup
+  PR -->|"_vdot_to_marathon_seconds<br/>TABLE (pessimistic)"| FC["Forecast · countdown<br/>chart-marathon-pred"]:::out
+  VO2 -->|"median 28d"| AE["Aerobic dimension"]:::out
 ```
 
-### Where the same concept is computed more than once (the §4 backlog, visual)
-
-Green = the value the dashboard should converge on. Red = a competing / alternative path that can disagree.
+### B. Load · ACWR · volume (D6·D7·D11)
 
 ```mermaid
-flowchart TB
-  classDef canon fill:#0c2b1c,stroke:#22c55e,color:#dcfce7
+flowchart LR
+  classDef src fill:#0b1220,stroke:#64748b,color:#cbd5e1
+  classDef fn fill:#0c2b1c,stroke:#22c55e,color:#dcfce7
   classDef dup fill:#2c1010,stroke:#ef4444,color:#fecaca
+  classDef out fill:#11162a,stroke:#818cf8,color:#c7d2fe
+  TL["activities.training_load"]:::src
+  TL -->|"_aggregate_date_range · Σ daily (cycling UNWEIGHTED)"| TOT["weekly_agg.total_load"]:::dup
+  TL -->|"monotony=mean/stdev; strain=load×monotony (cycling ×0.3)"| STR["weekly_agg.monotony · strain"]:::dup
+  TOT -->|"_compute_acwr · ISO-week / mean prior 4wk"| ACS["weekly_agg.acwr (stored)"]:::dup
+  TL -->|"compute_rolling_acwr · rolling-7d / mean prior 4wk"| ACL["live ACWR"]:::fn
+  ACL -->|"alert FIRE (undertraining)"| ALR["alerts"]:::out
+  ACS -->|"auto-DISMISS · phase compliance"| ALR
+  ACS --> CHA["chart-acwr"]:::out
+  RK["weekly_agg.run_km"]:::src
+  RK -->|"latest ISO row"| OV["Overview 'Volume'"]:::dup
+  TL -->|"compute_rolling_week · today-6..today"| TV["Training 'Volume'"]:::dup
+  TL -.->|"EWMA 42d — planned (marathon model)"| CTL["CTL (fitness factor)"]:::out
+```
 
-  subgraph D1["D1 · VDOT → marathon time"]
-    d1f["vdot_to_race_time — Daniels formula (paces, anchor card)"]:::canon
-    d1t["_vdot_to_marathon_seconds — table, pessimistic (forecast)"]:::dup
-  end
-  subgraph D2["D2 · 'current VDOT' — 5 reads"]
-    d2b["get_calibration_anchor('vdot') ✔"]:::canon
-    d2c["effective_vdot  (= anchor) ✔"]:::canon
-    d2a["activities.vo2max — raw Garmin"]:::dup
-    d2d["_compute_aerobic — median Garmin"]:::dup
-    d2e["get_fitness_anchors — latest effort"]:::dup
-  end
-  subgraph D3["D3 · race prediction — 6 builders"]
-    d3a["_prediction_summary / _race_prediction"]:::dup
-    d3b["_race_countdown — upper bound"]:::dup
-    d3c["_race_readiness_hero — effective_vdot"]:::dup
-    d3d["chart-marathon-pred / _prediction_trend_data"]:::dup
-  end
-  subgraph D4["D4 · durability"]
-    d4a["_compute_resilience — drift onset ✔"]:::canon
-    d4b["run-story inline onset"]:::dup
-    d4c["walk-break proxy"]:::dup
-    d4d["Riegel exp 1.06 / future beta_d"]:::dup
-  end
-  subgraph D6["D6 / D11 · load · ACWR"]
-    d6a["compute_rolling_acwr — live ✔"]:::canon
-    d6b["_compute_acwr — stored / dismiss path"]:::dup
-    d6c["total_load — cycling unweighted"]:::dup
-    d6d["strain — cycling weighted"]:::dup
-  end
+### C. Durability · zones · dimensions (D4·D5)
+
+```mermaid
+flowchart LR
+  classDef src fill:#0b1220,stroke:#64748b,color:#cbd5e1
+  classDef fn fill:#0c2b1c,stroke:#22c55e,color:#dcfce7
+  classDef dup fill:#2c1010,stroke:#ef4444,color:#fecaca
+  classDef out fill:#11162a,stroke:#818cf8,color:#c7d2fe
+  SPL["activity_splits<br/>avg_hr · pace_sec_per_km"]:::src
+  SPL -->|"compute_cardiac_drift · HR:pace >5% vs 1st-half"| DO["drift onset km"]:::fn
+  DO -->|"_compute_resilience · MAX over 28d ≥8km"| RES["Resilience dim"]:::fn
+  SPL -->|"inline rule (charts) · HR > 1st-half+5bpm"| CDO["chart-drift onset"]:::dup
+  SPB["activities.speed_per_bpm"]:::src
+  SPB -->|"_compute_economy · median 28d"| ECO["Economy dim"]:::fn
+  SPBZ["activities.speed_per_bpm_z2"]:::src
+  SPBZ -->|"_compute_threshold · median 28d"| THR["Threshold dim"]:::fn
+  AHR["activities.avg_hr"]:::src
+  CALZ["calibration[lthr·max_hr·aet] + config zones"]:::src
+  AHR -->|"compute_hr_zones · %LTHR (AeT Z2 ceiling), %MaxHR fallthrough"| HZ["hr_zone (stamped)"]:::fn
+  CALZ --> HZ
+  HZ -->|"Σ zone-time → weekly_agg"| ZW["weekly_agg.z1..z5_min · z12_pct"]:::fn
+  ZW --> CHZ["chart-zones · zone compliance"]:::out
+  RES --> FG["_fitness_gap_analysis<br/>4 dims vs goal needs"]:::fn
+  ECO --> FG
+  THR --> FG
+  AE2["Aerobic dim (Garmin)"]:::dup --> FG
+  FG --> PAN["Fitness Dimensions panel"]:::out
+  BD["future beta_d (marathon model)"]:::out -. "durability lens 2" .- RES
+```
+
+### D. Recovery (Readiness tab)
+
+```mermaid
+flowchart LR
+  classDef src fill:#0b1220,stroke:#64748b,color:#cbd5e1
+  classDef fn fill:#0c2b1c,stroke:#22c55e,color:#dcfce7
+  classDef out fill:#11162a,stroke:#818cf8,color:#c7d2fe
+  DH["daily_health"]:::src
+  DH -->|"training_readiness"| RDY["chart-readiness · _readiness_summary · headline"]:::out
+  DH -->|"hrv_last_night · resting_heart_rate"| RHV["chart-rhr-hrv"]:::out
+  DH -->|"deep/rem/light_sleep_hours"| SLP["chart-sleep"]:::out
+  DH -->|"sleep_duration_hours"| SM
+  CK["checkins.sleep_quality"]:::src -->|"join on date"| SM["_sleep_mismatches"]:::out
+  DH -->|"avg_stress_level · body_battery"| STc["chart-stress"]:::out
+  ACW["weekly_agg.acwr (stored)"]:::src -->|"shared with Load family"| RDY
+  TSB["future TSB = CTL − ATL (marathon model)"]:::out
+```
+
+### E. Plan / objectives (D7·D9·D14)
+
+```mermaid
+flowchart LR
+  classDef src fill:#0b1220,stroke:#64748b,color:#cbd5e1
+  classDef fn fill:#0c2b1c,stroke:#22c55e,color:#dcfce7
+  classDef dup fill:#2c1010,stroke:#ef4444,color:#fecaca
+  classDef out fill:#11162a,stroke:#818cf8,color:#c7d2fe
+  PW["planned_workouts"]:::src
+  ACT["activities"]:::src
+  PW -->|"compute_plan_adherence · date-match + zone/type compat"| PA["adherence %"]:::fn
+  ACT --> PA
+  PA --> WPA["weekly adherence strip · chart-plan-adherence"]:::out
+  PW -->|"own COUNT planned vs distinct-completed"| RING["hero compliance ring (looser)"]:::dup
+  ACT --> RING
+  PW -->|"_next_workouts"| NW1["Overview next workouts"]:::dup
+  PW -->|"_next_workouts_enriched (dup + HR range)"| NW2["Training next workouts"]:::dup
+  GO["goals + derive_objectives"]:::src
+  WA["weekly_agg (latest ISO)"]:::src -->|"_overview_objectives"| OOB["Overview objectives"]:::dup
+  GO --> OOB
+  RW["compute_rolling_week (7d)"]:::src -->|"_training_objectives"| TOB["Training objectives"]:::dup
+  GO --> TOB
+  ACT -->|"compliance_score (Garmin)"| CHC["chart-compliance"]:::out
 ```
 
 ---
