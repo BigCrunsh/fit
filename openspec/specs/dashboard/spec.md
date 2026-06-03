@@ -30,6 +30,10 @@ The dashboard SHALL have 5 tabs: **Today**, **Training**, **Body**, **Fitness**,
 ### Requirement: Time-scaled x-axes on time-series charts
 All time-series charts SHALL use `chartjs-adapter-date-fns` for proper date-scaled x-axes. This ensures that gaps in data (e.g., training breaks) are visually proportional to their duration, rather than equally spaced.
 
+#### Scenario: Gap rendered proportionally
+- **WHEN** a time-series chart has a training break between two data points
+- **THEN** the gap is rendered proportional to its duration on the date-scaled x-axis, not equally spaced
+
 ### Requirement: Two-palette color system
 The dashboard SHALL use two distinct color palettes to avoid semantic confusion:
 
@@ -82,8 +86,16 @@ The Today tab SHALL display goal progress cards for tracked metrics: VO2max (cur
 ### Requirement: Recent alerts displayed on Today tab
 The Today tab SHALL show unacknowledged alerts from the last 7 days, rendered as colored alert boxes with the alert message.
 
+#### Scenario: Unacknowledged alert shown
+- **WHEN** an unacknowledged alert exists from within the last 7 days
+- **THEN** the Today tab renders it as a colored alert box with the alert message
+
 ### Requirement: Correlation cards on Coach tab
 The Coach tab SHALL display correlation results as horizontal bar cards, sorted by absolute Spearman r. Each card shows: label (with underscores replaced and lag notation), r value (formatted as +/-0.XX), sample size, confidence level, bar width proportional to |r|, and color (green for positive, red for negative correlations).
+
+#### Scenario: Correlation card rendered
+- **WHEN** the Coach tab renders a negative correlation result
+- **THEN** a horizontal bar card shows its label, r value, sample size, confidence, bar width proportional to |r|, and red color
 
 ### Requirement: Journey timeline visualization
 The Today tab SHALL display a horizontal journey timeline for the primary goal, showing: all training phases as segments (colored by status: completed=solid, active=gradient, planned=outline), the current position marked ("You are here — Week 3 of Phase 1"), key metrics below each phase (current vs target), and the race date at the end. This provides emotional context — where you are in the story.
@@ -281,23 +293,51 @@ The Today tab SHALL display the active training phase with: phase name, date ran
 ### Requirement: Stress vs Body Battery chart on Body tab
 The Body tab SHALL display a dual-line chart showing average stress level and body battery peak over the last 21 days. Battery is rendered as a filled area (green), stress as a red line. This shows the interplay between energy reserves and physiological stress.
 
+#### Scenario: Stress vs body battery chart rendered
+- **WHEN** the Body tab renders with 21 days of stress and body battery data
+- **THEN** a dual-line chart shows body battery peak as a green filled area and average stress as a red line
+
 ### Requirement: ACWR trend chart on Body tab
 The Body tab SHALL display an ACWR bar chart over all weeks with data. Each bar is safety-colored (green 0.8-1.3, yellow 1.3-1.5, red >1.5). Horizontal annotation lines mark the safe range (0.8, 1.3) and danger threshold (1.5).
+
+#### Scenario: ACWR trend bars safety-colored
+- **WHEN** the Body tab renders an ACWR bar chart with a week at 1.6
+- **THEN** that bar is red and horizontal annotation lines mark 0.8, 1.3, and the 1.5 danger threshold
 
 ### Requirement: Marathon prediction trend on Fitness tab
 The Fitness tab SHALL display a monthly marathon prediction trend line using VDOT estimates from monthly average VO2max. Y-axis is reversed (lower = faster). A horizontal annotation line marks the sub-4:00 target (240 minutes).
 
+#### Scenario: Marathon prediction trend rendered
+- **WHEN** the Fitness tab renders with monthly average VO2max data
+- **THEN** a monthly prediction trend line is shown with a reversed y-axis and a horizontal line at the 240-minute sub-4:00 target
+
 ### Requirement: RPE chart uses Garmin Training Effect as proxy
 The Fitness tab RPE chart SHALL use Garmin's `aerobic_te` (Training Effect, 1-5 scale) mapped to RPE 1-10 scale (TE * 2) as the "predicted" effort line. When check-in RPE data exists, a second "actual" line is overlaid. The gap between lines indicates fatigue accumulation.
+
+#### Scenario: Training Effect mapped to predicted RPE
+- **WHEN** a run has Garmin `aerobic_te` of 3.5 and check-in RPE data exists
+- **THEN** the predicted line plots 7 (TE * 2) and the actual check-in RPE is overlaid as a second line
 
 ### Requirement: Sleep quality mismatch flags on Body tab
 The dashboard SHALL detect and display sleep quality mismatches: cases where Garmin reports ≥7h sleep but the check-in records "Poor" quality (possible stress/disruption), or <6h sleep but "Good" quality (monitor for cumulative deficit). Mismatches are shown as warning badges in the sleep section.
 
+#### Scenario: Mismatch flagged as warning badge
+- **WHEN** Garmin reports ≥7h sleep but the check-in records "Poor" quality
+- **THEN** a warning badge for that day appears in the sleep section
+
 ### Requirement: Contextual metric definitions with user data
 Each chart's info icon (`i`) SHALL expand a definition that references the user's actual current values, not generic text. For example: "Your VO2max is 49, which predicts a ~3:55 marathon. For sub-4:00 at ~75kg, you need ≥50." Definitions are generated in `generator.py` using live DB queries.
 
+#### Scenario: Definition references user's current value
+- **WHEN** the user expands a chart's info icon and their VO2max is 49
+- **THEN** the definition references their actual value of 49, not generic text
+
 ### Requirement: Dashboard color constants
 The generator SHALL define color constants matching the two-palette system: `SAFE = "#22c55e"`, `CAUTION = "#eab308"`, `DANGER = "#ef4444"` (safety palette), `Z12 = "#38bdf8"`, `Z3 = "#f59e0b"`, `Z45 = "#f97316"` (intensity palette), `ACCENT = "#818cf8"` (highlight/info).
+
+#### Scenario: Color constants defined
+- **WHEN** the generator is loaded
+- **THEN** it defines `SAFE`, `CAUTION`, `DANGER`, `Z12`, `Z3`, `Z45`, and `ACCENT` constants with the two-palette hex values
 
 
 ### Requirement: Decomposed generator as sections/ package

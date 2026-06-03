@@ -21,7 +21,7 @@ The system SHALL download .fit files gated behind `sync.download_fit_files` conf
 - **THEN** downloads 20 at a time with 2s delay between batches
 
 ### Requirement: Per-km split extraction with zone time
-Parse .fit files into `activity_splits` table with: activity_id, split_num, distance_km, time_sec, pace_sec_per_km, avg_hr, avg_cadence, elevation_gain_m, avg_speed_m_s, time_above_z2_ceiling_sec, start_distance_m, end_distance_m. The time_above_z2_ceiling_sec per split fixes the "entire run = one zone" problem.
+The system SHALL parse .fit files into `activity_splits` table with: activity_id, split_num, distance_km, time_sec, pace_sec_per_km, avg_hr, avg_cadence, elevation_gain_m, avg_speed_m_s, time_above_z2_ceiling_sec, start_distance_m, end_distance_m. The time_above_z2_ceiling_sec per split fixes the "entire run = one zone" problem.
 
 #### Scenario: Zone time per split
 - **WHEN** a 10km run has 3km in Z2 (HR 128) and 7km in Z3-Z4
@@ -29,7 +29,7 @@ Parse .fit files into `activity_splits` table with: activity_id, split_num, dist
 - **AND** weekly zone aggregation uses split-level data (not avg HR per run)
 
 ### Requirement: Rolling cardiac drift detection
-Compute drift using a rolling 1km window — identify the specific km where HR begins decoupling from pace (drift_onset_km). Constant-pace filter: if pace CV > 15% between halves, flag as "inconclusive (variable pace)."
+The system SHALL compute drift using a rolling 1km window — identify the specific km where HR begins decoupling from pace (drift_onset_km). Constant-pace filter: if pace CV > 15% between halves, flag as "inconclusive (variable pace)."
 
 #### Scenario: Drift onset at km 14
 - **WHEN** an 18km run shows stable HR:pace ratio through km 13, then HR rises without pace change
@@ -40,7 +40,7 @@ Compute drift using a rolling 1km window — identify the specific km where HR b
 - **THEN** drift_status="inconclusive_variable_pace"
 
 ### Requirement: Pace variability and cadence drift
-Compute pace CV (coefficient of variation across splits) as a consistency marker. Cadence drift = same formula as cardiac drift but for cadence.
+The system SHALL compute pace CV (coefficient of variation across splits) as a consistency marker. Cadence drift = same formula as cardiac drift but for cadence.
 
 #### Scenario: Cadence fade in long run
 - **WHEN** cadence drops from 175 to 162 spm over the last 5km
@@ -60,7 +60,7 @@ Runs at >25°C or >70% humidity SHALL be flagged as "heat-affected" with a zone 
 - **THEN** activity flagged heat_affected=True using weather data
 
 ### Requirement: Split visualization (dual-panel)
-Display as dual-panel chart on Training tab (collapsible): top panel = pace bars colored by zone, bottom panel = HR line with expected-HR reference. Elevation profile as subtle background. Drift onset marked with vertical annotation. Most recent long run only inline; historical behind "View splits" link.
+The system SHALL display as dual-panel chart on Training tab (collapsible): top panel = pace bars colored by zone, bottom panel = HR line with expected-HR reference. Elevation profile as subtle background. Drift onset marked with vertical annotation. Most recent long run only inline; historical behind "View splits" link.
 
 **Drift gauge card** above the split chart shows: drift_pct (e.g., "+11%"), drift_onset_km (e.g., "km 14"), drift_status (significant/mild/none/inconclusive), and a color indicator (green <5%, yellow 5-10%, red >10%). If drift_status = inconclusive_variable_pace, show "Pace too variable for drift analysis" instead.
 
@@ -70,14 +70,14 @@ Display as dual-panel chart on Training tab (collapsible): top panel = pace bars
 - **AND** drift gauge card shows "+11% | onset km 14 | significant" in red
 
 ### Requirement: Heat acclimatization tracking
-Track temperature-adjusted efficiency over time: efficiency per run plotted against temperature. Project expected race-day conditions (Berlin late September: ~15°C). Show trend: "Your heat-adjusted efficiency is improving — you're acclimating."
+The system SHALL track temperature-adjusted efficiency over time: efficiency per run plotted against temperature. Project expected race-day conditions (Berlin late September: ~15°C). Show trend: "Your heat-adjusted efficiency is improving — you're acclimating."
 
 #### Scenario: Acclimatization trend
 - **WHEN** runs at >25°C show improving efficiency over 4+ weeks
 - **THEN** coaching: "Heat efficiency improving. Race day forecast ~15°C — conditions will be favorable."
 
 ### Requirement: Test fixture
-Bundle a minimal synthetic .fit fixture in tests/fixtures/ (not real files — keep tests fast, avoid licensing). Test full pipeline: parse → splits → drift → DB.
+The system SHALL bundle a minimal synthetic .fit fixture in tests/fixtures/ (not real files — keep tests fast, avoid licensing). Test full pipeline: parse → splits → drift → DB.
 
 #### Scenario: Synthetic fixture test
 - **WHEN** test parses the synthetic .fit fixture

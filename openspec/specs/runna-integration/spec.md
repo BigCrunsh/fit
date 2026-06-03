@@ -19,7 +19,7 @@ Garmin Calendar API is undocumented — implement as "best effort." CSV fallback
 - **THEN** plan sync skipped with warning, existing planned_workouts preserved
 
 ### Requirement: Planned workouts schema with versioning
-`planned_workouts` table: date, workout_name, workout_type, target_distance_km, target_zone, structure (JSON for segments), plan_week, plan_day, garmin_workout_id, plan_version, sequence_ordinal, imported_at, status. Unique constraint on (date, plan_version, sequence_ordinal) — allows multiple workouts per day.
+The `planned_workouts` table SHALL have columns: date, workout_name, workout_type, target_distance_km, target_zone, structure (JSON for segments), plan_week, plan_day, garmin_workout_id, plan_version, sequence_ordinal, imported_at, status. Unique constraint on (date, plan_version, sequence_ordinal) — allows multiple workouts per day.
 
 Plan versioning: on re-sync, mark previous entries as superseded (not deleted).
 
@@ -32,21 +32,21 @@ Plan versioning: on re-sync, mark previous entries as superseded (not deleted).
 - **THEN** old plan rows marked superseded, new rows inserted with incremented plan_version
 
 ### Requirement: CSV fallback import
-`fit plan import <file>` provides equally robust CSV import when Garmin sync is unavailable. `fit plan validate <file>` dry-run checks format before import.
+`fit plan import <file>` SHALL provide equally robust CSV import when Garmin sync is unavailable. `fit plan validate <file>` dry-run checks format before import.
 
 #### Scenario: CSV import
 - **WHEN** user runs `fit plan import plan.csv`
 - **THEN** planned workouts loaded, versioned, logged to import_log
 
 ### Requirement: Plan adherence with compliance score
-Per-run: compute zone delta, distance delta, pace delta between planned and actual. Weekly compliance score (0-100%) = runs completed as prescribed / total planned. Detect systematic intensity override (>60% of easy runs overridden to Z3+ in 3 weeks). Track rest day compliance.
+Per-run, the system SHALL compute zone delta, distance delta, pace delta between planned and actual. Weekly compliance score (0-100%) = runs completed as prescribed / total planned. Detect systematic intensity override (>60% of easy runs overridden to Z3+ in 3 weeks). Track rest day compliance.
 
 #### Scenario: Systematic override
 - **WHEN** 4 of 5 planned Dauerlauf runs executed at Z3+ in 3 weeks
 - **THEN** alert: "Systematic intensity override: 80% of easy runs executed too hard"
 
 ### Requirement: Readiness-gated plan recommendations
-When readiness is below the adaptive threshold and planned workout is quality session (Tempo/Intervalle), recommend swapping to easy. Default threshold: readiness < 40. During return-to-run period (first 4 weeks after ≥14-day gap): threshold raised to < 50. Configurable via `coaching.readiness_gate_threshold`.
+When readiness is below the adaptive threshold and planned workout is quality session (Tempo/Intervalle), the system SHALL recommend swapping to easy. Default threshold: readiness < 40. During return-to-run period (first 4 weeks after ≥14-day gap): threshold raised to < 50. Configurable via `coaching.readiness_gate_threshold`.
 
 #### Scenario: Low readiness + planned tempo
 - **WHEN** readiness=25 and planned=Tempo (established training)
@@ -57,7 +57,7 @@ When readiness is below the adaptive threshold and planned workout is quality se
 - **THEN** coaching: "Readiness 42 during return phase — swap Intervals to easy Dauerlauf"
 
 ### Requirement: Plan adherence visualization
-Dashboard: mirrored bar chart (planned vs actual) with own visual identity — NOT overlaid on run timeline. Left = planned (faded), right = actual (solid), color = match quality. Weekly compliance percentage card. Handle edge cases: missed workouts (planned bar with no actual = gray "missed" marker), unplanned workouts (actual bar with no plan = blue "extra" marker).
+The dashboard SHALL show a mirrored bar chart (planned vs actual) with own visual identity — NOT overlaid on run timeline. Left = planned (faded), right = actual (solid), color = match quality. Weekly compliance percentage card. Handle edge cases: missed workouts (planned bar with no actual = gray "missed" marker), unplanned workouts (actual bar with no plan = blue "extra" marker).
 
 #### Scenario: Plan vs actual display
 - **WHEN** week has 3 planned workouts, 2 on-plan, 1 deviated
@@ -83,7 +83,7 @@ Synthesize splits + correlations + previous-night checkin + weather into a narra
 - **THEN** "Sunday's 18km: avg 5:52/km at HR 155 (efficiency 0.038). Sleep quality poor Saturday. Consider prioritizing sleep before long runs."
 
 ### Requirement: Periodization feedback loop
-Detect phase transition readiness: "Phase 1 objectives met (Z2 ≥80%, volume ≥25km, streak ≥4 weeks), suggest advancing to Phase 2." Also detect struggling: "Volume below target for 3+ weeks, consider extending Phase 1." Include deload week detection and taper model for final 2-3 weeks.
+The system SHALL detect phase transition readiness: "Phase 1 objectives met (Z2 ≥80%, volume ≥25km, streak ≥4 weeks), suggest advancing to Phase 2." Also detect struggling: "Volume below target for 3+ weeks, consider extending Phase 1." Include deload week detection and taper model for final 2-3 weeks.
 
 #### Scenario: Phase advance suggestion
 - **WHEN** all Phase 1 targets met for 2+ weeks

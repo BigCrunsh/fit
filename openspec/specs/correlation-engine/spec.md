@@ -23,14 +23,14 @@ ALL pairs require minimum n≥15 data points AND minimum |r|≥0.2 before surfac
 - **THEN** computed and stored but not shown in coaching or dashboard
 
 ### Requirement: Cycling correlation pair
-Add correlation: previous-day cycling_km → next-day run efficiency (speed_per_bpm). Uses lag=1.
+The system SHALL add correlation: previous-day cycling_km → next-day run efficiency (speed_per_bpm). Uses lag=1.
 
 #### Scenario: High cycling → low efficiency
 - **WHEN** days with >25km cycling precede runs with lower-than-average speed_per_bpm
 - **THEN** correlation is negative, flagged in coaching context
 
 ### Requirement: SpO2 correlation pair (optional)
-Consider adding: SpO2 → training_readiness. Validate whether it's a useful signal for this specific user before surfacing.
+The system MAY add: SpO2 → training_readiness, and SHALL validate whether it's a useful signal for this specific user before surfacing.
 
 #### Scenario: SpO2 correlates with readiness
 - **WHEN** n≥20 data points and Spearman r > 0.3
