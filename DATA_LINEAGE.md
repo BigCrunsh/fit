@@ -16,9 +16,85 @@ when the computation layer changes.
 
 ---
 
-## 0. Lineage diagrams (per concept family)
+## 0. Lineage diagrams
 
-Concrete DAGs: each node is a real column / function / output; **each edge is the transform**. <span style="color:#22c55e">Green</span> = the canonical value to converge on; <span style="color:#ef4444">red</span> = a competing/alternative path that can disagree (the §4 backlog); grey = source; blue = a displayed quantity.
+### Holistic view — provider → source → transform → metric
+
+Providers (left) → source **tables as boxes** with their **columns nested inside** → labelled **transform** edges → derived nodes → the dashboard metric. Principal flows (the per-family diagrams below carry the full detail).
+
+```mermaid
+flowchart LR
+  classDef prov fill:#1a1333,stroke:#a78bfa,color:#ede9fe
+  classDef col fill:#0b1220,stroke:#64748b,color:#cbd5e1
+  classDef fn fill:#0c2b1c,stroke:#22c55e,color:#dcfce7
+  classDef met fill:#11162a,stroke:#818cf8,color:#c7d2fe
+
+  GAR(["Garmin"]):::prov
+  APP(["Apple Health"]):::prov
+  MAN(["Manual check-in"]):::prov
+  RACE(["Race timing"]):::prov
+  RUN(["Runna"]):::prov
+
+  subgraph ACT["activities"]
+    a_d["distance · duration"]:::col
+    a_hr["avg_hr · max_hr"]:::col
+    a_vo2["vo2max"]:::col
+    a_tl["training_load"]:::col
+    a_spb["speed_per_bpm"]:::col
+    a_spl["splits: avg_hr · pace"]:::col
+  end
+  subgraph DH["daily_health"]
+    d_rdy["readiness"]:::col
+    d_hrv["hrv · resting_hr"]:::col
+    d_slp["sleep"]:::col
+    d_str["stress · body_battery"]:::col
+  end
+  subgraph BC["body_comp"]
+    b_w["weight · body_fat"]:::col
+  end
+  subgraph CK["checkins"]
+    c_sq["sleep_quality · alcohol · rpe"]:::col
+  end
+  subgraph RC["race_calendar"]
+    r_t["result_time · distance"]:::col
+  end
+  subgraph PW["planned_workouts"]
+    p_t["type · target"]:::col
+  end
+
+  GAR --> ACT
+  GAR --> DH
+  GAR --> PW
+  APP --> BC
+  MAN --> CK
+  RACE --> RC
+  RUN --> PW
+
+  a_d -->|"compute_vdot_from_race (Daniels)"| VDOTp["per-effort VDOT"]:::fn
+  a_hr --> VDOTp
+  r_t --> VDOTp
+  VDOTp -->|"get_calibration_anchor (max 180d, sticky)"| ANCH["VDOT anchor"]:::fn
+  ANCH -->|"vdot_to_race_time · daniels paces"| M_VDOT["VDOT card · Pace zones · Readiness verdict"]:::met
+  a_vo2 -->|"predict_race_time + table"| M_FC["Forecast · countdown"]:::met
+  a_tl -->|"_aggregate_date_range"| WK["weekly_agg: load · zones · monotony"]:::fn
+  a_hr -->|"compute_hr_zones (LTHR/MaxHR/AeT)"| HZ["hr_zone"]:::fn
+  HZ --> WK
+  WK -->|"compute_rolling_acwr"| M_ACWR["ACWR · volume"]:::met
+  WK --> M_ZONE["Zone distribution"]:::met
+  a_spl -->|"compute_cardiac_drift → _compute_resilience"| M_RES["Resilience / drift onset"]:::met
+  a_spb -->|"median 28d"| M_ECO["Economy · Threshold dims"]:::met
+  d_rdy --> M_REC["Readiness · HRV · Sleep · Stress"]:::met
+  d_hrv --> M_REC
+  d_slp --> M_REC
+  d_str --> M_REC
+  b_w --> M_W["Weight chart"]:::met
+  p_t -->|"compute_plan_adherence"| M_PLAN["Plan adherence · objectives"]:::met
+  c_sq --> M_CK["Check-in · correlations"]:::met
+```
+
+### Per-family detail (with duplications)
+
+Each concept family drawn in full, with competing/alternative paths flagged. <span style="color:#22c55e">Green</span> = the canonical value to converge on; <span style="color:#ef4444">red</span> = a competing/alternative path that can disagree (the §4 backlog); grey = source; blue = a displayed quantity.
 
 ### A. VDOT / prediction (D1·D2·D3)
 
