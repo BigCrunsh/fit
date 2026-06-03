@@ -249,6 +249,17 @@ def classify_run_type(activity: dict, config: dict = None, recent_long_run_avg: 
     if zone == "Z1" and distance < 6:
         return "recovery"
 
+    # Intensity guard: a Z4/Z5 effort is a hard session, never "easy",
+    # regardless of distance. Short hard efforts not on the race calendar
+    # (track time-trials, hard reps, an unlogged parkrun) otherwise fell
+    # through to the 'easy' default and polluted easy-pace/zone stats.
+    # Without split data we can't separate tempo from intervals, so a
+    # sustained-vs-rep call isn't possible here — classify as the hard-
+    # continuous bucket 'tempo'. (Races are tagged separately via
+    # _match_race_calendar and override this.)
+    if zone in ("Z4", "Z5"):
+        return "tempo"
+
     # Default: easy
     return "easy"
 

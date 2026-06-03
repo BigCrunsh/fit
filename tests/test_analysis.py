@@ -450,6 +450,23 @@ class TestRunType:
     def test_easy_default(self):
         assert classify_run_type({"type": "running", "name": "Easy Run", "distance_km": 7, "hr_zone": "Z2"}) == "easy"
 
+    def test_short_z5_effort_is_not_easy(self):
+        # A 3 km Z5 effort (e.g. a track time-trial not on the race calendar)
+        # must never fall through to 'easy' — intensity makes it a hard session.
+        assert classify_run_type(
+            {"type": "track_running", "name": "Berlin Laufen auf der Bahn",
+             "distance_km": 3.0, "hr_zone": "Z5"}) == "tempo"
+
+    def test_short_z4_effort_is_not_easy(self):
+        assert classify_run_type(
+            {"type": "running", "name": "Tuesday", "distance_km": 4.0, "hr_zone": "Z4"}) == "tempo"
+
+    def test_short_z3_stays_easy(self):
+        # Z3 is moderate, not a hard session — a short Z3 run is left as easy
+        # (the existing ≥6 km tempo rule still governs longer Z3 efforts).
+        assert classify_run_type(
+            {"type": "running", "name": "Tuesday", "distance_km": 4.0, "hr_zone": "Z3"}) == "easy"
+
     # ── Unhappy ──
 
     def test_non_running(self):
@@ -517,9 +534,13 @@ class TestRunType:
         ) == "long"
 
     def test_tempo_by_zone_but_short_distance(self):
-        """Z4 but distance < 6 is NOT tempo, defaults to easy."""
+        """Z4 under 6 km is still a hard session → tempo (intensity guard).
+
+        Was 'easy' under the old ≥6 km tempo floor; a short Z4/Z5 effort is
+        never easy, so the intensity guard reclassifies it as tempo.
+        """
         result = classify_run_type({"type": "running", "name": "Quick", "distance_km": 4, "hr_zone": "Z4"})
-        assert result == "easy"
+        assert result == "tempo"
 
     def test_short_distance_not_race(self):
         """Short run with race-like name is NOT race (race_calendar handles that)."""
