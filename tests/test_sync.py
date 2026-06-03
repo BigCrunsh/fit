@@ -187,6 +187,36 @@ class TestMatchRaceCalendar:
         assert rc["status"] == "completed"
         assert rc["activity_id"] == "act-past"
 
+    def test_auto_completes_same_day_registered_race(self, db):
+        """A race held today, synced the same day, must match (date <= today).
+
+        Regression: the matcher used `date < today`, so a race on the sync day
+        was skipped — the activity stayed mislabeled and the calendar entry
+        stayed 'registered' until the next day's sync.
+        """
+        from datetime import date as _d
+        today = _d.today().isoformat()
+        db.execute("""
+            INSERT INTO race_calendar (name, date, distance, distance_km, status)
+            VALUES ('Today 3k', ?, '3K', 3.0, 'registered')
+        """, (today,))
+        # track_running, mislabeled 'easy' — exactly the real-world case
+        db.execute("""
+            INSERT INTO activities (id, date, type, distance_km, duration_min, run_type)
+            VALUES ('act-today', ?, 'track_running', 3.0, 12.9, 'easy')
+        """, (today,))
+        db.commit()
+
+        _match_race_calendar(db)
+
+        rc = db.execute(
+            "SELECT status, activity_id FROM race_calendar WHERE name = 'Today 3k'"
+        ).fetchone()
+        assert rc["status"] == "completed"
+        assert rc["activity_id"] == "act-today"
+        act = db.execute("SELECT run_type FROM activities WHERE id = 'act-today'").fetchone()
+        assert act["run_type"] == "race"
+
     def test_no_auto_complete_without_activity(self, db):
         """Registered races whose date has passed stay registered if no activity exists."""
         db.execute("""

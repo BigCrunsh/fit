@@ -484,10 +484,13 @@ def _match_race_calendar(conn: sqlite3.Connection) -> None:
     """
     from datetime import date as _date
 
-    # Auto-complete registered races whose date has passed and an activity exists
+    # Auto-complete registered races whose date has passed (or is today) and an
+    # activity exists. `<=` (not `<`) so a race run and synced on the SAME day
+    # matches immediately — the activity only exists once you've run, so a
+    # same-day match implies the race happened.
     past_registered = conn.execute("""
         SELECT rc.id, rc.date, rc.distance_km FROM race_calendar rc
-        WHERE rc.status = 'registered' AND rc.date < ?
+        WHERE rc.status = 'registered' AND rc.date <= ?
     """, (_date.today().isoformat(),)).fetchall()
     for rc in past_registered:
         activities = conn.execute(f"""
