@@ -2351,15 +2351,21 @@ def _fitness_gap_analysis(conn):
             ("resilience", "km", "var(--purple)", True,
              "Aerobic durability — how late in a long run HR starts to drift up. Predicts late-marathon survival."),
         ]
+        # Bar scale: the goal line sits at 100%, and we show margin out to
+        # DISPLAY_MAX so being *above* the requirement is visible (not capped).
+        DISPLAY_MAX = 130
         for name, unit, color, higher_better, sowhat in dim_config:
             dim = profile.get(name, {})
             current = dim.get("current_value")
             required = targets.get(name)
-            gap = None
-            pct = None
+            gap = pct = pct_uncapped = pct_bar = None
+            over_goal = None
             if current is not None and required is not None and required > 0:
                 gap = round(required - current, 2)
-                pct = min(int(current / required * 100), 100)
+                pct_uncapped = round(current / required * 100)   # NOT capped
+                pct = min(pct_uncapped, 100)                      # legacy field
+                pct_bar = round(min(pct_uncapped, DISPLAY_MAX) / DISPLAY_MAX * 100, 1)
+                over_goal = pct_uncapped >= 100
 
             dims.append({
                 "name": name.capitalize(),
@@ -2367,6 +2373,10 @@ def _fitness_gap_analysis(conn):
                 "required": required,
                 "gap": gap,
                 "pct": pct,
+                "pct_uncapped": pct_uncapped,   # % of goal, uncapped (margin visible)
+                "pct_bar": pct_bar,             # width of the track to fill (0..100)
+                "over_goal": over_goal,         # at/above the goal line
+                "is_limiter": False,            # set below
                 "unit": unit,
                 "color": color,
                 "trend": dim.get("trend"),
@@ -2375,6 +2385,15 @@ def _fitness_gap_analysis(conn):
                 "message": dim.get("message"),
                 "sowhat": sowhat,
             })
+
+        # Limiter = the dimension furthest below the goal (lowest % of required).
+        # A marathon is paced by the weakest relevant capacity, so flag it.
+        scored = [d for d in dims if d["pct_uncapped"] is not None]
+        if scored:
+            min(scored, key=lambda d: d["pct_uncapped"])["is_limiter"] = True
+        # The goal-line position on the track (constant), for the template.
+        for d in dims:
+            d["goal_pos_pct"] = round(100 / DISPLAY_MAX * 100, 1)   # ≈76.9
 
         return dims
     except Exception as e:

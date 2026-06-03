@@ -470,28 +470,39 @@
   <!-- FITNESS DIMENSIONS — Gap Analysis -->
   {% if fitness_gaps %}
   <div id="prof-dimensions" class="sec"><h2>Fitness Dimensions</h2><div class="line"></div></div>
-  <div class="sec-sub">The four engines a marathon draws on, each against what the goal race needs. The shortest bar is the limiter.</div>
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin:10px 0">
+  <div class="sec-sub">Each capacity vs what the goal race needs (100% = the goal line). Past 100% is banked margin, not "done" — a marathon is paced by your weakest bar.</div>
+  {% set limiter = fitness_gaps | selectattr('is_limiter') | first %}
+  {% if limiter and limiter.pct_uncapped is not none and limiter.pct_uncapped < 100 %}
+  <div class="dim-limiter">⚠ Limiter: <strong>{{ limiter.name }}</strong> — {{ limiter.current }} {{ limiter.unit }} vs ~{{ limiter.required }} needed ({{ limiter.pct_uncapped }}% of goal)</div>
+  {% endif %}
+  <div class="dim-panel">
     {% for dim in fitness_gaps %}
-    <div class="dim-row">
-      <div class="dim-label">{{ dim.name }}</div>
-      <div class="dim-bar">
-        <div class="dim-fill" style="width:{{ dim.pct or 0 }}%;background:{{ dim.color }}"></div>
+    <div class="dim-row{% if dim.is_limiter %} dim-row-limiter{% endif %}">
+      <div class="dim-name">{{ dim.name }}{% if dim.is_limiter %} <span class="dim-limiter-tag">limiter</span>{% endif %}</div>
+      <div class="dim-nums">
+        <span class="dim-cur">{% if dim.current is not none %}{{ dim.current }}{% else %}—{% endif %}</span><span class="dim-unit">{{ dim.unit }}</span>{% if dim.required %}<span class="dim-need"> / {{ dim.required }} needed</span>{% endif %}
       </div>
-      <div class="dim-value" style="color:{% if dim.current is not none %}{{ dim.color }}{% else %}var(--text-dim){% endif %}">
-        {% if dim.current is not none %}{{ dim.current }}{% else %}—{% endif %}
+      <div class="dim-track" style="--goal:{{ dim.goal_pos_pct }}%">
+        {% if dim.pct_bar is not none %}
+        <div class="dim-track-fill {{ 'over' if dim.over_goal else 'under' }}" style="width:{{ dim.pct_bar }}%"></div>
+        <div class="dim-goal-line"></div>
+        {% else %}
+        <div class="dim-track-empty">{{ dim.message or 'no target' }}</div>
+        {% endif %}
       </div>
+      <div class="dim-pct {{ 'over' if dim.over_goal else 'under' }}">{% if dim.pct_uncapped is not none %}{{ dim.pct_uncapped }}%{% endif %}</div>
       <div class="dim-trend">
-        {% if dim.trend == 'improving' %}<span style="color:var(--safe)">{% if dim.rate_per_month %}{{ '%+.2f' | format(dim.rate_per_month) }}/mo{% else %}↑{% endif %}</span>
-        {% elif dim.trend == 'declining' %}<span style="color:var(--danger)">{% if dim.rate_per_month %}{{ '%+.2f' | format(dim.rate_per_month) }}/mo{% else %}↓{% endif %}</span>
+        {% if dim.trend == 'improving' %}<span style="color:var(--safe)">↑{% if dim.rate_per_month %} {{ '%+.2f' | format(dim.rate_per_month) }}/mo{% endif %}</span>
+        {% elif dim.trend == 'declining' %}<span style="color:var(--danger)">↓{% if dim.rate_per_month %} {{ '%+.2f' | format(dim.rate_per_month) }}/mo{% endif %}</span>
         {% elif dim.trend == 'insufficient_data' %}<span style="color:var(--text-dim)" title="{{ dim.message or '' }}">—</span>
         {% elif dim.current is not none %}<span style="color:var(--text-muted)">stable</span>
         {% endif %}
       </div>
+      {% if dim.sowhat %}<div class="dim-sowhat">{{ dim.sowhat }}</div>{% endif %}
     </div>
-    {% if dim.sowhat %}<div class="dim-sowhat">{{ dim.sowhat }}</div>{% endif %}
     {% endfor %}
   </div>
+  <div class="sec-method">100% = sufficient for the goal time (estimated from your target race); past 100% banks margin that de-risks weather, pacing and a bad day. "Needed" values are model estimates.</div>
   {% if profile_takeaways.dimensions %}<div class="sec-takeaway">{{ profile_takeaways.dimensions }}</div>{% endif %}
   {% endif %}
 
