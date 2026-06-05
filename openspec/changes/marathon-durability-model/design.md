@@ -72,10 +72,17 @@ rejected cardiac drift as the driver; the name must not imply drift feeds it.)*
 pen(d) = gamma · max(0, log(d / d_max))           # 0 when d ≤ d_max (interpolation)
 gamma ~ HalfStudentT(nu = 4, extrapolation_scale)
 extrapolation_scale = GENERIC_WALL_SCALE · shrink            shrink ∈ [floor, 1]   (asymmetric: data only reduces)
-  shrink ↓ with  (a) extrapolation gap log(goal/d_max) → 0   (endpoint-anchored, no magnitude knob)
-                 (b) long-run QUANTITY (distance covered, existing long-run rule)
-                 (c) long-run QUALITY  (pace-fade at effort_class ≥ Moderate — see below)
+  shrink ↓ with long-run pace-HOLDING (median pace-fade at effort_class ≥ Moderate):
+     hold/negative-split → shrink to floor;  fade hard → stay at the generic scale;  no
+     qualifying long runs → defaulted=True, stay generic, log it.
 ```
+
+**The gap is NOT re-encoded in the scale.** The extrapolation *distance* lives entirely
+in the multiplier `log(d/d_max)` (→ 0 as `d_max` approaches the goal). `shrink` carries
+only *pace-quality* — how much the wall costs **this** athlete — so the two mechanisms
+stay orthogonal (no double-counting). Implemented in `fit/marathon/preparedness.py`
+(`extrapolation_prior`); quality via `long_run_pace_fade` on the existing splits
+machinery.
 
 **Goal-adaptive by construction.** `pen` keys off `d` vs `d_max`, not 42.195: a marathon
 goal with HM data → big penalty; a half goal you've raced → `pen ≈ 0`; a 10k goal →

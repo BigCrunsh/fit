@@ -8,12 +8,12 @@
 - [x] `extract_efforts(conn)`: effort SQL (races + Hard/Very-Hard tempo/progression; intervals excluded), `x/h`, `d_max`, drop-no-history; `tests/test_marathon_features.py` (8 tests)
 - [ ] **REVISE `c`: use the existing chronic-load primitive** (trailing mean of daily `training_load`, ACWR's chronic denominator, point-in-time) — **drop the EWMA CTL/ATL** the first cut imported from the prototype (Decision 6: one shared load concept)
 - [ ] **Goal-adaptive `D_REF`**: `x = log(d/goal)` with `goal = get_target_race(conn)` (not hardcoded 42.195); re-run feature tests
-- [ ] **Long-run pace-fade ratio** (new, on existing second-half-pace machinery), gated by `effort_class ≥ Moderate`; long-run quantity from the existing long-run rule
+- [x] **Long-run pace-fade ratio** (`preparedness.long_run_pace_fade`) on the existing splits machinery, gated by `effort_class ≥ Moderate`
 
 ## 3. Preparedness penalty (Decision 2)
-- [ ] `fit/marathon/preparedness.py`: `extrapolation_prior(conn, goal)` = `GENERIC_WALL_SCALE · shrink`, `shrink ∈ [floor,1]`, decreasing with extrapolation gap `log(goal/d_max)` + long-run quantity + pace-fade quality; **asymmetric (only reduces), floored, endpoint-anchored** (no free magnitude knob)
-- [ ] `GENERIC_WALL_SCALE` = labelled population fade scale (B's floor + fallback); fall back + log when preparedness data thin/noisy
-- [ ] Tests: `shrink` monotone in gap + quality, never > 1, floored, `GENERIC_WALL_SCALE` fallback, pace-fade gated by effort_class, goal-adaptive (half goal within data → ~no shrink headroom)
+- [x] `fit/marathon/preparedness.py`: `extrapolation_prior` = `GENERIC_WALL_SCALE · shrink`, shrink from pace-HOLDING only (gap is the penalty multiplier's job, not re-encoded); **asymmetric, floored**
+- [x] `GENERIC_WALL_SCALE`=0.04 labelled default; `defaulted=True` + reason when no qualifying long runs
+- [x] Tests (`tests/test_marathon_preparedness.py`, 8): shrink monotone in quality, clamped [floor,1], default fallback, effort-gated. Real data: 3 long runs, −2.0% fade → floor
 
 ## 4. Model (Decisions 1, 5, 8)
 - [ ] `fit(efforts)`: drop δ; priors per design; `mu = alpha + beta_d·x + phi·c + kappa·h` (**no penalty term in the graph**)
