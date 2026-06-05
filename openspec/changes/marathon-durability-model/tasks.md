@@ -15,7 +15,8 @@
 - [ ] Sample with `nuts_sampler="nutpie"` (fallback default NUTS/numpyro); **save posterior to `~/.fit/marathon_posterior.nc` immediately** after sampling
 - [ ] Mandated workflow: prior-predictive plausibility → divergences==0 / r_hat<1.01 / ESS>400 → posterior-predictive + LOO-PIT; seeded real-sample smoke test
 - [ ] Extrapolation penalty as a **predict-time NumPy overlay** (γ NOT in the graph): `gamma ~ HalfNormal(s_drift)`, add `gamma·max(0, log(d/d_max))` to predicted log-time
-- [ ] `s_drift` from measured cardiac drift; conservative fixed default when drift thin (log "defaulted, not athlete-derived")
+- [ ] **Drift→s_drift transform (Option B)**: end-of-run HR:pace drift `δ` → `p_drift ≈ k·δ` (k∈[0.5,1.5]) → set `s_drift` so penalty median ≈ p_drift; docstring states the 3 assumptions
+- [ ] Compute the **Option-A fixed default `s_drift`** too (B's baseline + fallback); fall back + log when drift thin/noisy or B diverges from A beyond threshold
 - [ ] Prior-vs-data movement summary for β_d et al. (Decision 5); prior-sensitivity re-fit in QA
 - [ ] Tests (`pymc.testing.mock_sample` for structure): predict() with overlay strictly wider than without; penalty 0 at d≤d_max
 
@@ -26,6 +27,13 @@
 - [ ] `residuals(post, efforts)` (day-quality, for the correlation engine)
 - [ ] `influence(post, efforts)` via `az.loo(pointwise=True)` Pareto-k (flag k>0.7), not N manual refits; `pm.compute_log_likelihood` first (nutpie)
 - [ ] Tests: percentile shape, P-ceiling monotone in CTL, Pareto-k influence flagging
+
+## 4b. Extrapolation watch layer (Decision 9 — REQUIRED with Option B)
+- [ ] Decomposed-headline panel: power-law base + drift-penalty band, with Option-A default and zero-penalty as baseline reference lines
+- [ ] Tracked series: implied marathon-penalty % and `s_drift` over time vs the A-default baseline; plus drift inputs (resilience onset / drift %) over time
+- [ ] Validation overlay: when a 30 km+ effort exists, plot actual vs predicted band; until then label "unvalidated extrapolation"
+- [ ] Guardrail: divergence-from-A threshold + thin/noisy-drift check trips the A-fallback (visible label)
+- [ ] Tests: B-vs-A divergence flag fires; fallback path; "unvalidated" label until a 30 km+ effort
 
 ## 5. Integration
 - [ ] `fit/sync.py`: refit + cache step (gated/flagged) — Decisions 2,7

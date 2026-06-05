@@ -70,22 +70,32 @@ PyMC prior/posterior predictive checks deliberately exclude the penalty; the "ma
 interval wider than in-sample" assertion runs against the penalized `predict()` output,
 not a PyMC ppc.
 
-**Why this is data-driven, not a σ_extrap knob.** `s_drift` is set from the athlete's
-**measured cardiac drift** (the same `compute_cardiac_drift` / resilience signal on the
-dashboard), not a tuned constant:
+**Why HalfNormal(s_drift).** (a) **One-sided (≥0):** running *past* the longest observed
+distance can only add fade relative to the power law, never remove it — a negative
+penalty is physiologically nonsensical. (b) **Mode at 0:** we don't *assume* a wall, we
+*allow* one — the most likely case is the power law roughly holds. (c) **Scale =
+s_drift:** sets how heavy the "wall" tail is; tying it to the athlete's drift personalizes
+it (steep decoupler → fatter tail → wider/slower marathon; form-holder → thinner tail).
+In one line: γ is a prior over *how much the unobserved back half costs you*.
 
-1. From recent long runs, take the second-half HR:pace decoupling (drift %) past the
-   measured onset — the athlete's own within-run fade rate.
-2. Project that rate over the *unobserved* span (`d_max` → 42.195 km) to a fractional
-   time penalty `p_drift` (a doubling of distance for our data).
-3. Choose `s_drift` so the penalty's median ≈ `p_drift` and its 90% upper covers a
-   plausible "wall" (the HalfNormal carries the uncertainty of the projection).
+**The transform (DECISION: Option B — drift-linked), and its assumptions.** Cardiac drift
+and the marathon penalty are **not the same quantity** — drift is a *within-run* HR:pace
+decoupling (%, dimensionless); the penalty is a *cross-distance* fractional time cost.
+Mapping one to the other is the load-bearing assumption and must be stated as such:
+1. From recent long runs, take the end-of-run HR:pace drift magnitude `δ` (and/or its
+   rate past the measured onset) — the athlete's within-run decoupling.
+2. Project over the *unobserved* span (`d_max`→42.195 km, ≈ a doubling) to a fractional
+   time penalty `p_drift ≈ k·δ`, with `k ∈ [0.5, 1.5]` spanning linear→accelerating fade.
+3. Choose `s_drift` so the marathon penalty `exp(γ·0.69)−1` has **median ≈ p_drift** and
+   its 90% upper covers the accelerating case.
 
-So the prior *is* the measurement. **Flag:** this maps a within-run HR:pace signal to a
-cross-distance time fade — principled but approximate. When drift data is thin
-(cold-start), fall back to a conservative fixed `s_drift` and **log that the penalty is
-defaulted, not athlete-derived** (no silent caps). **This is the decision most worth a
-second look — see Open Questions.**
+**Three assumptions this bakes in** (all unverifiable until a 30 km+ effort exists):
+within-run decoupling ≈ cross-distance fade; the rate continues/accelerates past the
+observed distances; HR-holding maps to time given back (pacing-dependent). Because the
+mapping can silently corrupt the headline, it is **mandatorily paired with the monitoring
+layer (Decision 9)** — B is never shipped blind. When drift data is thin/noisy, fall back
+to the conservative fixed `s_drift` (the Option-A default) and **log "penalty defaulted,
+not athlete-derived"** (no silent caps).
 
 ## Decision 3 — P(goal) is a fitness-sufficiency *ceiling*, not race-day odds
 
@@ -157,6 +167,28 @@ table. (F6 — the fallback must change the label, not silently swap sources.)
   structure/shape/predict-wiring tests with no real sampling; a single seeded
   real-sample smoke test asserts `r_hat ≈ 1`.
 
+## Decision 9 — Extrapolation watch layer (REQUIRED with Option B)
+
+Because the drift→penalty mapping (Decision 2) can silently corrupt the headline, the
+drift-linked penalty **ships with a monitoring view, not blind**. A "forecast provenance"
+panel and a tracked series:
+
+- **Decomposed headline** — the pure power-law base **+** the drift-penalty band, so the
+  contribution of the mapping is always visible (never folded invisibly into one number).
+- **Baselines on the same axes:** (a) the **Option-A generic-default** penalty as a
+  reference line (drift-derived vs "typical wall"); (b) the **zero-penalty** power-law line
+  (optimistic floor). Divergence of B from the A-baseline is a visible flag.
+- **Tracked over time:** the implied marathon-penalty % (and `s_drift`) with the A-default
+  as a horizontal baseline → watch for instability as long-run data accrues; and the
+  **drift inputs themselves** (resilience onset / drift %) so a noisy feed is visible.
+- **Validation point:** when a **30 km+ effort** lands, overlay the *actual* result on the
+  predicted band. Until then the marathon row is labelled "unvalidated extrapolation."
+- **Guardrail / fallback:** if drift data is too thin/noisy, or B diverges from the
+  A-baseline beyond a set threshold, fall back to the **A default and say so**.
+
+So Option A is **not discarded** — it is computed alongside B as the **sanity baseline and
+the fallback**. B is the headline; A is the watch-line and the guardrail.
+
 ## Data & features (from the prototype, unchanged where it was right)
 
 - **Efforts:** races + tempo/progression at Hard/Very-Hard; intervals excluded
@@ -192,7 +224,7 @@ reads the cache. Derived values embedded at report build like other section data
 |---|---|---|
 | F2 | ACWR ≠ CTL; mark load opaque | Decision 6 + lineage/def-box |
 | F4 | β_d may be prior-dominated | Decision 5 (prior-vs-data flag) |
-| F5 | marathon is 2× extrapolation; durability readouts disagree | Decisions 2, 3, 4 |
+| F5 | marathon is 2× extrapolation; durability readouts disagree | Decisions 2, 3, 4, 9 |
 | F6 | stale model must not revert silently to the bad path | Decision 7 (loud, anchor not table) |
 | handover §8 | interval ≠ race-day spread; HR is an input; LOO | Decision 3 + influence() + def-box |
 
@@ -215,11 +247,11 @@ reads the cache. Derived values embedded at report build like other section data
 
 ## Open questions (carry to review before building)
 
-1. **Decision 2 mapping** — is the within-run cardiac-drift → cross-distance fade
-   projection sound enough to set `gamma`'s prior, or should v1 ship a conservative
-   fixed `s_drift` (clearly labelled) and make the drift-link a fast-follow? *(My lean:
-   ship fixed-but-labelled first, wire drift second — get the honest widening live
-   without betting the headline on an unvalidated mapping.)*
+1. **Decision 2 mapping — RESOLVED: Option B (drift-linked) in v1**, with the Option-A
+   default retained as B's sanity baseline + fallback, and the Decision-9 watch layer
+   mandatory. The drift→fade transform is an explicit, conservative heuristic with three
+   stated assumptions; it is never shipped blind. (Open sub-question: the exact `k` range
+   and the divergence threshold that trips the A-fallback — tune against data.)
 2. **Refit cadence** — every `fit sync` vs nightly vs on-demand `fit forecast`?
 3. **Staleness policy** — refit when N new efforts or > X days old?
 4. **Maximal-marathon HR** — fixed (~167) input, or derived from observed max-effort
