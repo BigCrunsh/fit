@@ -231,6 +231,13 @@ CONFIRMED_METHODS = {"manual", "confirmed"}
 # max — it's only a last-resort bootstrap value.
 REFERENCE_METHODS = {"garmin_estimate"}
 
+# Device-measured anchors: a direct instrument reading (Garmin's auto-detected
+# lactate-threshold HR), trusted as authoritative — it ranks ABOVE the race-proxy
+# policy estimate but BELOW a deliberate human confirm. Like REFERENCE rows it is
+# kept out of the policy estimator (the policy answers "what do your RACES imply",
+# which stays a useful cross-check vs the device value via `differs`).
+DEVICE_METHODS = {"garmin_lt"}
+
 # Two estimator families, picked by the metric's statistics:
 #   - 'max'    — one-sided / ceiling metrics (VDOT, MaxHR). A slow/distorted
 #                effort can't be selected, so no gate is needed; downward trends
@@ -330,7 +337,9 @@ def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> dict | None
 
     rows = [dict(r) for r in conn.execute(
         "SELECT * FROM calibration WHERE metric = ?", (metric,)).fetchall()]
-    observations = [r for r in rows if (r.get("method") or "") not in REFERENCE_METHODS]
+    observations = [r for r in rows
+                    if (r.get("method") or "") not in REFERENCE_METHODS
+                    and (r.get("method") or "") not in DEVICE_METHODS]
     now = date.today()
     window = policy["window_days"]
     family = policy["family"]
@@ -366,12 +375,18 @@ def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> dict | None
                 "inputs": contributors,
             }
 
-    # Sticky active: a confirmed/manual row is the value, untouched by the
-    # estimator. Without one (bootstrap), fall back to the policy suggestion.
+    # Precedence: human confirm (sticky) > device measurement (Garmin LT) > policy
+    # estimate (what races imply) > legacy active. A confirmed/manual row is the
+    # value, untouched by the estimator; else a recent device reading is
+    # authoritative over the race-proxy; else fall back to the policy suggestion.
     confirmed = active if (active and active.get("method") in CONFIRMED_METHODS) else None
+    device = active if (not confirmed and active and active.get("method") in DEVICE_METHODS) else None
     if confirmed:
         value, confidence, method, src_date = (
             confirmed["value"], confirmed.get("confidence"), confirmed["method"], confirmed.get("date"))
+    elif device:
+        value, confidence, method, src_date = (
+            device["value"], device.get("confidence"), device["method"], device.get("date"))
     elif suggestion is not None:
         value, confidence, method, src_date = (
             suggestion["value"], suggestion["confidence"], "policy", suggestion["inputs"][0]["date"])

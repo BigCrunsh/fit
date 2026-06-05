@@ -25,6 +25,40 @@ logger = logging.getLogger(__name__)
 _console_suppressed = False
 
 
+def _sync_lactate_threshold(conn: sqlite3.Connection, api) -> bool:
+    """Ingest the watch's auto-detected lactate-threshold HR as a device-anchored
+    calibration row (method 'garmin_lt').
+
+    Stored only when the value changes (≥1 bpm) — building an LT time-series without
+    daily duplicates. The row is authoritative for the LTHR anchor: above the
+    race-avg-HR proxy, below a deliberate human confirm (see DEVICE_METHODS). This
+    replaces reverse-engineering LTHR from race HR with the watch's own measurement.
+    Best-effort: never blocks a sync.
+    """
+    try:
+        lt = garmin.fetch_lactate_threshold(api)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning("LTHR ingest skipped: %s", e)
+        return False
+    if not lt or not lt.get("lthr"):
+        return False
+    value = round(float(lt["lthr"]), 1)
+    prev = conn.execute(
+        "SELECT value FROM calibration WHERE metric='lthr' AND method='garmin_lt' "
+        "ORDER BY date DESC, created_at DESC LIMIT 1"
+    ).fetchone()
+    prev_val = float(prev[0]) if prev else None
+    if prev_val is not None and abs(prev_val - value) < 1.0:
+        return False  # unchanged — keep the existing dated row (no daily duplicates)
+    note = "Garmin auto-detected lactate threshold"
+    spd = lt.get("lt_speed_mps")
+    if spd:
+        note += f" (LT speed {spd:.3f} m/s)"
+    add_calibration(conn, "lthr", value, "garmin_lt", "high", date.today(), notes=note)
+    logger.info("Ingested Garmin lactate threshold: %.0f bpm", value)
+    return True
+
+
 def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool = False,
              download_splits: bool = False) -> dict:
     """Run the full sync pipeline.
@@ -37,6 +71,10 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     """
     token_dir = config["sync"]["garmin_token_dir"]
     api = garmin.connect(token_dir)
+
+    # Ingest the watch's auto-detected lactate threshold BEFORE reading the LTHR
+    # calibration below, so zone computation uses the freshest device threshold.
+    _sync_lactate_threshold(conn, api)
 
     if full:
         start = date(2024, 1, 1)  # reasonable far-back date

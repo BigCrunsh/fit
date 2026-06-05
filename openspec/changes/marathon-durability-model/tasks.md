@@ -43,9 +43,11 @@
 - [ ] `fit/cli.py`: `fit forecast` command + refit trigger
 - [ ] **Graceful degradation** (Decision 7): no pymc / stale posterior → anchor headline + loud note; assert never the retired table
 
-## 8. LTHR source (open input — feeds `h` + maximal-effort HR)
-- [ ] Decide: ingest Garmin watch lactate threshold vs confirm manually (`fit calibrate lthr`)
-- [ ] If ingest: check `fit/garmin.py` / the Garmin client exposes lactate-threshold HR/pace; add fetch + store as a calibration row; let the anchor consume it
+## 8. LTHR source — DONE (ingest the watch's lactate threshold)
+- [x] `garmin.fetch_lactate_threshold` — `/userprofile-service/userprofile/personal-information` → `biometricProfile.lactateThresholdHeartRate`
+- [x] `sync._sync_lactate_threshold` — store as `garmin_lt` calibration row, only when changed (≥1 bpm) → LT time-series
+- [x] `DEVICE_METHODS` + anchor device-tier: human-confirm > device (garmin_lt) > race-proxy policy > legacy; device excluded from the race-suggestion median
+- [x] Tests (`tests/test_lthr_ingestion.py`, 8) + live-confirmed: anchor 164 (proxy) → **173** (watch)
 
 ## 9. Retire Phase 2 of D1
 - [ ] Replace the three trend consumers (`_prediction_trend_data`, trend badge, charts "VDOT (from VO2max)") with `trend_series`

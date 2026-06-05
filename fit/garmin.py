@@ -414,3 +414,30 @@ def fetch_spo2(api: Garmin, start: date, end: date) -> dict[str, float | None]:
     non_null = sum(1 for v in results.values() if v is not None)
     logger.info("Fetched SpO2 for %d days (%d with data)", len(results), non_null)
     return results
+
+
+def fetch_lactate_threshold(api: Garmin) -> dict | None:
+    """Fetch the watch's auto-detected lactate-threshold HR (and speed).
+
+    Source: `/userprofile-service/userprofile/personal-information`
+    (`biometricProfile.lactateThresholdHeartRate`). This is Garmin's own threshold
+    detection — a direct measurement, far better than reverse-engineering LTHR from
+    race average HR (`extract_lthr_from_race`, a distance/effort-confounded proxy).
+
+    Returns {"lthr": float, "lt_speed_mps": float | None} or None when unavailable.
+    """
+    try:
+        data = _request_with_retry(
+            lambda: api.connectapi("/userprofile-service/userprofile/personal-information"),
+            description="lactate threshold",
+        )
+    except Exception as e:
+        logger.warning("Lactate-threshold fetch failed: %s", e)
+        return None
+    if not isinstance(data, dict):
+        return None
+    bio = data.get("biometricProfile") or {}
+    lthr = bio.get("lactateThresholdHeartRate")
+    if not lthr:
+        return None
+    return {"lthr": float(lthr), "lt_speed_mps": bio.get("lactateThresholdSpeed")}
