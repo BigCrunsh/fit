@@ -165,6 +165,22 @@ class TestForecastDegrade:
         assert forecast(db, posterior=None) is None     # degrade, not crash
 
 
+class TestForecastSection:
+    def test_degrades_to_anchor_when_no_efforts(self, db):
+        from datetime import date, timedelta
+        from fit.report.sections.predictions import _marathon_forecast
+        db.execute("INSERT INTO calibration (metric,value,method,confidence,date,active) "
+                   "VALUES ('vdot', 40, 'manual','high',?,1)",
+                   ((date.today() - timedelta(days=1)).isoformat(),))
+        db.commit()
+        f = _marathon_forecast(db)                       # no efforts → anchor fallback
+        assert f["available"] is True and f["source"] == "anchor" and "median" in f
+
+    def test_unavailable_without_anchor_or_model(self, db):
+        from fit.report.sections.predictions import _marathon_forecast
+        assert _marathon_forecast(db)["available"] is False
+
+
 class TestSyncRefit:
     def test_refit_skips_without_history(self, db):
         from fit.sync import _refit_marathon_forecast

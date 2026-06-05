@@ -117,6 +117,45 @@
       </div>
     </div>
 
+    {% if marathon_forecast and marathon_forecast.available %}
+    <!-- Durability-model forecast (Bayesian) -->
+    <div class="race-hero-divider">
+      {% if marathon_forecast.source == 'model' %}
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+        <span class="kicker">Durability Model Forecast</span>
+        {% if marathon_forecast.unvalidated %}<span class="badge badge-yellow" title="longest effort {{ marathon_forecast.d_max }} km vs {{ marathon_forecast.goal_km }} km goal">⚠ unvalidated extrapolation</span>{% endif %}
+      </div>
+      <div style="display:flex;gap:28px;align-items:baseline;flex-wrap:wrap">
+        <div>
+          <div class="stat-value-lg" style="color:var(--accent)">{{ marathon_forecast.median }}</div>
+          <div class="race-hero-subtitle">90% {{ marathon_forecast.interval }}</div>
+        </div>
+        {% if marathon_forecast.p_ceiling_pct is not none %}
+        <div>
+          <div class="kicker">P({{ marathon_forecast.goal_time }} ceiling)</div>
+          <div class="stat-value-lg" style="color:var(--safe)">{{ marathon_forecast.p_ceiling_pct }}%</div>
+          <div class="race-hero-subtitle">fitness-sufficiency, not race-day odds</div>
+        </div>
+        {% endif %}
+        <div>
+          <div class="kicker">Durability β<sub>d</sub></div>
+          <div class="stat-value-lg">{{ marathon_forecast.beta_d }}</div>
+          <div class="race-hero-subtitle">{{ marathon_forecast.beta_d_ci }}{% if marathon_forecast.beta_d_dominated %} · prior-dominated{% endif %}</div>
+        </div>
+      </div>
+      <div class="race-hero-subtitle" style="margin-top:8px">Race-equivalent (today): {% for e in marathon_forecast.equiv %}{{ e.label }} {{ e.time }}{% if not loop.last %} · {% endif %}{% endfor %}</div>
+      <div class="race-hero-subtitle" style="margin-top:2px">Extrapolation: {{ marathon_forecast.extrap_reason }}{% if marathon_forecast.extrap_defaulted %} (defaulted){% endif %}</div>
+      {% if marathon_forecast.influential %}
+      <div class="race-hero-subtitle" style="margin-top:2px">Leans on: {% for e in marathon_forecast.influential %}{{ e.date }} ({{ e.distance_km }} km){% if not loop.last %}, {% endif %}{% endfor %}</div>
+      {% endif %}
+      {% else %}
+      <span class="kicker">Forecast</span>
+      <div class="stat-value-lg" style="color:var(--accent)">{{ marathon_forecast.median }}</div>
+      <div class="race-hero-subtitle">{{ marathon_forecast.note }} — calibrated-VDOT estimate (no interval)</div>
+      {% endif %}
+    </div>
+    {% endif %}
+
     <!-- Prediction trend chart (full width) -->
     <div class="race-hero-divider">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">

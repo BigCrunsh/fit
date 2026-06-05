@@ -39,7 +39,7 @@
 
 ## 7. Integration
 - [x] `fit/sync.py`: `_refit_marathon_forecast` step (best-effort; skips without extra/history, never blocks sync)
-- [ ] Report: re-source Marathon Prediction section/chart (median + interval + P-ceiling + trend + LOO flag); durability leads with measured signal, β_d optimistic bound (Decision 4)
+- [x] Report: `_marathon_forecast` section → Overview headline (median + 90% interval + P-ceiling + β_d + race-equivalency + unvalidated banner + influential efforts); degrades to anchor. [trend-chart re-source + watch panel: TODO]
 - [x] `fit/cli.py`: `fit forecast` (--refit/--hr) — headline+interval+P, durability, race-equivalency, required-chronic, influential efforts; degrades to anchor
 - [ ] **Graceful degradation** (Decision 7): no pymc / stale posterior → anchor headline + loud note; assert never the retired table
 

@@ -7,6 +7,87 @@ from fit.report.sections import SAFE, CAUTION, DANGER, Z1, Z2, Z3, Z4, Z5, ACCEN
 logger = logging.getLogger(__name__)
 
 
+def _hms(secs):
+    secs = int(round(secs))
+    return f"{secs // 3600}:{(secs % 3600) // 60:02d}:{secs % 60:02d}"
+
+
+def _goal_seconds(conn):
+    row = conn.execute(
+        "SELECT target_time FROM goals WHERE active = 1 AND target_time IS NOT NULL "
+        "ORDER BY type DESC LIMIT 1").fetchone()
+    if not row or not row["target_time"]:
+        return None
+    p = str(row["target_time"]).split(":")
+    try:
+        return int(p[0]) * 3600 + int(p[1]) * 60 + (int(p[2]) if len(p) > 2 else 0)
+    except (ValueError, IndexError):
+        return None
+
+
+def _marathon_forecast(conn, maximal_hr=167):
+    """Bayesian forecast section for the dashboard — a template-ready dict, always
+    present (`available`/`source`), degrading to the calibrated-VDOT anchor headline when
+    the model can't run (never the retired table; design Decision 7)."""
+    goal_secs = _goal_seconds(conn)
+
+    def _anchor(reason):
+        from fit.fitness import anchor_race_time
+        from fit.goals import get_target_race
+        tr = get_target_race(conn)
+        d = (tr.get("distance_km") if tr else None) or 42.195
+        secs = anchor_race_time(conn, d)
+        if not secs:
+            return {"available": False, "reason": reason}
+        return {"available": True, "source": "anchor", "median": _hms(secs),
+                "interval": None, "goal_km": d, "note": reason}
+
+    try:
+        from fit.marathon.predict import forecast as run_forecast, derived_metrics, influence, _current_c
+        from fit.marathon import model as M
+        from fit.marathon.features import extract_efforts
+    except ImportError:
+        return _anchor("durability model extra not installed")
+
+    try:
+        ds = extract_efforts(conn)
+    except ValueError as e:
+        return _anchor(str(e))
+    idata = M.load_posterior()
+    if idata is None:
+        return _anchor("model not fit yet (run `fit sync` or `fit forecast`)")
+
+    try:
+        fc = run_forecast(conn, avg_hr=maximal_hr, goal_seconds=goal_secs, posterior=idata)
+        if not fc:
+            return _anchor("forecast could not be produced")
+        ex = fc["extrapolation"]
+        c = _current_c(conn)
+        dm = derived_metrics(idata, ds, c=c, maximal_h=(maximal_hr - ds.lthr) / 5.0,
+                             extrapolation_scale=ex["scale"], nu=ex["nu"])
+        bd = dm["durability_beta_d"]
+        infl = influence(idata, ds)
+        flagged = [e for e in infl["efforts"] if e["influential"]]
+        return {
+            "available": True, "source": "model",
+            "median": _hms(fc["median"]),
+            "interval": f"{_hms(fc['lo'])} – {_hms(fc['hi'])}",
+            "p_ceiling_pct": (round(fc["p_ceiling"] * 100) if "p_ceiling" in fc else None),
+            "goal_time": (_hms(goal_secs) if goal_secs else None),
+            "goal_km": ds.goal,
+            "beta_d": f"{bd['median']:.3f}", "beta_d_ci": f"{bd['lo']:.3f}–{bd['hi']:.3f}",
+            "beta_d_dominated": bool(bd["prior_dominated"]),
+            "extrap_reason": ex["reason"], "extrap_defaulted": bool(ex["defaulted"]),
+            "unvalidated": bool(ds.d_max < ds.goal), "d_max": round(ds.d_max, 1),
+            "equiv": [{"label": r["label"], "time": _hms(r["median"])} for r in dm["race_equivalency"]],
+            "influential": [{"date": e["date"], "distance_km": e["distance_km"], "k": round(e["pareto_k"], 2)}
+                            for e in flagged[:3]],
+        }
+    except Exception as e:  # pragma: no cover - defensive: a bad posterior must not break the report
+        logger.warning("marathon forecast section failed: %s", e)
+        return _anchor("forecast error — anchor fallback")
+
+
 def _prediction_summary(conn):
     """Compact race forecast for the race card header.
 
