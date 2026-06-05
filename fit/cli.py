@@ -434,7 +434,7 @@ def backfill_rpe(refresh: bool):
 def backfill_vdot():
     """Backfill VDOT observations from past races (calibration history + anchor).
 
-    Writes an informational `race_estimate` VDOT row per completed 5–25 km race
+    Writes an informational `race_observation` VDOT row per completed 5–25 km race
     (Daniels, from the official time). These feed the VDOT anchor's windowed max
     and the calibration-history chart; they never become the active value —
     confirm that with `fit calibrate vdot <value>` or the sync prompt.

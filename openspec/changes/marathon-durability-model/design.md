@@ -65,10 +65,13 @@ log(t_i) = alpha + beta_d·x_i + phi·c_i + kappa·h_i  + StudentT(nu, 0, sigma)
 The forecast must not pretend to know the back half it has never run. A one-sided
 penalty, applied **per predicted distance** so it self-adapts to the goal:
 
+*(Terminology: previously drafted as `s_drift` — renamed after the dual-lens review
+rejected cardiac drift as the driver; the name must not imply drift feeds it.)*
+
 ```
 pen(d) = gamma · max(0, log(d / d_max))           # 0 when d ≤ d_max (interpolation)
-gamma ~ HalfStudentT(nu = 4, s_drift)
-s_drift = s_default · shrink            shrink ∈ [floor, 1]   (asymmetric: data only reduces)
+gamma ~ HalfStudentT(nu = 4, extrapolation_scale)
+extrapolation_scale = GENERIC_WALL_SCALE · shrink            shrink ∈ [floor, 1]   (asymmetric: data only reduces)
   shrink ↓ with  (a) extrapolation gap log(goal/d_max) → 0   (endpoint-anchored, no magnitude knob)
                  (b) long-run QUANTITY (distance covered, existing long-run rule)
                  (c) long-run QUALITY  (pace-fade at effort_class ≥ Moderate — see below)
@@ -78,18 +81,18 @@ s_drift = s_default · shrink            shrink ∈ [floor, 1]   (asymmetric: da
 goal with HM data → big penalty; a half goal you've raced → `pen ≈ 0`; a 10k goal →
 interpolation, none. The race-equivalency table gets the right penalty per row.
 
-**Why `HalfStudentT(ν=4, s_drift)`.** (a) **One-sided (≥0):** extrapolating past your
+**Why `HalfStudentT(ν=4, extrapolation_scale)`.** (a) **One-sided (≥0):** extrapolating past your
 longest distance can only add fade, never remove it. (b) **Mode at 0:** we *allow* a
 wall, don't *assume* one. (c) **Heavy tail (ν=4):** the wall is right-skewed and
 occasionally catastrophic (+20–40 min); a Gaussian (HalfNormal) tail underweights the
 blow-up. **ν=4 is a labelled convention, not a derivation** — the smallest integer ν with
 finite kurtosis ("heavy but not pathological"), and the `pymc-modeling` skill's
-recommended robust default (ν∈[3,7]). The headline is far more sensitive to `s_drift`
+recommended robust default (ν∈[3,7]). The headline is far more sensitive to `extrapolation_scale`
 than to ν, so ν is deliberately *not* gold-plated. (Strict-parsimony alternative:
 HalfNormal — the 90% edge barely moves; we choose the heavier tail for honesty about
 blow-ups.)
 
-**`shrink` is asymmetric + floored + endpoint-anchored.** It starts at `s_default` (a
+**`shrink` is asymmetric + floored + endpoint-anchored.** It starts at `GENERIC_WALL_SCALE` (a
 population marathon-fade scale, labelled "generic — no goal-distance data") and only
 **shrinks** as you demonstrate preparedness; it never inflates on thin/noisy data (that
 was the fatal flaw of the drift idea). The floor keeps it > 0 until an actual
@@ -173,18 +176,18 @@ The preparedness-shrunk penalty **ships with monitoring, not blind** — and the
 parsimony rule because it ties the new ratio back to what you already track):
 
 - **Decomposed headline:** power-law base **+** the penalty band, so the penalty's
-  contribution is always visible; with the `s_default` (generic) and zero-penalty lines as
+  contribution is always visible; with the `GENERIC_WALL_SCALE` (generic) and zero-penalty lines as
   baselines — divergence from the generic line is a visible flag.
 - **One durability story:** the existing `resilience` drift-onset (HR:pace, cardiac) **next
   to** the new long-run **pace-fade** (speed, glycogen/neuromuscular) and the long-run
   **distance progression** toward the goal — three readouts, one panel, with the
   difference between drift and pace-fade stated.
-- **Tracked over time:** implied penalty % / `s_drift` vs the `s_default` baseline; and the
+- **Tracked over time:** implied penalty % / `extrapolation_scale` vs the `GENERIC_WALL_SCALE` baseline; and the
   preparedness inputs (longest run, pace-fade) so a thin/noisy feed is visible.
 - **Validation:** when a goal-distance-class effort (e.g. 30 km+) lands, overlay actual vs
   predicted band; until then label "unvalidated extrapolation."
-- **Guardrail:** thin/noisy preparedness data, or penalty far from the `s_default`
-  baseline, falls back to `s_default` and says so.
+- **Guardrail:** thin/noisy preparedness data, or penalty far from the `GENERIC_WALL_SCALE`
+  baseline, falls back to `GENERIC_WALL_SCALE` and says so.
 
 ## Data & features (reuses existing metrics)
 
@@ -206,7 +209,7 @@ parsimony rule because it ties the new ratio back to what you already track):
 ```
 fit/marathon/
   features.py   extract_efforts(conn) -> DataFrame    # efforts + chronic-load c + x/h + d_max  [DONE]
-  preparedness.py  s_drift(conn, goal) -> {s_drift, s_default, shrink, inputs}   # gap + quality
+  preparedness.py  extrapolation_prior(conn, goal) -> {scale, default_scale, shrink, inputs, defaulted}   # gap + quality
   model.py      fit(efforts) -> InferenceData         # priors (D1,5), nutpie, cache
   predict.py    predict(post, c, avg_hr, distance, goal) -> {median, lo, hi, p_ceiling}
                 trend_series / derived_metrics / residuals / influence
@@ -230,7 +233,7 @@ Posterior cached to `~/.fit/marathon_posterior.nc`; refit on `fit sync` (flagged
 - **Features (no PyMC):** chronic-load strictly-before, effort SQL, `d_max`,
   drop-no-history. Done in `tests/test_marathon_features.py`.
 - **Preparedness:** `shrink` monotone in gap + quality; asymmetric (never > 1); floored;
-  `s_default` fallback when data thin; pace-fade gated by `effort_class`.
+  `GENERIC_WALL_SCALE` fallback when data thin; pace-fade gated by `effort_class`.
 - **Structure (mock):** `pymc.testing.mock_sample` — builds, shapes, predict wiring.
 - **Penalty:** `predict()` with overlay wider than without; `pen=0` at `d ≤ d_max`;
   goal-adaptive (half goal within data → no penalty).
@@ -240,7 +243,7 @@ Posterior cached to `~/.fit/marathon_posterior.nc`; refit on `fit sync` (flagged
 ## Open questions
 
 1. **Extrapolation — RESOLVED:** preparedness-shrunk `HalfStudentT(ν=4)` penalty (not
-   cardiac drift); `s_default` is the floor/fallback; watch layer mandatory. Sub-question:
+   cardiac drift); `GENERIC_WALL_SCALE` is the floor/fallback; watch layer mandatory. Sub-question:
    the `shrink` curve's exact rate is an informed assumption (no study quantifies
    30 km-fast-finish → 42 km-fade) — monitored + validated by a goal-distance effort.
 2. **LTHR source** — ingest the watch's lactate threshold (not currently synced) vs

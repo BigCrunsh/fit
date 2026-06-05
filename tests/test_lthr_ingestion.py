@@ -1,6 +1,6 @@
 """Garmin lactate-threshold ingestion → device-anchored LTHR.
 
-The watch's auto-detected LT HR is ingested as a `garmin_lt` calibration row and
+The watch's auto-detected LT HR is ingested as a `device_lt` calibration row and
 becomes the LTHR anchor: authoritative over the race-avg-HR proxy, but below a
 deliberate human confirm. Replaces reverse-engineering LTHR from race HR.
 """
@@ -35,15 +35,15 @@ class _FakeApi:
 
 class TestDeviceAnchorPrecedence:
     def test_device_beats_race_proxy(self, db):
-        _row(db, 164, "race_estimate", "low", 30)
-        _row(db, 175, "race_estimate", "low", 20)
-        _row(db, 173, "garmin_lt", "high", 1)
+        _row(db, 164, "race_observation", "low", 30)
+        _row(db, 175, "race_observation", "low", 20)
+        _row(db, 173, "device_lt", "high", 1)
         a = get_calibration_anchor(db, "lthr")
         assert a["value"] == 173
-        assert a["method"] == "garmin_lt"
+        assert a["method"] == "device_lt"
 
     def test_human_confirm_overrides_device(self, db):
-        _row(db, 173, "garmin_lt", "high", 2)
+        _row(db, 173, "device_lt", "high", 2)
         _row(db, 168, "manual", "high", 1)  # deliberate, newer
         a = get_calibration_anchor(db, "lthr")
         assert a["value"] == 168
@@ -51,10 +51,10 @@ class TestDeviceAnchorPrecedence:
 
     def test_device_excluded_from_race_suggestion(self, db):
         # the policy suggestion ("what races imply") ignores the device value
-        _row(db, 160, "race_estimate", "low", 30)
-        _row(db, 162, "race_estimate", "low", 20)
-        _row(db, 164, "race_estimate", "low", 10)
-        _row(db, 173, "garmin_lt", "high", 1)
+        _row(db, 160, "race_observation", "low", 30)
+        _row(db, 162, "race_observation", "low", 20)
+        _row(db, 164, "race_observation", "low", 10)
+        _row(db, 173, "device_lt", "high", 1)
         a = get_calibration_anchor(db, "lthr")
         assert a["value"] == 173                # device is the anchor
         assert a["suggestion"]["value"] == 162  # median of the 3 race rows only

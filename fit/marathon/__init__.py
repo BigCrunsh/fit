@@ -6,4 +6,4 @@ light and the dashboard degrades gracefully when the `forecast` extra is absent.
 The feature layer (features.py) is pure pandas/numpy and always importable.
 """
 
-from fit.marathon.features import extract_efforts  # noqa: F401  (no PyMC dependency)
+from fit.marathon.features import EffortDataset, extract_efforts  # noqa: F401  (no PyMC dependency)

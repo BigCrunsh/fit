@@ -27,7 +27,7 @@ _console_suppressed = False
 
 def _sync_lactate_threshold(conn: sqlite3.Connection, api) -> bool:
     """Ingest the watch's auto-detected lactate-threshold HR as a device-anchored
-    calibration row (method 'garmin_lt').
+    calibration row (method 'device_lt').
 
     Stored only when the value changes (≥1 bpm) — building an LT time-series without
     daily duplicates. The row is authoritative for the LTHR anchor: above the
@@ -44,7 +44,7 @@ def _sync_lactate_threshold(conn: sqlite3.Connection, api) -> bool:
         return False
     value = round(float(lt["lthr"]), 1)
     prev = conn.execute(
-        "SELECT value FROM calibration WHERE metric='lthr' AND method='garmin_lt' "
+        "SELECT value FROM calibration WHERE metric='lthr' AND method='device_lt' "
         "ORDER BY date DESC, created_at DESC LIMIT 1"
     ).fetchone()
     prev_val = float(prev[0]) if prev else None
@@ -54,7 +54,7 @@ def _sync_lactate_threshold(conn: sqlite3.Connection, api) -> bool:
     spd = lt.get("lt_speed_mps")
     if spd:
         note += f" (LT speed {spd:.3f} m/s)"
-    add_calibration(conn, "lthr", value, "garmin_lt", "high", date.today(), notes=note)
+    add_calibration(conn, "lthr", value, "device_lt", "high", date.today(), notes=note)
     logger.info("Ingested Garmin lactate threshold: %.0f bpm", value)
     return True
 
@@ -152,7 +152,7 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
             # Race max counts as a hard-effort context (medium); other
             # running activities get `activity_max` method which derive_flags
             # marks as `weak_context` → low confidence.
-            method = "race_extract" if a.get("run_type") == "race" else "activity_max"
+            method = "race_candidate" if a.get("run_type") == "race" else "activity_max"
             prior_cal = max_hr_cal  # may be None on first run
             flags = derive_flags("max_hr", candidate_max, method, prior_cal)
             confidence = derive_confidence(method, flags)
@@ -186,7 +186,7 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
                             logger.debug("Skipping LTHR extract for activity %s: bad date",
                                          enriched.get("id"))
                         else:
-                            # Write as informational history (race_estimate), NOT
+                            # Write as informational history (race_observation), NOT
                             # an active calibration. LTHR is human-confirmed — the
                             # athlete promotes a value via `fit calibrate lthr`
                             # after the dashboard flags the suggestion. This keeps
@@ -195,14 +195,14 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
                             # calibration.backfill_race_lthr.)
                             already = conn.execute(
                                 "SELECT 1 FROM calibration WHERE metric='lthr' "
-                                "AND method='race_estimate' AND source_activity_id=? LIMIT 1",
+                                "AND method='race_observation' AND source_activity_id=? LIMIT 1",
                                 (enriched["id"],),
                             ).fetchone()
                             if not already:
                                 conn.execute("""
                                     INSERT INTO calibration (metric, value, method,
                                         confidence, date, source_activity_id, notes, active, flags)
-                                    VALUES ('lthr', ?, 'race_estimate', 'low', ?, ?, ?, 0, '[]')
+                                    VALUES ('lthr', ?, 'race_observation', 'low', ?, ?, ?, 0, '[]')
                                 """, (candidate_lthr, cal_date.isoformat(), enriched["id"],
                                       f"Race estimate from {enriched.get('name')} "
                                       f"({enriched.get('distance_km', '?')}km)"))
@@ -221,7 +221,7 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
             existing_cal = get_active_calibration(conn, "vo2max")
             if not existing_cal or existing_cal["value"] != latest_vo2["vo2max"]:
                 add_calibration(conn, "vo2max", latest_vo2["vo2max"],
-                                "garmin_estimate", "medium",
+                                "device_vo2max", "medium",
                                 date.fromisoformat(latest_vo2["date"]))
 
         # 3c. AeT auto-derive — walk recent running activities ≥12 km that have

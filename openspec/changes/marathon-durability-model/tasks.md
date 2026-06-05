@@ -11,9 +11,9 @@
 - [ ] **Long-run pace-fade ratio** (new, on existing second-half-pace machinery), gated by `effort_class ≥ Moderate`; long-run quantity from the existing long-run rule
 
 ## 3. Preparedness penalty (Decision 2)
-- [ ] `fit/marathon/preparedness.py`: `s_drift(conn, goal)` = `s_default · shrink`, `shrink ∈ [floor,1]`, decreasing with extrapolation gap `log(goal/d_max)` + long-run quantity + pace-fade quality; **asymmetric (only reduces), floored, endpoint-anchored** (no free magnitude knob)
-- [ ] `s_default` = labelled population fade scale (B's floor + fallback); fall back + log when preparedness data thin/noisy
-- [ ] Tests: `shrink` monotone in gap + quality, never > 1, floored, `s_default` fallback, pace-fade gated by effort_class, goal-adaptive (half goal within data → ~no shrink headroom)
+- [ ] `fit/marathon/preparedness.py`: `extrapolation_prior(conn, goal)` = `GENERIC_WALL_SCALE · shrink`, `shrink ∈ [floor,1]`, decreasing with extrapolation gap `log(goal/d_max)` + long-run quantity + pace-fade quality; **asymmetric (only reduces), floored, endpoint-anchored** (no free magnitude knob)
+- [ ] `GENERIC_WALL_SCALE` = labelled population fade scale (B's floor + fallback); fall back + log when preparedness data thin/noisy
+- [ ] Tests: `shrink` monotone in gap + quality, never > 1, floored, `GENERIC_WALL_SCALE` fallback, pace-fade gated by effort_class, goal-adaptive (half goal within data → ~no shrink headroom)
 
 ## 4. Model (Decisions 1, 5, 8)
 - [ ] `fit(efforts)`: drop δ; priors per design; `mu = alpha + beta_d·x + phi·c + kappa·h` (**no penalty term in the graph**)
@@ -24,18 +24,18 @@
 - [ ] Structure tests via `pymc.testing.mock_sample`
 
 ## 5. Predict & derived
-- [ ] `predict(post, c, avg_hr, distance, goal) -> {median, lo, hi, p_ceiling}`; **extrapolation penalty = predict-time `HalfStudentT(ν=4, s_drift)` overlay** (ν=4 a labelled heavy-tail convention), `pen = γ·max(0, log(d/d_max))`
+- [ ] `predict(post, c, avg_hr, distance, goal) -> {median, lo, hi, p_ceiling}`; **extrapolation penalty = predict-time `HalfStudentT(ν=4, extrapolation_scale)` overlay** (ν=4 a labelled heavy-tail convention), `pen = γ·max(0, log(d/d_max))`
 - [ ] `trend_series(post, daily_load)` — replaces the table-based trend charts
 - [ ] `derived_metrics`: phi-value, layoff curve, β_d (prior-vs-data caveat), κ, live race-equivalency (per-distance penalty), required-fitness-for-goal
 - [ ] `residuals` (day-quality) and `influence` via `az.loo(pointwise=True)` Pareto-k (flag k>0.7); `pm.compute_log_likelihood` first
 - [ ] Tests: percentile shape, P-ceiling monotone in `c`, predict() with overlay wider than without, `pen=0` at `d≤d_max`, goal-adaptive
 
 ## 6. Unified durability + extrapolation watch view (Decision 9 — REQUIRED, the one new chart)
-- [ ] Decomposed headline: power-law base + penalty band, with `s_default` (generic) and zero-penalty baselines
+- [ ] Decomposed headline: power-law base + penalty band, with `GENERIC_WALL_SCALE` (generic) and zero-penalty baselines
 - [ ] One durability panel uniting existing `resilience` drift-onset (HR:pace) + new pace-fade (speed) + long-run distance progression; state the drift-vs-pace-fade difference
-- [ ] Tracked series: penalty % / `s_drift` vs `s_default` baseline; preparedness inputs (longest run, pace-fade)
+- [ ] Tracked series: penalty % / `extrapolation_scale` vs `GENERIC_WALL_SCALE` baseline; preparedness inputs (longest run, pace-fade)
 - [ ] Validation overlay: actual vs band once a goal-distance-class (≥~30 km) effort exists; else "unvalidated extrapolation"
-- [ ] Guardrail tests: thin/noisy or far-from-`s_default` → fallback + label
+- [ ] Guardrail tests: thin/noisy or far-from-`GENERIC_WALL_SCALE` → fallback + label
 
 ## 7. Integration
 - [ ] `fit/sync.py`: refit + cache step (gated/flagged)

@@ -1155,7 +1155,7 @@ def _all_charts(conn):
             # square so the watch threshold stands out from race-derived estimates;
             # drift_test rows encode their classification; everything else a circle.
             cls = r.get("classification")
-            if r.get("method") == "garmin_lt":
+            if r.get("method") == "device_lt":
                 styles.append("rect")               # ■ watch-detected (device measurement)
             elif cls == "upper_bound":
                 styles.append("triangle")          # ▲ AeT < this value

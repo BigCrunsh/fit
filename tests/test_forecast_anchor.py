@@ -58,7 +58,7 @@ class TestAnchorRaceTime:
 
     def test_ignores_garmin_vo2max_rows(self, db):
         # A Garmin reference row must NOT become the forecast anchor.
-        _set_vdot_anchor(db, 55.0, method="garmin_estimate", confidence="low")
+        _set_vdot_anchor(db, 55.0, method="device_vo2max", confidence="low")
         assert anchor_race_time(db, 42.195) is None
 
 
@@ -114,7 +114,7 @@ class TestHeadlineSourcePriority:
         out = P._prediction_summary(db)
         assert out.startswith(f"Prediction: {expected // 3600}:{(expected % 3600) // 60:02d}")
 
-    def test_falls_back_to_race_estimate(self, db):
+    def test_falls_back_to_race_observation(self, db):
         _add_race(db, "2026-02-01", 21.1, result_time="1:50:00")
         out = P._prediction_summary(db)
         assert out is not None and "race estimate" in out

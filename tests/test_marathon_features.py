@@ -11,7 +11,8 @@ from datetime import date, timedelta
 
 import pytest
 
-from fit.marathon.features import extract_efforts, CHRONIC_WINDOW_DAYS, MARATHON_KM
+from fit.marathon.features import extract_efforts, MARATHON_KM
+from fit.training_load import CHRONIC_WINDOW_DAYS
 
 
 def _d(days_ago):
@@ -48,17 +49,18 @@ class TestExtractEffortsHappy:
         _act(db, "raceHM", 10, run_type="race", distance_km=21.1, duration_min=110,
              avg_hr=168, training_load=200)
 
-        eff = extract_efforts(db)
+        ds = extract_efforts(db)
+        eff = ds.efforts
         assert set(eff["id"]) == {"race10", "raceHM"}
 
         hm = eff[eff["id"] == "raceHM"].iloc[0]
         # No target race set → D_REF falls back to the marathon.
-        assert eff.attrs["goal"] == pytest.approx(MARATHON_KM)
+        assert ds.goal == pytest.approx(MARATHON_KM)
         assert hm["x"] == pytest.approx(math.log(21.1) - math.log(MARATHON_KM))
         assert hm["h"] == pytest.approx((168 - 170.0) / 5.0)
         assert hm["logt"] == pytest.approx(math.log(110))
-        assert eff.attrs["d_max"] == pytest.approx(21.1)
-        assert eff.attrs["lthr"] == pytest.approx(170.0)
+        assert ds.d_max == pytest.approx(21.1)
+        assert ds.lthr == pytest.approx(170.0)
 
     def test_chronic_is_trailing_mean_strictly_before(self, db):
         _set_lthr(db)
@@ -68,7 +70,8 @@ class TestExtractEffortsHappy:
              avg_hr=140, training_load=100)
         _act(db, "race", 30, run_type="race", distance_km=10.0, duration_min=50,
              avg_hr=175, training_load=999)  # 999 same-day → excluded
-        eff = extract_efforts(db)
+        ds = extract_efforts(db)
+        eff = ds.efforts
         assert eff.iloc[0]["chronic"] == pytest.approx(100 / CHRONIC_WINDOW_DAYS, rel=1e-6)
 
     def test_goal_adaptive_recenters_x(self, db, monkeypatch):
@@ -78,8 +81,9 @@ class TestExtractEffortsHappy:
         _act(db, "race10", 20, run_type="race", distance_km=10.0, duration_min=50, avg_hr=175)
         # Target a half-marathon → x re-centres on 21.1, not the marathon.
         monkeypatch.setattr("fit.goals.get_target_race", lambda conn: {"distance_km": 21.1})
-        eff = extract_efforts(db)
-        assert eff.attrs["goal"] == pytest.approx(21.1)
+        ds = extract_efforts(db)
+        eff = ds.efforts
+        assert ds.goal == pytest.approx(21.1)
         assert eff.iloc[0]["x"] == pytest.approx(math.log(10.0) - math.log(21.1))
 
 
@@ -94,7 +98,8 @@ class TestExtractEffortsUnhappy:
         _act(db, "easy", 20, run_type="easy", distance_km=10, duration_min=60, avg_hr=140)
         _act(db, "tempo_easy", 15, run_type="tempo", distance_km=10, duration_min=50,
              avg_hr=150, effort_class="Easy")
-        eff = extract_efforts(db)
+        ds = extract_efforts(db)
+        eff = ds.efforts
         assert set(eff["id"]) == {"race"}
 
     def test_drops_effort_without_prior_history(self, db):
@@ -103,7 +108,8 @@ class TestExtractEffortsUnhappy:
         _act(db, "load", 30, run_type="easy", distance_km=8, duration_min=45,
              avg_hr=140, training_load=90)
         _act(db, "later", 10, run_type="race", distance_km=10, duration_min=50, avg_hr=175)
-        eff = extract_efforts(db)
+        ds = extract_efforts(db)
+        eff = ds.efforts
         assert set(eff["id"]) == {"later"}
 
     def test_raises_without_lthr_anchor(self, db):

@@ -1,9 +1,9 @@
 """Feature extraction for the marathon-durability model — pure pandas/numpy, no PyMC.
 
 Pulls qualifying efforts and daily training load from fitness.db, computes the
-*incoming* chronic load (the same primitive ACWR uses as its chronic denominator —
-a trailing mean of daily load, strictly BEFORE each effort so the effort's own load
-never inflates its fitness), and the model covariates:
+*incoming* chronic load (the shared Training-Load primitive — `fit.training_load`,
+strictly BEFORE each effort so the effort's own load never inflates its fitness),
+and the model covariates:
 
     x = log(distance / D_REF)    durability — D_REF = the GOAL distance (goal-adaptive)
     c = (chronic − ref) / scale  fitness state, from the shared chronic-load primitive
@@ -11,21 +11,23 @@ never inflates its fitness), and the model covariates:
 
 `D_REF` is the goal race distance (`get_target_race`), so the model re-centres when the
 target changes (marathon → half). LTHR comes from the calibration anchor. There is NO
-new CTL/ATL EWMA — fitness state reuses one shared chronic-load concept (Decision 6).
-See design.md.
+separate CTL/ATL EWMA — fitness state reuses one shared chronic-load concept
+(Decision 6). See design.md.
 """
 
 from __future__ import annotations
 
 import sqlite3
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
 
+from fit.training_load import CHRONIC_WINDOW_DAYS, DAILY_LOAD_SQL, chronic_load_before
+
 MARATHON_KM = 42.195         # fallback D_REF when no goal race is set
 CHRONIC_REF = 50.0           # fitness centre (chronic-load units) — cosmetic, like D_REF
 CHRONIC_SCALE = 10.0         # c is per-10 chronic-load units
-CHRONIC_WINDOW_DAYS = 28     # trailing window for chronic load (≈ ACWR's 4 ISO weeks)
 H_DIV = 5.0                  # bpm per effort unit
 
 # Continuous, intensity-bearing efforts only. Intervals excluded (their distance_km
@@ -40,29 +42,18 @@ WHERE type IN ('running', 'track_running')
 ORDER BY date
 """
 
-# Daily training load = sum over all activities that day (cross-training included).
-DAILY_LOAD_SQL = """
-SELECT date, SUM(training_load) AS load
-FROM activities
-WHERE training_load IS NOT NULL
-GROUP BY date
-ORDER BY date
-"""
 
+class EffortDataset(NamedTuple):
+    """The model's input contract — efforts plus the scalars every layer needs.
 
-def _chronic_before(jd: int, day_ord: np.ndarray, day_load: np.ndarray, window: int) -> float:
-    """Mean daily load over the trailing `window` days strictly BEFORE ordinal day jd.
-
-    This is the chronic-load primitive ACWR uses as its denominator, evaluated
-    point-in-time (incoming fitness, not inflated by the effort's own load). Averaged
-    over the window length so a sparse-but-recent block doesn't read as low fitness.
+    An explicit value object instead of smuggling metadata through DataFrame
+    ``.attrs`` (which is an invisible contract and not guaranteed across pandas ops).
     """
-    if day_ord.size == 0:
-        return 0.0
-    mask = (day_ord < jd) & (day_ord >= jd - window)
-    if not mask.any():
-        return 0.0
-    return float(np.sum(day_load[mask]) / window)
+
+    efforts: pd.DataFrame   # one row per qualifying effort, with x/c/h/logt
+    d_max: float            # longest observed effort distance — the extrapolation boundary
+    lthr: float             # LTHR anchor used for h
+    goal: float             # D_REF — the goal distance x is centred on
 
 
 def _lthr(conn: sqlite3.Connection) -> float:
@@ -85,12 +76,11 @@ def _goal_distance(conn: sqlite3.Connection) -> float:
     return float(d) if d and d > 0 else MARATHON_KM
 
 
-def extract_efforts(conn: sqlite3.Connection) -> pd.DataFrame:
+def extract_efforts(conn: sqlite3.Connection) -> EffortDataset:
     """Qualifying efforts with incoming chronic load and model covariates x/c/h/logt.
 
-    Efforts with no prior load history (chronic load 0) are dropped. The returned frame
-    carries ``.attrs``: ``d_max`` (longest observed distance — the extrapolation
-    boundary), ``lthr``, and ``goal`` (the D_REF used).
+    Efforts with no prior load history (chronic load 0) are dropped. Returns an
+    :class:`EffortDataset` (efforts frame + d_max/lthr/goal).
 
     Raises ValueError when there is no LTHR anchor, no qualifying efforts, or no effort
     with prior history — all of which the caller treats as "degrade to the anchor
@@ -107,7 +97,7 @@ def extract_efforts(conn: sqlite3.Connection) -> pd.DataFrame:
     day_load = dl["load"].fillna(0.0).to_numpy() if not dl.empty else np.array([])
 
     jd = eff["date"].map(pd.Timestamp.toordinal).to_numpy()
-    eff["chronic"] = [_chronic_before(j, day_ord, day_load, CHRONIC_WINDOW_DAYS) for j in jd]
+    eff["chronic"] = [chronic_load_before(j, day_ord, day_load, CHRONIC_WINDOW_DAYS) for j in jd]
 
     eff = eff[eff["chronic"] > 0].copy()  # drop efforts with no prior history
     if eff.empty:
@@ -119,7 +109,5 @@ def extract_efforts(conn: sqlite3.Connection) -> pd.DataFrame:
     eff["logt"] = np.log(eff["duration_min"])
 
     eff = eff.reset_index(drop=True)
-    eff.attrs["d_max"] = float(eff["distance_km"].max())
-    eff.attrs["lthr"] = lthr
-    eff.attrs["goal"] = goal
-    return eff
+    return EffortDataset(efforts=eff, d_max=float(eff["distance_km"].max()),
+                         lthr=lthr, goal=goal)

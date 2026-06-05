@@ -54,7 +54,7 @@ def conn():
     # Recent LTHR calibration so it isn't flagged stale in unrelated assertions.
     c.execute(
         "INSERT INTO calibration (metric, value, method, confidence, date, active) "
-        "VALUES ('lthr', 172, 'race_extract', 'high', date('now','-10 days'), 1)"
+        "VALUES ('lthr', 172, 'race_candidate', 'high', date('now','-10 days'), 1)"
     )
     c.commit()
     return c
@@ -183,7 +183,7 @@ class TestFitnessAnchorLine:
         # The standardized anchor reads a vdot calibration row, not a raw activity.
         conn.execute(
             "INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
-            "VALUES ('vdot', 41, 'race_estimate', 'low', date('now','-10 days'), 0, '[]')"
+            "VALUES ('vdot', 41, 'race_observation', 'low', date('now','-10 days'), 0, '[]')"
         )
         conn.execute(
             "INSERT INTO activities (id, date, type, distance_km, duration_min, "

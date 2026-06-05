@@ -538,45 +538,9 @@ def compute_rolling_week(conn: sqlite3.Connection, end_date: date | None = None,
     return result
 
 
-def compute_rolling_acwr(conn: sqlite3.Connection, end_date: date | None = None,
-                         config: dict | None = None) -> float | None:
-    """Compute ACWR using rolling 7-day acute load vs ISO-week chronic baseline.
-
-    Acute load: from compute_rolling_week() (last 7 days).
-    Chronic load: average of prior 4 ISO weeks from weekly_agg.
-    """
-    if end_date is None:
-        end_date = date.today()
-
-    rolling = compute_rolling_week(conn, end_date, config=config)
-    acute_load = rolling["total_load"]
-
-    # Chronic: prior 4 ISO weeks from weekly_agg
-    # Step back from end_date to find the 4 prior complete ISO weeks
-    prev_loads = []
-    ref_date = end_date - timedelta(days=7)
-    for i in range(4):
-        ref_iso = ref_date.isocalendar()
-        pw_str = f"{ref_iso[0]}-W{ref_iso[1]:02d}"
-        row = conn.execute(
-            "SELECT total_load FROM weekly_agg WHERE week = ?", (pw_str,)
-        ).fetchone()
-        if row and row["total_load"] is not None:
-            prev_loads.append(row["total_load"])
-        ref_date -= timedelta(weeks=1)
-
-    if len(prev_loads) < 3:
-        return None
-
-    chronic = sum(prev_loads) / len(prev_loads)
-    if chronic <= 0:
-        return None
-
-    acwr = round(acute_load / chronic, 2)
-    if acwr > 3.0:
-        return None
-
-    return acwr
+# Moved to the Training-Load context (fit/training_load.py) — re-exported here so
+# existing imports keep working during the incremental context split (DDD review).
+from fit.training_load import compute_rolling_acwr  # noqa: F401,E402
 
 
 # ── Daniels VDOT Lookup Table ──

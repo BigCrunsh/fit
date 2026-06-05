@@ -358,4 +358,61 @@ Builders that **run on every report but whose output the template never referenc
 
 ---
 
-*Generated 2026-06-03 by tracing the code. Update when the computation/builder layer changes.*
+## 6. Glossary — ubiquitous language (DDD review)
+
+The shared vocabulary. Code, dashboard copy, and docs use these terms with exactly
+these meanings; a name that contradicts the glossary is a bug.
+
+- **VDOT** — race-derived performance index (Daniels formula on actual race times).
+  *Earned on the clock.* Calibration metric `vdot`. NEVER interchangeable with VO2max.
+- **Garmin VO2max** — the wrist device's estimate (`activities.vo2max`). *Guessed by
+  the wrist*; runs well above race-implied VDOT for this athlete. Reference-only —
+  never an anchor, never a forecast input.
+- **Calibration anchor** — the single canonical value per physiological metric
+  (`get_calibration_anchor`). Trust precedence: **human confirm > device measurement >
+  policy estimate (what races imply) > legacy**.
+- **Method trust taxonomy** (calibration rows): `CONFIRMED` (`manual`, `confirmed` —
+  human-owned, sticky) · `DEVICE` (`device_lt` — instrument measurement, authoritative
+  below human) · `REFERENCE` (`device_vo2max` — context only, never an estimator input)
+  · `INFORMATIONAL` (`race_observation`, `effort_observation` — history/chart rows) ·
+  auto-derived candidates (`race_candidate`, `activity_max`, `drift_test`, `scale`).
+  *(Renamed in migration 016 — formerly `garmin_lt`, `garmin_estimate`,
+  `race_estimate`/`effort_estimate`, `race_extract`.)*
+- **Chronic load** — THE fitness-state primitive: trailing mean of daily
+  `training_load` (`fit.training_load.chronic_load`). ACWR's chronic denominator and
+  the forecast's fitness covariate both resolve to this one concept (one load model,
+  not two).
+- **ACWR** — acute(rolling 7d) ÷ chronic load: the *injury-risk ratio*. Not a fitness
+  trend — that's the chronic level itself.
+- **Resilience** — aerobic-decoupling onset: the km where HR:pace decouples >5% within
+  a run (cardiac/thermal signal). NOT the same as…
+- **Pace-fade** — speed give-back over a long run's second half at ≥ Moderate effort
+  (glycogen/neuromuscular signal; the evidence-backed marathon-durability marker).
+- **Effort (qualifying)** — a continuous intensity-bearing run: a race, or
+  tempo/progression at Hard/Very-Hard effort. Intervals are excluded (their distance
+  includes recoveries). Maximality is carried by HR (`h`), never assumed from the label.
+- **β_d (durability exponent)** — the fitted Riegel power-law slope. The *optimistic*
+  cross-distance bound ("what holds if the power law extends"); the dashboard leads with
+  the measured Resilience/Pace-fade signals when they disagree.
+- **Extrapolation penalty (γ)** — the honesty overlay widening the forecast past your
+  longest effort `d_max`: `γ ~ HalfStudentT(ν=4, extrapolation_scale)`,
+  `extrapolation_scale = GENERIC_WALL_SCALE · shrink`. Driven by long-run distance +
+  Pace-fade (NOT cardiac drift). *(Drafted as `s_drift`; renamed — drift doesn't drive
+  it.)*
+- **EffortDataset** — the model's input value object (`fit.marathon.features`): the
+  efforts frame + `d_max`, `lthr`, `goal`. Explicit contract, not DataFrame `.attrs`.
+
+### Bounded contexts (module → context)
+```
+Integration/ACL      garmin · apple_health · weather
+Ingestion            sync
+Physio Calibration   calibration                      (the model context for the rest)
+Training Load        training_load   (queued from analysis: weekly_agg · monotony · sRPE)
+Performance/Forecast fitness (Daniels) · marathon/ · prediction
+Planning             goals · plan · periodization · milestones
+Self-report          checkin
+Insight/Narrative    correlations · alerts · narratives · coach-MCP
+Presentation         report/
+```
+`analysis.py` is split along these seams incrementally (re-export shims left behind);
+new load code lands in `training_load`.

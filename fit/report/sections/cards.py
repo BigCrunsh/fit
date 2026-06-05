@@ -912,7 +912,7 @@ def _pace_zones(conn):
     if not anchor or anchor.get("value") is None:
         return {"available": False, "missing": "No qualifying effort yet — run a 5–10 km at ≥ LTHR to anchor your paces."}
     vdot = anchor["value"]
-    vdot_source = "garmin" if anchor.get("method") == "garmin_estimate" else "anchor"
+    vdot_source = "garmin" if anchor.get("method") == "device_vo2max" else "anchor"
 
     paces = compute_daniels_paces(vo2max=vdot)
     if not paces:

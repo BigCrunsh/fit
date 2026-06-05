@@ -25,7 +25,7 @@ def _ins(db, value, method, days_ago, active=0, confidence="medium"):
 def _seed_diverging(db):
     # Confirmed 41 (out of the 180d window) + a fresh 38.9 race observation in-window.
     _ins(db, 41.0, "confirmed", days_ago=220, active=1, confidence="high")
-    _ins(db, 38.9, "race_estimate", days_ago=30, confidence="low")
+    _ins(db, 38.9, "race_observation", days_ago=30, confidence="low")
 
 
 class TestEvaluate:
@@ -37,7 +37,7 @@ class TestEvaluate:
 
     def test_no_suggestion_when_within_threshold(self, db):
         _ins(db, 41.0, "confirmed", days_ago=200, active=1, confidence="high")
-        _ins(db, 40.5, "race_estimate", days_ago=20)   # within differs 1.0 of 41
+        _ins(db, 40.5, "race_observation", days_ago=20)   # within differs 1.0 of 41
         assert evaluate_suggestions(db, review={}) == []
 
     def test_dismissed_value_is_suppressed(self, db):
