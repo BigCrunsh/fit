@@ -310,6 +310,27 @@ def vdot_to_race_time(vdot: float, distance_km: float) -> int | None:
     return (lo + hi) // 2
 
 
+def anchor_race_time(conn: sqlite3.Connection, distance_km: float) -> int | None:
+    """Predicted race time (seconds) at a distance, from the calibrated VDOT anchor.
+
+    The single source for the race-forecast headline. Supersedes the retired
+    ``_vdot_to_marathon_seconds`` table and the "latest Garmin VO2max" input:
+    Garmin's HR-based VO2max runs well above this athlete's race-implied VDOT, so
+    forecasting off it inflated the number. The anchor is race-calibrated, so the
+    forecast is grounded in what was actually run.
+
+    Returns None when there is no usable anchor (dashboard then degrades to the
+    per-race Riegel extrapolation, never to the removed table).
+    """
+    if conn is None or distance_km <= 0:
+        return None
+    from fit.calibration import get_calibration_anchor  # local: avoid import cycle
+    anchor = get_calibration_anchor(conn, "vdot")
+    if not anchor or not anchor.get("value"):
+        return None
+    return vdot_to_race_time(anchor["value"], distance_km)
+
+
 def inverse_vdot(target_time_seconds: int, distance_km: float) -> float | None:
     """Inverse Daniels: what VDOT do you need for a target time at a given distance?
 

@@ -627,7 +627,7 @@ def compute_daniels_paces(vo2max: float | None, lthr: int | None = None) -> dict
     # Marathon pace = the Daniels-equivalent marathon time for this VDOT, via the
     # SAME formula the VDOT estimate uses (vdot_to_race_time inverts
     # compute_vdot_from_race). The old _vdot_to_marathon_seconds table was a
-    # heavy, inconsistent pessimism (VDOT 38.9 → 6:54/km M-pace) that made
+    # heavy, inconsistent pessimism (a low VDOT mapped to a far-too-slow M-pace) that made
     # training paces far too slow; training paces must reflect true VDOT
     # equivalence, not a marathon-durability discount. (Local import: fitness
     # imports analysis, so a module-level import would be circular.)
@@ -647,6 +647,15 @@ def compute_daniels_paces(vo2max: float | None, lthr: int | None = None) -> dict
 
 def _vdot_to_marathon_seconds(vo2max: float) -> float:
     """Interpolate marathon time from Daniels VDOT table.
+
+    RETIRED from the forecast (D1). The race-day headline is now anchored via
+    ``anchor_race_time`` (calibrated VDOT → Daniels formula inverse), NOT this
+    table fed by Garmin VO2max. This function survives ONLY for the three
+    VO2max-trend-over-time consumers (``_prediction_trend_data``, the trend
+    badge, the charts "VDOT (from VO2max)" line), which need a per-week series
+    the single-value anchor can't provide.
+    TODO(marathon-durability-model): delete this + ``_VDOT_TABLE`` once the
+    Bayesian ``trend_series`` replaces those charts.
 
     Uses linear interpolation between table points.
     Clamps to table boundaries for out-of-range values.
@@ -718,22 +727,57 @@ def predict_race_time(conn: sqlite3.Connection | None = None,
             })
     predictions["riegel"] = riegel_preds
 
-    # VDOT prediction using Daniels lookup table with interpolation
-    if vo2max and vo2max > 30:
-        vdot_seconds = _vdot_to_marathon_seconds(vo2max)
-        predictions["vdot"] = {
-            "vo2max": vo2max,
-            "predicted_seconds": round(vdot_seconds),
-            "predicted_pace_sec_km": round(vdot_seconds / marathon_km),
-        }
-    else:
-        predictions["vdot"] = None
+    # VDOT prediction from the calibrated race anchor (Daniels formula inverse),
+    # NOT Garmin VO2max via the retired _vdot_to_marathon_seconds table. The
+    # `vo2max` arg is accepted for backward compatibility but no longer used here.
+    predictions["vdot"] = None
+    if conn is not None:
+        from fit.fitness import anchor_race_time  # local
+        from fit.calibration import get_calibration_anchor  # local
+        vdot_seconds = anchor_race_time(conn, marathon_km)
+        if vdot_seconds:
+            anchor = get_calibration_anchor(conn, "vdot")
+            predictions["vdot"] = {
+                "vdot": anchor["value"] if anchor else None,
+                "predicted_seconds": round(vdot_seconds),
+                "predicted_pace_sec_km": round(vdot_seconds / marathon_km),
+            }
 
     # Confidence band based on data quantity and calibration
     confidence = _compute_prediction_confidence(conn, races)
     predictions["confidence"] = confidence
 
     return predictions
+
+
+def riegel_fallback_secs(conn: sqlite3.Connection, target_km: float) -> int | None:
+    """Conservative (slowest) Riegel extrapolation to target_km from completed
+    races, in seconds.
+
+    The cold-start fallback for the forecast headline when no VDOT anchor exists
+    yet — race-based (exponent 1.06), never the retired Garmin-VO2max table.
+    Conservative = slowest, per the project's prediction convention. Returns None
+    when there is no usable completed race.
+    """
+    def _parse(t):
+        p = (t or "").split(":")
+        if len(p) == 3:
+            return int(p[0]) * 3600 + int(p[1]) * 60 + int(p[2])
+        if len(p) == 2:
+            return int(p[0]) * 60 + int(p[1])
+        return 0
+    rows = conn.execute("""
+        SELECT distance_km, COALESCE(result_time, garmin_time) AS rt
+        FROM race_calendar
+        WHERE status = 'completed' AND COALESCE(result_time, garmin_time) IS NOT NULL
+    """).fetchall()
+    cand = []
+    for r in rows:
+        d1 = r["distance_km"]
+        t1 = _parse(r["rt"])
+        if d1 and t1 and d1 != target_km:
+            cand.append(t1 * (target_km / d1) ** 1.06)
+    return round(max(cand)) if cand else None
 
 
 def _compute_prediction_confidence(conn: sqlite3.Connection | None,

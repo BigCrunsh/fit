@@ -113,10 +113,10 @@ flowchart LR
   LT --> GFA
   PV --> GFA
   GFA -->|"backfill_*_vdot write rows"| CV["calibration[vdot]<br/>race/effort rows"]:::src
-  CV -->|"get_calibration_anchor<br/>max-in-180d + sticky-confirm"| AN["VDOT anchor = 38.9"]:::fn
+  CV -->|"get_calibration_anchor<br/>max-in-180d + sticky-confirm"| AN["VDOT anchor"]:::fn
   AN --> EF["effective_vdot (= anchor)"]:::fn
   AN -->|"compute_daniels_paces"| PZ["Pace Zones E/M/T/I/R"]:::out
-  AN -->|"vdot_to_race_time(42.195)<br/>Daniels inverse"| ME["marathon-equiv 3:55"]:::fn
+  AN -->|"vdot_to_race_time(42.195)<br/>Daniels inverse"| ME["marathon-equiv"]:::fn
   ME --> VC["VDOT card (_vdot_comparison)"]:::out
   EF -->|"vdot_to_race_time"| RH["Race-readiness hero"]:::out
   VO2 -->|"raw — bypasses anchor"| PR["predict_race_time"]:::dup

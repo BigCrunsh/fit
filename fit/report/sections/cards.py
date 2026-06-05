@@ -58,55 +58,33 @@ def _headline_signal(conn):
 
 
 def _prediction_summary(conn):
-    """Compact prediction with confidence for the race card header.
+    """Compact race forecast for the race card header.
 
-    Shows range from multiple sources, not just VDOT point estimate.
+    Single source = the calibrated VDOT anchor (anchor_race_time), NOT Garmin
+    VO2max via the retired table. Returns None when there is no usable anchor.
     """
     try:
-        from fit.analysis import predict_race_time
-        races = conn.execute("""
-            SELECT distance_km, result_time FROM race_calendar
-            WHERE status = 'completed' AND result_time IS NOT NULL
-            ORDER BY date DESC LIMIT 5
-        """).fetchall()
-        vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
+        from fit.fitness import anchor_race_time
+        from fit.calibration import get_calibration_anchor
+        from fit.goals import get_target_race
 
-        def _parse_time(t):
-            parts = t.split(":")
-            if len(parts) == 3:
-                return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-            elif len(parts) == 2:
-                return int(parts[0]) * 60 + int(parts[1])
-            return 0
+        target = get_target_race(conn)
+        target_km = (target.get("distance_km") if target else None) or 42.195
 
-        race_data = [{"distance_km": r["distance_km"], "time_seconds": _parse_time(r["result_time"])}
-                     for r in races if r["distance_km"] and r["result_time"]]
-        preds = predict_race_time(races=race_data, vo2max=vo2["vo2max"] if vo2 else None)
-
-        # Collect all predictions
-        all_secs = []
-        if preds.get("riegel"):
-            all_secs.extend(p["predicted_seconds"] for p in preds["riegel"])
-        if preds.get("vdot") and preds["vdot"].get("predicted_seconds"):
-            all_secs.append(preds["vdot"]["predicted_seconds"])
-
-        if not all_secs:
-            return None
-
-        lo = min(all_secs)
-        hi = max(all_secs)
-
-        def _fmt(s):
-            return f"{s // 3600}:{(s % 3600) // 60:02d}"
-
-        confidence = preds.get("confidence", {})
-        level = confidence.get("level", "low")
-        level_label = {"high": "", "moderate": " (moderate confidence)", "low": " (low confidence)"}
-
-        if hi - lo < 300:  # within 5 min — show single value
-            return f"Prediction: {_fmt((lo + hi) // 2)}{level_label.get(level, '')}"
+        headline = anchor_race_time(conn, target_km)
+        note = ""
+        if headline:
+            anchor = get_calibration_anchor(conn, "vdot") or {}
+            note = " (stale — re-test)" if anchor.get("stale") else ""
         else:
-            return f"Prediction: {_fmt(lo)}–{_fmt(hi)}{level_label.get(level, '')}"
+            # No calibrated anchor → conservative (slowest) Riegel extrapolation
+            # from actual races. Never the retired Garmin-VO2max table.
+            from fit.analysis import riegel_fallback_secs
+            headline = riegel_fallback_secs(conn, target_km)
+            note = " (race estimate)" if headline else ""
+        if not headline:
+            return None
+        return f"Prediction: {headline // 3600}:{(headline % 3600) // 60:02d}{note}"
     except Exception:
         return None
 
@@ -1349,18 +1327,14 @@ def _race_countdown(conn):
                 def _fmt_time(s):
                     return f"{s // 3600}:{(s % 3600) // 60:02d}"
 
-                # Current VO2max → predicted race time (center line of chart)
+                # Center line = current race forecast from the calibrated VDOT
+                # anchor (single source; NOT Garmin VO2max via the retired table).
+                from fit.fitness import anchor_race_time
+                target_km = race.get("distance_km") or 42.195
+                center_secs = anchor_race_time(conn, target_km)
                 vo2 = conn.execute(
                     "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1"
                 ).fetchone()
-                center_secs = None
-                if vo2 and vo2["vo2max"] and vo2["vo2max"] > 30:
-                    marathon_secs = _vdot_to_marathon_seconds(vo2["vo2max"])
-                    target_km = race.get("distance_km") or 42.195
-                    if target_km != 42.195:
-                        center_secs = marathon_secs * (target_km / 42.195) ** 1.06
-                    else:
-                        center_secs = marathon_secs
 
                 # Method spread margin (half-width of all prediction sources)
                 races_db = conn.execute("""

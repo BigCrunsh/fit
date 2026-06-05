@@ -574,11 +574,12 @@ class TestRacePrediction:
         assert len(preds["riegel"]) == 1
         assert preds["riegel"][0]["predicted_seconds"] > 6572  # longer than from HM
 
-    def test_vdot_prediction(self):
+    def test_vdot_leg_none_without_conn(self):
+        # The vdot leg now comes from the calibrated anchor (conn-based), not the
+        # vo2max param via the retired table. Without a conn there is no anchor.
+        # Anchor-based positive coverage lives in test_forecast_anchor.py.
         preds = predict_race_time(races=[], vo2max=49)
-        assert preds["vdot"] is not None
-        assert preds["vdot"]["predicted_seconds"] > 0
-        assert preds["vdot"]["predicted_pace_sec_km"] > 0
+        assert preds["vdot"] is None
 
     def test_multiple_races(self):
         preds = predict_race_time(races=[
@@ -633,19 +634,11 @@ class TestRacePrediction:
         assert len(preds["riegel"]) == 1
         assert preds["riegel"][0]["predicted_seconds"] > 0
 
-    def test_vdot_too_low(self):
-        """VO2max <= 30 gives no VDOT prediction."""
-        preds = predict_race_time(races=[], vo2max=30)
-        assert preds["vdot"] is None
-
-    def test_vdot_barely_above_threshold(self):
-        preds = predict_race_time(races=[], vo2max=31)
-        assert preds["vdot"] is not None
-
-    def test_vdot_very_high(self):
-        """Very high VO2max should not go below table minimum."""
-        preds = predict_race_time(races=[], vo2max=100)
-        assert preds["vdot"]["predicted_seconds"] > 0
+    def test_vdot_param_ignored_any_value(self):
+        """The vo2max param no longer resurrects the vdot leg at ANY value — the
+        forecast is anchored (conn-based), never Garmin VO2max via the table."""
+        for v in (30, 31, 49, 100):
+            assert predict_race_time(races=[], vo2max=v)["vdot"] is None
 
     def test_missing_race_keys(self):
         """Race dict with missing keys should be skipped gracefully."""

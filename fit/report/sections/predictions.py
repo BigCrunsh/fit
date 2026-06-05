@@ -8,74 +8,33 @@ logger = logging.getLogger(__name__)
 
 
 def _prediction_summary(conn):
-    """Compact prediction with confidence for the race card header.
+    """Compact race forecast for the race card header.
 
-    Shows range from multiple sources, not just VDOT point estimate.
+    Single source = the calibrated VDOT anchor (anchor_race_time), NOT Garmin
+    VO2max via the retired table. Returns None when there is no usable anchor.
     """
     try:
-        from fit.analysis import _vdot_to_marathon_seconds
+        from fit.fitness import anchor_race_time
+        from fit.calibration import get_calibration_anchor
         from fit.goals import get_target_race
 
         target_race = get_target_race(conn)
         target_km = target_race["distance_km"] if target_race and target_race.get("distance_km") else 42.195
 
-        # Prefer official result_time; fall back to watch garmin_time so a race
-        # still contributes a prediction before its official time is entered
-        # (consistent with the Riegel chart; missing official times are flagged
-        # in the attention panel).
-        races = conn.execute("""
-            SELECT distance_km, COALESCE(result_time, garmin_time) AS race_time
-            FROM race_calendar
-            WHERE status = 'completed'
-              AND COALESCE(result_time, garmin_time) IS NOT NULL
-            ORDER BY date DESC LIMIT 5
-        """).fetchall()
-        vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
-
-        def _parse_time(t):
-            parts = t.split(":")
-            if len(parts) == 3:
-                return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-            elif len(parts) == 2:
-                return int(parts[0]) * 60 + int(parts[1])
-            return 0
-
-        # Riegel extrapolation to TARGET distance
-        all_secs = []
-        for r in races:
-            if r["distance_km"] and r["race_time"]:
-                d1 = r["distance_km"]
-                t1 = _parse_time(r["race_time"])
-                if d1 > 0 and t1 > 0 and d1 != target_km:
-                    t2 = t1 * (target_km / d1) ** 1.06
-                    all_secs.append(round(t2))
-
-        # VDOT prediction scaled to target distance
-        if vo2 and vo2["vo2max"] and vo2["vo2max"] > 30:
-            marathon_secs = _vdot_to_marathon_seconds(vo2["vo2max"])
-            if target_km != 42.195:
-                vdot_secs = round(marathon_secs * (target_km / 42.195) ** 1.06)
-            else:
-                vdot_secs = round(marathon_secs)
-            all_secs.append(vdot_secs)
-
-        if not all_secs:
-            return None
-
-        lo = min(all_secs)
-        hi = max(all_secs)
-
-        def _fmt(s):
-            return f"{s // 3600}:{(s % 3600) // 60:02d}"
-
-        # Simple confidence based on data count
-        level = "moderate" if len(all_secs) >= 5 else "low"
-        level_label = {"high": "", "moderate": " (moderate confidence)", "low": " (low confidence)"}
-
-        if hi - lo < 300:  # within 5 min — show single value
-            return f"Prediction: {_fmt((lo + hi) // 2)}{level_label.get(level, '')}"
+        headline = anchor_race_time(conn, target_km)
+        note = ""
+        if headline:
+            anchor = get_calibration_anchor(conn, "vdot") or {}
+            note = " (stale — re-test)" if anchor.get("stale") else ""
         else:
-            return f"Prediction: {_fmt(lo)}–{_fmt(hi)}{level_label.get(level, '')}"
+            # No calibrated anchor → conservative Riegel extrapolation from
+            # actual races. Never the retired Garmin-VO2max table.
+            from fit.analysis import riegel_fallback_secs
+            headline = riegel_fallback_secs(conn, target_km)
+            note = " (race estimate)" if headline else ""
+        if not headline:
+            return None
+        return f"Prediction: {headline // 3600}:{(headline % 3600) // 60:02d}{note}"
     except Exception:
         return None
 
@@ -132,14 +91,15 @@ def _race_prediction(conn):
                     "original_pace": f"{int(original_pace // 60)}:{int(original_pace % 60):02d}/km",
                 })
 
-    # VDOT prediction
-    from fit.analysis import _vdot_to_marathon_seconds
+    # Daniels race-time estimate from the calibrated VDOT anchor (NOT Garmin
+    # VO2max via the retired table — Garmin VO2max runs above race-implied VDOT).
+    from fit.fitness import anchor_race_time
+    from fit.calibration import get_calibration_anchor
     vdot_pred = None
-    if vo2 and vo2["vo2max"] and vo2["vo2max"] > 30:
-        marathon_secs = _vdot_to_marathon_seconds(vo2["vo2max"])
-        # Scale from marathon to target distance
-        vdot_secs = round(marathon_secs * (target_km / 42.195) ** 1.06) if target_km != 42.195 else round(marathon_secs)
-        vdot_pred = {"vo2max": vo2["vo2max"], "predicted_seconds": vdot_secs}
+    _anchor_secs = anchor_race_time(conn, target_km)
+    if _anchor_secs:
+        _anchor = get_calibration_anchor(conn, "vdot") or {}
+        vdot_pred = {"vdot": _anchor.get("value"), "predicted_seconds": _anchor_secs}
 
     def _fmt_time(secs):
         h = secs // 3600
@@ -184,8 +144,8 @@ def _race_prediction(conn):
     # VO2max prediction (separate section)
     rows = []
     if vdot_pred:
-        rows.append(_section_header("VO2max Estimate (Daniels)"))
-        rows.append(_row_html("VO2max", str(vdot_pred["vo2max"]), vdot_pred["predicted_seconds"]))
+        rows.append(_section_header("VDOT Anchor (Daniels)"))
+        rows.append(_row_html("VDOT", str(vdot_pred["vdot"]), vdot_pred["predicted_seconds"]))
 
     # Group races by distance category
     distance_groups = {}

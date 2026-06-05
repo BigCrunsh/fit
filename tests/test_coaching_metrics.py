@@ -56,17 +56,12 @@ class TestDanielsVDOT:
         result = _vdot_to_marathon_seconds(65)
         assert result == 10500.0
 
-    def test_predict_marathon_uses_daniels(self):
-        """predict_race_time should use Daniels table, not linear approx."""
-        preds = predict_race_time(races=[], vo2max=42)
-        assert preds["vdot"] is not None
-        # Should be ~16080s, not the old linear approx
-        assert abs(preds["vdot"]["predicted_seconds"] - 16080) < 60
-
-    def test_predict_marathon_vo2max_55(self):
-        """VO2max 55 prediction accuracy."""
-        preds = predict_race_time(races=[], vo2max=55)
-        assert abs(preds["vdot"]["predicted_seconds"] - 11700) < 60
+    def test_predict_marathon_vdot_leg_anchored_not_garmin(self):
+        """predict_race_time's vdot leg is now sourced from the calibrated VDOT
+        anchor (conn-based), NOT Garmin VO2max via the table. Without a conn the
+        param is ignored. Anchor-based coverage: test_forecast_anchor.py."""
+        assert predict_race_time(races=[], vo2max=42)["vdot"] is None
+        assert predict_race_time(races=[], vo2max=55)["vdot"] is None
 
     def test_interpolation_between_points(self):
         """VO2max 49 (between 48 and 50) should interpolate correctly."""
