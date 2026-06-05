@@ -25,10 +25,10 @@
 
 ## 5. Predict & derived
 - [x] `predict.predict` + `predict.forecast`: predict-time `HalfStudentT(ν=4, extrapolation_scale)` overlay, `pen=γ·max(0,log(d/d_max))`; interval = posterior-of-mean + penalty (NOT residual σ); p_ceiling
-- [ ] `trend_series(post, daily_load)` — replaces the table-based trend charts
-- [ ] `derived_metrics`: phi-value, layoff curve, β_d (prior-vs-data caveat), κ, live race-equivalency (per-distance penalty), required-fitness-for-goal
-- [ ] `residuals` (day-quality) and `influence` via `az.loo(pointwise=True)` Pareto-k (flag k>0.7); `pm.compute_log_likelihood` first
-- [ ] Tests: percentile shape, P-ceiling monotone in `c`, predict() with overlay wider than without, `pen=0` at `d≤d_max`, goal-adaptive
+- [x] `trend_series` — marathon-equiv tracking chronic load over time (replaces the table-based chart)
+- [x] `derived_metrics`: β_d/φ/κ (prior-vs-data flag), race-equivalency (per-distance HR schedule + penalty), `required_chronic_for_goal`
+- [x] `influence` via `az.loo` Pareto-k vs adaptive `good_k`. [`residuals` for the correlation engine: TODO]
+- [x] Tests (`tests/test_marathon_model.py`): overlay wider, pen=0 within range, p-ceiling monotone, derived structure, required-chronic, trend, influence (slow)
 
 ## 6. Unified durability + extrapolation watch view (Decision 9 — REQUIRED, the one new chart)
 - [ ] Decomposed headline: power-law base + penalty band, with `GENERIC_WALL_SCALE` (generic) and zero-penalty baselines
@@ -40,7 +40,7 @@
 ## 7. Integration
 - [ ] `fit/sync.py`: refit + cache step (gated/flagged)
 - [ ] Report: re-source Marathon Prediction section/chart (median + interval + P-ceiling + trend + LOO flag); durability leads with measured signal, β_d optimistic bound (Decision 4)
-- [ ] `fit/cli.py`: `fit forecast` command + refit trigger
+- [x] `fit/cli.py`: `fit forecast` (--refit/--hr) — headline+interval+P, durability, race-equivalency, required-chronic, influential efforts; degrades to anchor
 - [ ] **Graceful degradation** (Decision 7): no pymc / stale posterior → anchor headline + loud note; assert never the retired table
 
 ## 8. LTHR source — DONE (ingest the watch's lactate threshold)
