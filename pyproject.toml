@@ -21,6 +21,12 @@ dependencies = [
 analysis = [
     "fitparse>=1.2.0",
 ]
+forecast = [
+    "pymc>=5",
+    "arviz>=0.18",
+    "nutpie>=0.13",
+    "scipy>=1.11",
+]
 dev = [
     "pytest>=8.0.0",
     "ruff>=0.4.0",
