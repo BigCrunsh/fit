@@ -1894,6 +1894,44 @@ def _checkpoint_data(conn):
         return []
 
 
+def _model_week_trend(conn, week_starts):
+    """Per-week durability-model marathon-equiv (median, lo, hi) in MINUTES — Panel B of
+    the marathon_v2 chart. Returns None when the model isn't available (→ table fallback,
+    being retired). Loads the cached posterior once, then predicts at each week's chronic
+    load (maximal effort)."""
+    try:
+        from datetime import date as _date
+        import numpy as _np
+        from fit.marathon import model as _M
+        from fit.marathon.predict import predict as _predict
+        from fit.marathon.preparedness import extrapolation_prior
+        from fit.marathon.features import extract_efforts, CHRONIC_REF, CHRONIC_SCALE
+        from fit.training_load import chronic_load
+    except ImportError:
+        return None
+    post = _M.load_posterior()
+    if post is None:
+        return None
+    try:
+        ds = extract_efforts(conn)
+    except ValueError:
+        return None
+    prior = extrapolation_prior(conn, ds.goal)
+    gap = max(0.0, float(_np.log(ds.goal / ds.d_max)))
+    h = (167 - ds.lthr) / 5.0
+    out = {}
+    for ws in week_starts:
+        try:
+            cl = chronic_load(conn, asof=_date.fromisoformat(ws))
+        except Exception:
+            continue
+        c = (cl - CHRONIC_REF) / CHRONIC_SCALE
+        r = _predict(post, x=0.0, c=c, h=h, gap=gap,
+                     extrapolation_scale=prior["scale"], nu=prior["nu"])
+        out[ws] = (r["median"] / 60.0, r["lo"] / 60.0, r["hi"] / 60.0)
+    return out or None
+
+
 def _prediction_trend_data(conn):
     """Generate prediction trend chart data for the Overview race card.
 
@@ -1951,9 +1989,15 @@ def _prediction_trend_data(conn):
 
         labels = []
         pred = []
+        # Panel B: prefer the durability-model median at each week's chronic load. The
+        # weekly-VO2max→table path is the fallback only (D1 Phase 2 — table retired).
+        model_trend = _model_week_trend(conn, [w["week_start"] for w in weeks])
         for w in weeks:
             labels.append(w["week_start"])
-            if w["vo2max_avg"] and w["vo2max_avg"] > 30:
+            if model_trend is not None:
+                mt = model_trend.get(w["week_start"])
+                pred.append(round(mt[0], 1) if mt else None)
+            elif w["vo2max_avg"] and w["vo2max_avg"] > 30:
                 marathon_secs = _vdot_to_marathon_seconds(w["vo2max_avg"])
                 if target_km != 42.195:
                     race_secs = marathon_secs * (target_km / 42.195) ** 1.06
@@ -1975,40 +2019,39 @@ def _prediction_trend_data(conn):
                     labels.append(last.strftime("%Y-%m-%d"))
                     pred.append(None)
 
-        # Confidence band: method spread (same as header range).
-        # Collect all prediction sources, compute half-spread as margin.
-        from fit.analysis import predict_race_time
-        races = conn.execute("""
-            SELECT distance_km, result_time FROM race_calendar
-            WHERE status = 'completed' AND result_time IS NOT NULL
-            ORDER BY date DESC LIMIT 5
-        """).fetchall()
-        race_data = [
-            {"distance_km": r["distance_km"],
-             "time_seconds": _parse_time(r["result_time"])}
-            for r in races if r["distance_km"] and r["result_time"]
-        ]
-        vo2_row = conn.execute(
-            "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1"
-        ).fetchone()
-        preds = predict_race_time(
-            conn=conn, races=race_data,
-            vo2max=vo2_row["vo2max"] if vo2_row else None,
-        )
-        all_pred_secs = []
-        if preds.get("riegel"):
-            all_pred_secs.extend(p["predicted_seconds"] for p in preds["riegel"])
-        if preds.get("vdot") and preds["vdot"].get("predicted_seconds"):
-            all_pred_secs.append(preds["vdot"]["predicted_seconds"])
-
-        if len(all_pred_secs) >= 2:
-            margin_min = (max(all_pred_secs) - min(all_pred_secs)) / 2 / 60
+        # Confidence band. Model: per-point 90% credible interval (asymmetric). Fallback:
+        # method-spread margin (symmetric) from the per-race extrapolations.
+        if model_trend is not None:
+            upper, lower = [], []
+            for lbl, p in zip(labels, pred):
+                mt = model_trend.get(lbl)
+                if mt and p is not None:
+                    lower.append(round(mt[1], 1))
+                    upper.append(round(mt[2], 1))
+                else:
+                    upper.append(None)
+                    lower.append(None)
         else:
-            # Fallback: use confidence-based margin if only one source
-            margin_min = preds.get("confidence", {}).get("margin_seconds", 480) / 60
-
-        upper = [round(p + margin_min, 1) if p is not None else None for p in pred]
-        lower = [round(p - margin_min, 1) if p is not None else None for p in pred]
+            from fit.analysis import predict_race_time
+            races = conn.execute("""
+                SELECT distance_km, result_time FROM race_calendar
+                WHERE status = 'completed' AND result_time IS NOT NULL
+                ORDER BY date DESC LIMIT 5
+            """).fetchall()
+            race_data = [
+                {"distance_km": r["distance_km"], "time_seconds": _parse_time(r["result_time"])}
+                for r in races if r["distance_km"] and r["result_time"]
+            ]
+            preds = predict_race_time(conn=conn, races=race_data, vo2max=None)
+            all_pred_secs = [p["predicted_seconds"] for p in preds.get("riegel", [])]
+            if preds.get("vdot") and preds["vdot"].get("predicted_seconds"):
+                all_pred_secs.append(preds["vdot"]["predicted_seconds"])
+            if len(all_pred_secs) >= 2:
+                margin_min = (max(all_pred_secs) - min(all_pred_secs)) / 2 / 60
+            else:
+                margin_min = preds.get("confidence", {}).get("margin_seconds", 480) / 60
+            upper = [round(p + margin_min, 1) if p is not None else None for p in pred]
+            lower = [round(p - margin_min, 1) if p is not None else None for p in pred]
 
         # Training phases for the band
         phases_raw = conn.execute("""
