@@ -1,11 +1,32 @@
 # Design — marathon-durability-model
 
 How we harden the validated prototype (`reference/marathon_model.py`) into a `fit`
-module, with the modelling decisions settled and the honesty constraints from
-`LINEAGE_REVIEW.md` (F2/F4/F5/F6) baked in. The proposal is the *what*; this is the
-*how* and *why*. Grounded in the measured data: ~30 qualifying efforts, longest ever
-≈ a half-marathon (none beyond it, none near 30 km), distance and effort-HR
-correlated (long efforts run easier).
+module, with the modelling decisions settled, the `LINEAGE_REVIEW.md` honesty
+constraints (F2/F4/F5/F6) baked in, and a dual-lens (Bayesian + sports-medicine)
+review converged so both sign off. The proposal is the *what*; this is the *how/why*.
+Grounded in the measured data: ~30 qualifying efforts, longest ever ≈ a half-marathon
+(none beyond it), distance and effort-HR correlated (long efforts run easier).
+
+## Guiding principle — parsimony (explain through existing metrics)
+
+Everything the model needs is mapped onto metrics the platform **already computes**;
+new concepts must be justified. The audit:
+
+| Model need | Existing metric reused | New? |
+|---|---|---|
+| effort selection | `run_type`, `effort_class` | — |
+| `x` durability | `distance_km` | — |
+| `d_max`, long-run quantity | `classify_run_type` long-run rule + weekly volume | — |
+| **fitness state `c`** | **ACWR's chronic-load primitive** (trailing mean of daily `training_load`) | — (NO new CTL/ATL) |
+| `h` effort | `avg_hr` + LTHR anchor | — |
+| long-run **quality** | second-half pace + `drift_onset_km` machinery (`periodization.py`/`fit_file.py`) + `effort_class` | one small ratio |
+| goal distance / adaptivity | `get_target_race` | — |
+| extrapolation penalty `γ` | (no analog) | **new — irreducible** |
+
+**Net new: one concept** (`γ`, the honesty overlay) **+ one computed ratio**
+(long-run pace-fade, on existing machinery) **+ one chart** (the durability view that
+*unifies* existing + new). Everything else reuses what exists — and this **dissolves
+the F2 "two load models" problem** (one shared chronic-load primitive, see Decision 6).
 
 ## Context & non-goals
 
@@ -13,249 +34,219 @@ correlated (long efforts run easier).
   effort coefficients, the fitness-tracking trend, derived metrics, day-quality
   residuals, leave-one-out influence. Replaces the Phase-2 trend charts and retires
   `_vdot_to_marathon_seconds` once `trend_series` lands.
-- **Out:** training-pace prescription (stays with the Daniels VDOT anchor —
-  `standardize-calibration-anchors`), coaching notes (`fit-coach` is untouched; this
-  is the analysis layer), and ACWR/injury-risk (stays as-is — see Decision 6).
-- **Contract:** per `CLAUDE.md`, the MCP coaching context and the fit-coach skill must
-  stay in sync if the headline metric or its semantics change. The forecast headline
-  changes meaning here (point → median+interval+ceiling), so both need updating.
+- **Out:** training-pace prescription (Daniels VDOT anchor), coaching notes
+  (`fit-coach` untouched), injury-risk (ACWR stays — Decision 6), fuelling (race-day
+  *execution*, belongs in race-day spread, not the fitness prior — labelled exclusion).
+- **Contract:** per `CLAUDE.md`, the MCP coaching context and fit-coach skill must stay
+  in sync — the forecast headline changes meaning (point → median+interval+ceiling).
 
-## Decision 1 — Drop the δ interaction term
-
-The prototype's `delta·(x·c)` (durability × fitness) is **removed**. The handout's own
-fit has `delta = -0.008 [-0.025, +0.008], P(<0)=0.79` — "leans favourable, not proven."
-At ~30 efforts with collinear covariates (F4), a fourth slope is over-fitting. Final
-mean model:
+## Decision 1 — Model spec (drop δ; goal-adaptive; existing-metric covariates)
 
 ```
-log(t_i) = alpha + beta_d·x_i + phi·c_i + kappa·h_i  +  pen(d_i)   (+ StudentT noise)
-x_i = log(d_i / 42.195)         c_i = (CTL_i − 50)/10        h_i = (avg_hr_i − LTHR)/5
+log(t_i) = alpha + beta_d·x_i + phi·c_i + kappa·h_i  + StudentT(nu, 0, sigma)
+  x_i = log(d_i / D_REF)      D_REF = GOAL distance (get_target_race), not hardcoded 42.195
+  c_i = (L_i − L_ref) / L_scale   L = chronic load (existing ACWR primitive), point-in-time
+  h_i = (avg_hr_i − LTHR) / 5     LTHR from get_calibration_anchor('lthr')
 ```
 
-`LTHR` comes from `get_calibration_anchor('lthr')`, **not** a hardcoded 172.
+- **δ dropped:** the prototype's `delta·(x·c)` is `−0.008 [−0.025,+0.008], P(<0)=0.79`
+  — unproven; a 4th slope over-fits at n≈30 (F4).
+- **Goal-adaptive `D_REF`:** centring `x` at the *goal* makes `alpha` read "goal-distance
+  time"; switch the target to a half and the model re-centres. (Centring is cosmetic —
+  `beta_d/phi/kappa` are centring-invariant — but the prediction target and the penalty,
+  Decision 2, are genuinely goal-driven.)
+- **`c` reuses the existing chronic-load primitive** — a trailing mean of daily
+  `training_load` strictly **before** each effort (the same quantity ACWR uses as its
+  chronic denominator), evaluated point-in-time. **No new CTL/ATL EWMA** (Decision 6).
+  `L_ref`/`L_scale` are cosmetic centring constants (like `D_REF`).
 
-## Decision 2 — Honest extrapolation: a drift-informed penalty on the unobserved region (NOT γ·x²)
+## Decision 2 — Honest extrapolation: a preparedness-shrunk penalty (NOT cardiac drift)
 
-**The problem with the agreed γ·x².** Because `x = 0` at the marathon, a `γ·x²` term
-evaluates to **zero at the marathon** regardless of `γ` — it contributes neither fade
-nor uncertainty at the exact point we extrapolate to. It would only bend the curve at
-*short* distances (where we already have data). So γ·x² does not buy honest marathon
-widening. This is the one place the prior brainstorm was technically wrong; here is the
-fix.
-
-**The construction.** A one-sided penalty active only **beyond the longest observed
-effort** `d_max` (≈ the half):
+The forecast must not pretend to know the back half it has never run. A one-sided
+penalty, applied **per predicted distance** so it self-adapts to the goal:
 
 ```
-pen(d) = gamma · max(0, log(d) − log(d_max))        gamma ~ HalfNormal(s_drift)
+pen(d) = gamma · max(0, log(d / d_max))           # 0 when d ≤ d_max (interpolation)
+gamma ~ HalfStudentT(nu = 4, s_drift)
+s_drift = s_default · shrink            shrink ∈ [floor, 1]   (asymmetric: data only reduces)
+  shrink ↓ with  (a) extrapolation gap log(goal/d_max) → 0   (endpoint-anchored, no magnitude knob)
+                 (b) long-run QUANTITY (distance covered, existing long-run rule)
+                 (c) long-run QUALITY  (pace-fade at effort_class ≥ Moderate — see below)
 ```
 
-Because every observed effort has `d_i ≤ d_max`, `pen(d_i) = 0` for all data — the
-likelihood never sees `gamma`. We have no information beyond the half, so the widening
-at the marathon is an honest statement of ignorance, not a fitted quantity. At the
-marathon `pen = gamma · log(42.195/d_max) ≈ gamma · 0.69`, and it collapses
-automatically if/when a 30 km+ effort raises `d_max` (roadmap: half-plus validation).
+**Goal-adaptive by construction.** `pen` keys off `d` vs `d_max`, not 42.195: a marathon
+goal with HM data → big penalty; a half goal you've raced → `pen ≈ 0`; a 10k goal →
+interpolation, none. The race-equivalency table gets the right penalty per row.
 
-**Implementation (skill-validated — `pymc-modeling`): keep `gamma` OUT of the PyMC
-graph.** Since the likelihood never touches it, putting `gamma` in the model just adds a
-prior-only dimension that pollutes `az.summary`/ESS/r̂ and means nothing inferentially;
-`pm.Potential` is also wrong (it modifies logp but produces no predictive draws). So the
-**fit model carries no penalty term** (`mu = alpha + beta_d·x + phi·c + kappa·h`), and the
-penalty is applied as a **predict-time overlay**: draw `gamma ~ HalfNormal(s_drift)` in
-NumPy, once per posterior draw, and add `gamma·max(0, log(d/d_max))` to the predicted
-log-time. This is mathematically identical to a prior-only RV (independent of the fitted
-params either way), keeps inference to 6 parameters, and makes the extrapolation an
-explicit, documented overlay rather than a hidden model term. **Consequence for tests:**
-PyMC prior/posterior predictive checks deliberately exclude the penalty; the "marathon
-interval wider than in-sample" assertion runs against the penalized `predict()` output,
-not a PyMC ppc.
+**Why `HalfStudentT(ν=4, s_drift)`.** (a) **One-sided (≥0):** extrapolating past your
+longest distance can only add fade, never remove it. (b) **Mode at 0:** we *allow* a
+wall, don't *assume* one. (c) **Heavy tail (ν=4):** the wall is right-skewed and
+occasionally catastrophic (+20–40 min); a Gaussian (HalfNormal) tail underweights the
+blow-up. **ν=4 is a labelled convention, not a derivation** — the smallest integer ν with
+finite kurtosis ("heavy but not pathological"), and the `pymc-modeling` skill's
+recommended robust default (ν∈[3,7]). The headline is far more sensitive to `s_drift`
+than to ν, so ν is deliberately *not* gold-plated. (Strict-parsimony alternative:
+HalfNormal — the 90% edge barely moves; we choose the heavier tail for honesty about
+blow-ups.)
 
-**Why HalfNormal(s_drift).** (a) **One-sided (≥0):** running *past* the longest observed
-distance can only add fade relative to the power law, never remove it — a negative
-penalty is physiologically nonsensical. (b) **Mode at 0:** we don't *assume* a wall, we
-*allow* one — the most likely case is the power law roughly holds. (c) **Scale =
-s_drift:** sets how heavy the "wall" tail is; tying it to the athlete's drift personalizes
-it (steep decoupler → fatter tail → wider/slower marathon; form-holder → thinner tail).
-In one line: γ is a prior over *how much the unobserved back half costs you*.
+**`shrink` is asymmetric + floored + endpoint-anchored.** It starts at `s_default` (a
+population marathon-fade scale, labelled "generic — no goal-distance data") and only
+**shrinks** as you demonstrate preparedness; it never inflates on thin/noisy data (that
+was the fatal flaw of the drift idea). The floor keeps it > 0 until an actual
+goal-distance effort exists — no full confidence on pure extrapolation.
 
-**The transform (DECISION: Option B — drift-linked), and its assumptions.** Cardiac drift
-and the marathon penalty are **not the same quantity** — drift is a *within-run* HR:pace
-decoupling (%, dimensionless); the penalty is a *cross-distance* fractional time cost.
-Mapping one to the other is the load-bearing assumption and must be stated as such:
-1. From recent long runs, take the end-of-run HR:pace drift magnitude `δ` (and/or its
-   rate past the measured onset) — the athlete's within-run decoupling.
-2. Project over the *unobserved* span (`d_max`→42.195 km, ≈ a doubling) to a fractional
-   time penalty `p_drift ≈ k·δ`, with `k ∈ [0.5, 1.5]` spanning linear→accelerating fade.
-3. Choose `s_drift` so the marathon penalty `exp(γ·0.69)−1` has **median ≈ p_drift** and
-   its 90% upper covers the accelerating case.
+**Why preparedness, not cardiac drift.** The dual-lens review (recorded in chat) found
+cardiac drift is the *wrong* signal for the wall: the most direct evidence finds HR:pace
+decoupling **not associated** with marathon durability, and late-race fade is
+*speed*-driven, not HR-driven; drift is also confounded by heat/hydration and measured at
+easy-run intensity. The evidenced signals are **longest-run distance** (longest run
+<25 km → slower finish) and **fast-finish long runs** (predict the marathon 8–12 wk out)
+— so `shrink` uses long-run quantity + a **pace-fade** quality signal, not drift.
 
-**Three assumptions this bakes in** (all unverifiable until a 30 km+ effort exists):
-within-run decoupling ≈ cross-distance fade; the rate continues/accelerates past the
-observed distances; HR-holding maps to time given back (pacing-dependent). Because the
-mapping can silently corrupt the headline, it is **mandatorily paired with the monitoring
-layer (Decision 9)** — B is never shipped blind. When drift data is thin/noisy, fall back
-to the conservative fixed `s_drift` (the Option-A default) and **log "penalty defaulted,
-not athlete-derived"** (no silent caps).
+**Implementation (skill-validated): `gamma` stays OUT of the PyMC graph.** Because every
+observed effort has `d_i ≤ d_max`, `pen(d_i)=0`, so the likelihood never sees `gamma` —
+putting it in the model would only pollute ESS/r̂, and `pm.Potential` yields no predictive
+draws. So the **fit carries no penalty term** (`mu = alpha + beta_d·x + phi·c + kappa·h`);
+the penalty is a **predict-time NumPy overlay** (draw `gamma` per posterior draw, add to
+the predicted log-time). Identical math, 6 clean parameters, explicit overlay. *Tests:*
+PyMC ppc excludes the penalty; "interval wider than in-sample" runs against `predict()`.
 
 ## Decision 3 — P(goal) is a fitness-sufficiency *ceiling*, not race-day odds
 
-The interval is **estimation uncertainty** (how well we know the curve) plus the
-Decision-2 extrapolation penalty — it is **not** race-day spread (weather, pacing,
-fuelling, the wall beyond what drift implies). So `P(sub-goal)` is labelled and
-documented as: *"probability your current fitness is sufficient for the goal under a
-maximal, well-executed effort"* — a ceiling on race-day odds, not the odds themselves.
-The dashboard never renders the median alone, and never renders P as "your chance on
+The interval is **estimation uncertainty** + the Decision-2 extrapolation penalty — **not**
+race-day spread (weather, pacing, fuelling). So `P(sub-goal)` is labelled *"probability
+your current fitness is sufficient under a maximal, well-executed effort"* — a ceiling on
+race-day odds. The median is never shown alone, and P is never rendered as "your chance on
 the day." (F5)
 
-## Decision 4 — Durability leads with the *measured* signal, β_d is the optimistic bound
+## Decision 4 — Durability leads with the *measured* signal; β_d is the optimistic bound
 
-Two durability readouts that can disagree (F5): the **measured** resilience drift-onset
-(physiological, in-sample, ~mid-distance for this athlete) and `beta_d` (a performance
-exponent, prior-dominated, extrapolated). The dashboard **leads with the measured
-drift-onset** and presents `beta_d` as the *optimistic cross-distance bound* — "this is
-what holds **if** the power law extends; your measured long-run form decays earlier."
-When they conflict, the measured one wins the headline.
+Durability readouts can disagree (F5). The dashboard **leads with the measured signals** —
+long-run **pace-fade** (speed give-back, the evidenced wall signal) and the existing
+`resilience` drift-onset — and presents `beta_d` as the *optimistic cross-distance bound*
+("what holds **if** the power law extends; your measured long-run form decays earlier").
+When they conflict, the measured signal wins the headline.
 
 ## Decision 5 — Report prior-vs-data movement (anti-false-precision)
 
-For `beta_d` (and the others), surface **how far the posterior moved from the prior**
-— e.g. prior 1.06±0.05 vs posterior median/interval, and a flag when the posterior is
-within ~1 prior-SD of the prior mean ("prior-dominated: not yet measured from your
-data"). A prior-sensitivity check (re-fit with a wider `beta_d` prior) is part of the
-test/QA, not the dashboard. This directly answers F4: do not present a prior as a
-measured personal trait. `beta_d`'s readout carries this caveat until varied, longer
-efforts identify it.
+For `beta_d` (and the rest), surface **how far the posterior moved from the prior** and
+flag "prior-dominated: not yet measured from your data" when it's within ~1 prior-SD of
+the prior mean. A prior-sensitivity re-fit (wider `beta_d` prior) is QA, not dashboard.
+Answers F4: never present a prior as a measured personal trait.
 
-## Decision 6 — ACWR and CTL/ATL coexist; they answer different questions (F2)
+## Decision 6 — One shared load concept (F2 dissolved — no new CTL/ATL)
 
-They are **not** merged. ACWR (rolling-7d acute ÷ chronic) stays the **injury-risk**
-ratio. CTL/ATL/TSB (42d/7d EWMAs) are the **fitness/fatigue/freshness** state the model
-regresses on. The design documents the split in one place and the dashboard labels them
-distinctly. Both sit on Garmin `training_load`, which is **opaque** (we don't compute
-it) — marked as such in `DATA_LINEAGE.md` and the def-box, so the garbage-in risk is
-visible. Cross-training is included in daily load for CTL/ATL (matches the prototype and
-TrainingPeaks); the running-only metrics keep their own denominator — noted, not
-reconciled away.
+The model's fitness state `c` reuses **ACWR's chronic-load primitive** (trailing mean of
+daily `training_load`), evaluated point-in-time per effort. So the forecast and ACWR sit
+on **one** load concept — there is no second fitness model to disagree with. ACWR remains
+the **injury-risk ratio** (acute ÷ chronic); the forecast uses the **chronic level** as
+fitness state. (The prototype's 42-day EWMA is dropped: its only edge over the existing
+trailing-mean is smoothness, which doesn't justify a parallel concept. Freshness/TSB and
+ATL stay on the roadmap.) `training_load` is Garmin-**opaque** — marked as such in
+`DATA_LINEAGE.md` and the def-box.
 
 ## Decision 7 — Graceful degradation; the dashboard never hard-depends on PyMC
 
-PyMC/arviz are **not installed** and are heavy. They go behind an extra
-(`pip install -e '.[forecast]'`). Imports are lazy (inside the fit/predict functions).
-When pymc **or** a cached posterior is absent or stale, the dashboard falls back to the
-**Phase-1 anchor headline** (`anchor_race_time` → calibrated VDOT, or the Riegel race
-fallback) with a **loud** note: *"durability model not fit — showing calibrated-VDOT
-estimate, no interval."* It **never** falls back to the retired `_vdot_to_marathon_seconds`
-table. (F6 — the fallback must change the label, not silently swap sources.)
+PyMC/arviz are heavy and behind the `forecast` extra; imports are lazy. When pymc **or** a
+cached posterior is absent/stale, the dashboard falls back to the **Phase-1 anchor
+headline** with a **loud** note (*"durability model not fit — calibrated-VDOT estimate, no
+interval"*). It **never** falls back to the retired `_vdot_to_marathon_seconds` table.
+(F6 — the fallback changes the label, not silently the source.)
 
-## Decision 8 — Inference & diagnostics (skill-validated — `pymc-modeling` / `pymc-testing`)
+## Decision 8 — Inference & diagnostics (skill-validated)
 
-- **Sampler: `nuts_sampler="nutpie"`** (2–5× faster) with fallback to default NUTS /
-  numpyro if unavailable. Add `nutpie` to the `forecast` extra. Never change the model
-  to suit the sampler.
-- **Mandated workflow before any number is trusted** (not optional): (1) **prior
-  predictive** — confirm priors generate plausible marathon times (≈2.5–6 h), not
-  absurdities; (2) **save the posterior immediately** after sampling (before
-  post-processing); (3) **divergences == 0**, `r_hat < 1.01`, `ess_bulk/tail > 400`;
-  (4) **posterior predictive + LOO-PIT** calibration. Tight slope priors (σ≈0.05) are
-  deliberately *informative* (a >5%/5bpm effect is implausible) — at n≈30 the prior
-  influence is real, so the **prior-sensitivity re-fit** (Decision 5) is required, not
-  nice-to-have.
-- **Leave-one-out influence via `az.loo(pointwise=True)` Pareto-k**, not N manual
-  refits — flag efforts with k > 0.7 as influential (cheaper, and the standard signal).
-  nutpie doesn't store log-likelihood, so call `pm.compute_log_likelihood` first.
-- **Tests use `pymc.testing.mock_sample`** (`pymc-testing` skill) for fast
-  structure/shape/predict-wiring tests with no real sampling; a single seeded
-  real-sample smoke test asserts `r_hat ≈ 1`.
+- **Sampler `nuts_sampler="nutpie"`** (fallback default NUTS / numpyro). Never change the
+  model to suit the sampler.
+- **Mandated workflow before trusting any number:** (1) prior predictive — plausible
+  times (≈2.5–6 h); (2) save posterior immediately; (3) divergences==0, `r_hat<1.01`,
+  `ess>400`; (4) posterior predictive + LOO-PIT. Tight slope priors (σ≈0.05) are
+  *informative* → the prior-sensitivity re-fit (Decision 5) is required.
+- **Leave-one-out influence via `az.loo(pointwise=True)` Pareto-k** (flag k>0.7), not N
+  refits; `pm.compute_log_likelihood` first (nutpie doesn't store it).
+- **`pymc.testing.mock_sample`** for fast structure tests; one seeded real-sample smoke
+  test asserts `r_hat≈1`.
 
-## Decision 9 — Extrapolation watch layer (REQUIRED with Option B)
+## Decision 9 — Unified durability + extrapolation watch view (REQUIRED)
 
-Because the drift→penalty mapping (Decision 2) can silently corrupt the headline, the
-drift-linked penalty **ships with a monitoring view, not blind**. A "forecast provenance"
-panel and a tracked series:
+The preparedness-shrunk penalty **ships with monitoring, not blind** — and the same view
+**unifies existing + new durability metrics** (the only new chart, justified by the
+parsimony rule because it ties the new ratio back to what you already track):
 
-- **Decomposed headline** — the pure power-law base **+** the drift-penalty band, so the
-  contribution of the mapping is always visible (never folded invisibly into one number).
-- **Baselines on the same axes:** (a) the **Option-A generic-default** penalty as a
-  reference line (drift-derived vs "typical wall"); (b) the **zero-penalty** power-law line
-  (optimistic floor). Divergence of B from the A-baseline is a visible flag.
-- **Tracked over time:** the implied marathon-penalty % (and `s_drift`) with the A-default
-  as a horizontal baseline → watch for instability as long-run data accrues; and the
-  **drift inputs themselves** (resilience onset / drift %) so a noisy feed is visible.
-- **Validation point:** when a **30 km+ effort** lands, overlay the *actual* result on the
-  predicted band. Until then the marathon row is labelled "unvalidated extrapolation."
-- **Guardrail / fallback:** if drift data is too thin/noisy, or B diverges from the
-  A-baseline beyond a set threshold, fall back to the **A default and say so**.
+- **Decomposed headline:** power-law base **+** the penalty band, so the penalty's
+  contribution is always visible; with the `s_default` (generic) and zero-penalty lines as
+  baselines — divergence from the generic line is a visible flag.
+- **One durability story:** the existing `resilience` drift-onset (HR:pace, cardiac) **next
+  to** the new long-run **pace-fade** (speed, glycogen/neuromuscular) and the long-run
+  **distance progression** toward the goal — three readouts, one panel, with the
+  difference between drift and pace-fade stated.
+- **Tracked over time:** implied penalty % / `s_drift` vs the `s_default` baseline; and the
+  preparedness inputs (longest run, pace-fade) so a thin/noisy feed is visible.
+- **Validation:** when a goal-distance-class effort (e.g. 30 km+) lands, overlay actual vs
+  predicted band; until then label "unvalidated extrapolation."
+- **Guardrail:** thin/noisy preparedness data, or penalty far from the `s_default`
+  baseline, falls back to `s_default` and says so.
 
-So Option A is **not discarded** — it is computed alongside B as the **sanity baseline and
-the fallback**. B is the headline; A is the watch-line and the guardrail.
+## Data & features (reuses existing metrics)
 
-## Data & features (from the prototype, unchanged where it was right)
-
-- **Efforts:** races + tempo/progression at Hard/Very-Hard; intervals excluded
-  (their `distance_km` includes recoveries). `run_type` is **not** used for maximality
-  — the `h` (HR) covariate carries it, so a submaximal race and a hard tempo sit on the
-  same frontier.
+- **Efforts:** races + tempo/progression Hard/Very-Hard; intervals excluded. `run_type`
+  not used for maximality — `h` carries it.
 - **Daily load:** `SUM(training_load) GROUP BY date` (cross-training included).
-- **CTL/ATL:** closed-form EWMAs (τ=42 / τ=7) computed in NumPy from loads **strictly
-  before** each effort day (incoming fitness, not inflated by the effort's own load).
-  Matches TrainingPeaks recursion to ~1%; no SQLite math functions needed.
-- Efforts with no prior history (undefined CTL) are dropped — logged, not silent.
+- **Fitness `c`:** trailing-mean chronic load **strictly before** each effort (ACWR's
+  chronic primitive, point-in-time). No EWMA.
+- **`d_max` + long-run quantity:** from `distance_km` + the existing long-run rule.
+- **Long-run pace-fade (new ratio):** second-half vs first-half pace give-back, built on
+  the existing `avg_pace_second_half` / drift machinery, gated by `effort_class ≥ Moderate`
+  (easy long runs count for quantity, not quality). Distinct from `resilience` (HR drift).
+- Efforts with no prior history (undefined chronic load) are dropped — logged.
 
 ## Module shape
 
+`fit/marathon/` (NOT `fit/analysis/marathon/` — `fit/analysis.py` is already a module):
+
 ```
-fit/analysis/marathon/
-  features.py   extract_efforts(conn) -> DataFrame   # SQL + CTL/ATL + x/c/h + d_max
-  model.py      fit(efforts) -> InferenceData        # priors (Decisions 1,2,5), NUTS, cache
-  predict.py    predict(post, ctl, avg_hr, distance) -> {median, lo, hi, p_ceiling}
-                trend_series(post, daily_load) -> DataFrame   # Panel B (replaces table charts)
-                derived_metrics(post, daily_load) -> dict     # phi-value, layoff curve, β_d, κ, equiv table, required-CTL
-                residuals(post, efforts) -> DataFrame         # day-quality (cleaner correlation input)
-                influence(post, efforts) -> DataFrame         # leave-one-out headline delta
+fit/marathon/
+  features.py   extract_efforts(conn) -> DataFrame    # efforts + chronic-load c + x/h + d_max  [DONE]
+  preparedness.py  s_drift(conn, goal) -> {s_drift, s_default, shrink, inputs}   # gap + quality
+  model.py      fit(efforts) -> InferenceData         # priors (D1,5), nutpie, cache
+  predict.py    predict(post, c, avg_hr, distance, goal) -> {median, lo, hi, p_ceiling}
+                trend_series / derived_metrics / residuals / influence
 ```
 
-Posterior cached to `~/.fit/marathon_posterior.nc` (ArviZ NetCDF). Refit on `fit sync`
-(cheap; gate behind a flag if latency matters) or on-demand `fit forecast`; report-time
-reads the cache. Derived values embedded at report build like other section data.
+Posterior cached to `~/.fit/marathon_posterior.nc`; refit on `fit sync` (flagged) or
+`fit forecast`; report reads the cache.
 
 ## Honesty constraints → where each lives
 
 | Finding | Constraint | Realized by |
 |---|---|---|
-| F2 | ACWR ≠ CTL; mark load opaque | Decision 6 + lineage/def-box |
-| F4 | β_d may be prior-dominated | Decision 5 (prior-vs-data flag) |
-| F5 | marathon is 2× extrapolation; durability readouts disagree | Decisions 2, 3, 4, 9 |
-| F6 | stale model must not revert silently to the bad path | Decision 7 (loud, anchor not table) |
-| handover §8 | interval ≠ race-day spread; HR is an input; LOO | Decision 3 + influence() + def-box |
+| F2 | one load concept, not two; load opaque | Decision 6 (shared chronic primitive) |
+| F4 | β_d may be prior-dominated | Decision 5 |
+| F5 | extrapolation; durability readouts disagree | Decisions 2, 3, 4, 9 |
+| F6 | stale model must not revert to the bad path | Decision 7 |
+| handover §8 | interval ≠ race-day spread; HR an input; LOO | Decisions 3, 8 + def-box |
 
 ## Testing
 
-- **Features (no PyMC):** CTL/ATL closed-form vs recursion (~1%), strict-before-day,
-  effort-selection SQL, `d_max` computation, drop-no-history. 2:1 unhappy:happy.
-- **Structure (mock, no sampling — `pymc-testing`):** `pymc.testing.mock_sample` to
-  assert the model builds, shapes are right, and `predict()`/`trend_series` wire up —
-  fast, CI-friendly.
-- **Penalty (Decision 2 — predict-time overlay, γ not in the graph):** the fit `mu` has
-  no penalty term; `predict()` *with* the overlay yields a marathon interval strictly
-  wider than *without* it; the penalty is 0 at `d ≤ d_max`; `s_drift` is
-  defaulted-and-logged when drift data is thin.
-- **Predict/degrade:** percentile shape; P-ceiling monotone in CTL; **graceful
-  degradation** when pymc/posterior absent → anchor headline + loud note, never the
-  table (assert no import of `_vdot_to_marathon_seconds`).
-- **Real sampling:** one seeded smoke test runs the mandated workflow (prior predictive
-  plausible, divergences==0, `r_hat≈1`, ESS>400); not run in the fast suite.
+- **Features (no PyMC):** chronic-load strictly-before, effort SQL, `d_max`,
+  drop-no-history. Done in `tests/test_marathon_features.py`.
+- **Preparedness:** `shrink` monotone in gap + quality; asymmetric (never > 1); floored;
+  `s_default` fallback when data thin; pace-fade gated by `effort_class`.
+- **Structure (mock):** `pymc.testing.mock_sample` — builds, shapes, predict wiring.
+- **Penalty:** `predict()` with overlay wider than without; `pen=0` at `d ≤ d_max`;
+  goal-adaptive (half goal within data → no penalty).
+- **Degrade:** no pymc/posterior → anchor headline + loud note, never the table.
+- **Real sampling:** one seeded smoke test (prior-pred plausible, divergences==0, r̂≈1).
 
-## Open questions (carry to review before building)
+## Open questions
 
-1. **Decision 2 mapping — RESOLVED: Option B (drift-linked) in v1**, with the Option-A
-   default retained as B's sanity baseline + fallback, and the Decision-9 watch layer
-   mandatory. The drift→fade transform is an explicit, conservative heuristic with three
-   stated assumptions; it is never shipped blind. (Open sub-question: the exact `k` range
-   and the divergence threshold that trips the A-fallback — tune against data.)
-2. **Refit cadence** — every `fit sync` vs nightly vs on-demand `fit forecast`?
-3. **Staleness policy** — refit when N new efforts or > X days old?
-4. **Maximal-marathon HR** — fixed (~167) input, or derived from observed max-effort
-   HR-vs-duration? (±2 bpm ≈ ±3 min.)
-5. **Freshness term** `psi·TSB` (roadmap §10.1) — fold into v1 or defer? (Cheapest
-   accuracy win; data already extracted.)
+1. **Extrapolation — RESOLVED:** preparedness-shrunk `HalfStudentT(ν=4)` penalty (not
+   cardiac drift); `s_default` is the floor/fallback; watch layer mandatory. Sub-question:
+   the `shrink` curve's exact rate is an informed assumption (no study quantifies
+   30 km-fast-finish → 42 km-fade) — monitored + validated by a goal-distance effort.
+2. **LTHR source** — ingest the watch's lactate threshold (not currently synced) vs
+   confirm a value manually. (Open input; the model uses the anchor either way.)
+3. **Refit cadence** / **staleness policy** — every `fit sync` vs nightly vs on-demand.
+4. **Maximal-goal-effort HR** — fixed input vs derived from observed max-effort HR-vs-
+   duration (±2 bpm ≈ ±3 min). Re-derive relative to the *actual* LTHR anchor, not 172.
+5. **Freshness term** `psi·TSB` — defer (roadmap).
 ```

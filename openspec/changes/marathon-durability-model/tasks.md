@@ -1,57 +1,61 @@
 # Tasks — marathon-durability-model
 
 ## 1. Dependencies & scaffold
-- [ ] Add `forecast` extra (`pymc>=5`, `arviz`, `nutpie`, `scipy`) to `pyproject.toml`; keep core install light
-- [ ] Create `fit/analysis/marathon/` package with lazy PyMC imports (never imported at module top level)
+- [x] `forecast` extra (`pymc>=5`, `arviz`, `nutpie`, `scipy`) in `pyproject.toml`; installed (pymc 6.0.1 / arviz 1.1.0)
+- [x] Create `fit/marathon/` package (NOT `fit/analysis/marathon/` — `fit/analysis.py` is a module), lazy PyMC imports
 
 ## 2. Features (no PyMC — pure pandas/numpy)
-- [ ] `extract_efforts(conn)`: effort-selection SQL (races + Hard/Very-Hard tempo/progression; intervals excluded)
-- [ ] CTL/ATL closed-form EWMAs (τ=42/7), loads strictly before each effort day; drop no-history efforts (logged)
-- [ ] Build `x`, `c`, `h` (h uses `get_calibration_anchor('lthr')`, not hardcoded 172); compute `d_max`
-- [ ] Tests: EWMA vs recursion (~1%), strict-before-day, SQL selection, d_max, drop-no-history (2:1 unhappy:happy)
+- [x] `extract_efforts(conn)`: effort SQL (races + Hard/Very-Hard tempo/progression; intervals excluded), `x/h`, `d_max`, drop-no-history; `tests/test_marathon_features.py` (8 tests)
+- [ ] **REVISE `c`: use the existing chronic-load primitive** (trailing mean of daily `training_load`, ACWR's chronic denominator, point-in-time) — **drop the EWMA CTL/ATL** the first cut imported from the prototype (Decision 6: one shared load concept)
+- [ ] **Goal-adaptive `D_REF`**: `x = log(d/goal)` with `goal = get_target_race(conn)` (not hardcoded 42.195); re-run feature tests
+- [ ] **Long-run pace-fade ratio** (new, on existing second-half-pace machinery), gated by `effort_class ≥ Moderate`; long-run quantity from the existing long-run rule
 
-## 3. Model (Decisions 1, 2, 5, 8)
+## 3. Preparedness penalty (Decision 2)
+- [ ] `fit/marathon/preparedness.py`: `s_drift(conn, goal)` = `s_default · shrink`, `shrink ∈ [floor,1]`, decreasing with extrapolation gap `log(goal/d_max)` + long-run quantity + pace-fade quality; **asymmetric (only reduces), floored, endpoint-anchored** (no free magnitude knob)
+- [ ] `s_default` = labelled population fade scale (B's floor + fallback); fall back + log when preparedness data thin/noisy
+- [ ] Tests: `shrink` monotone in gap + quality, never > 1, floored, `s_default` fallback, pace-fade gated by effort_class, goal-adaptive (half goal within data → ~no shrink headroom)
+
+## 4. Model (Decisions 1, 5, 8)
 - [ ] `fit(efforts)`: drop δ; priors per design; `mu = alpha + beta_d·x + phi·c + kappa·h` (**no penalty term in the graph**)
-- [ ] Sample with `nuts_sampler="nutpie"` (fallback default NUTS/numpyro); **save posterior to `~/.fit/marathon_posterior.nc` immediately** after sampling
-- [ ] Mandated workflow: prior-predictive plausibility → divergences==0 / r_hat<1.01 / ESS>400 → posterior-predictive + LOO-PIT; seeded real-sample smoke test
-- [ ] Extrapolation penalty as a **predict-time NumPy overlay** (γ NOT in the graph): `gamma ~ HalfNormal(s_drift)`, add `gamma·max(0, log(d/d_max))` to predicted log-time
-- [ ] **Drift→s_drift transform (Option B)**: end-of-run HR:pace drift `δ` → `p_drift ≈ k·δ` (k∈[0.5,1.5]) → set `s_drift` so penalty median ≈ p_drift; docstring states the 3 assumptions
-- [ ] Compute the **Option-A fixed default `s_drift`** too (B's baseline + fallback); fall back + log when drift thin/noisy or B diverges from A beyond threshold
+- [ ] Sample with `nuts_sampler="nutpie"` (fallback default NUTS/numpyro); **save posterior to `~/.fit/marathon_posterior.nc` immediately**
+- [ ] Mandated workflow: prior-predictive plausibility → divergences==0 / r_hat<1.01 / ESS>400 → posterior-predictive + LOO-PIT; seeded smoke test
 - [ ] Prior-vs-data movement summary for β_d et al. (Decision 5); prior-sensitivity re-fit in QA
-- [ ] Tests (`pymc.testing.mock_sample` for structure): predict() with overlay strictly wider than without; penalty 0 at d≤d_max
+- [ ] Verify pymc6 / arviz1 API (Context7) before writing — `pm.sample`/`az.summary`/`az.loo` changed since the v5 prototype
+- [ ] Structure tests via `pymc.testing.mock_sample`
 
-## 4. Predict & derived
-- [ ] `predict(post, ctl, avg_hr, distance) -> {median, lo, hi, p_ceiling}` (P labelled fitness-sufficiency ceiling)
-- [ ] `trend_series(post, daily_load)` (Panel B line+band) — replaces the table-based trend charts
-- [ ] `derived_metrics`: phi-value, layoff/detraining curve, β_d (with prior-vs-data caveat), κ, live race-equivalency, required-CTL-for-goal
-- [ ] `residuals(post, efforts)` (day-quality, for the correlation engine)
-- [ ] `influence(post, efforts)` via `az.loo(pointwise=True)` Pareto-k (flag k>0.7), not N manual refits; `pm.compute_log_likelihood` first (nutpie)
-- [ ] Tests: percentile shape, P-ceiling monotone in CTL, Pareto-k influence flagging
+## 5. Predict & derived
+- [ ] `predict(post, c, avg_hr, distance, goal) -> {median, lo, hi, p_ceiling}`; **extrapolation penalty = predict-time `HalfStudentT(ν=4, s_drift)` overlay** (ν=4 a labelled heavy-tail convention), `pen = γ·max(0, log(d/d_max))`
+- [ ] `trend_series(post, daily_load)` — replaces the table-based trend charts
+- [ ] `derived_metrics`: phi-value, layoff curve, β_d (prior-vs-data caveat), κ, live race-equivalency (per-distance penalty), required-fitness-for-goal
+- [ ] `residuals` (day-quality) and `influence` via `az.loo(pointwise=True)` Pareto-k (flag k>0.7); `pm.compute_log_likelihood` first
+- [ ] Tests: percentile shape, P-ceiling monotone in `c`, predict() with overlay wider than without, `pen=0` at `d≤d_max`, goal-adaptive
 
-## 4b. Extrapolation watch layer (Decision 9 — REQUIRED with Option B)
-- [ ] Decomposed-headline panel: power-law base + drift-penalty band, with Option-A default and zero-penalty as baseline reference lines
-- [ ] Tracked series: implied marathon-penalty % and `s_drift` over time vs the A-default baseline; plus drift inputs (resilience onset / drift %) over time
-- [ ] Validation overlay: when a 30 km+ effort exists, plot actual vs predicted band; until then label "unvalidated extrapolation"
-- [ ] Guardrail: divergence-from-A threshold + thin/noisy-drift check trips the A-fallback (visible label)
-- [ ] Tests: B-vs-A divergence flag fires; fallback path; "unvalidated" label until a 30 km+ effort
+## 6. Unified durability + extrapolation watch view (Decision 9 — REQUIRED, the one new chart)
+- [ ] Decomposed headline: power-law base + penalty band, with `s_default` (generic) and zero-penalty baselines
+- [ ] One durability panel uniting existing `resilience` drift-onset (HR:pace) + new pace-fade (speed) + long-run distance progression; state the drift-vs-pace-fade difference
+- [ ] Tracked series: penalty % / `s_drift` vs `s_default` baseline; preparedness inputs (longest run, pace-fade)
+- [ ] Validation overlay: actual vs band once a goal-distance-class (≥~30 km) effort exists; else "unvalidated extrapolation"
+- [ ] Guardrail tests: thin/noisy or far-from-`s_default` → fallback + label
 
-## 5. Integration
-- [ ] `fit/sync.py`: refit + cache step (gated/flagged) — Decisions 2,7
-- [ ] Report: re-source Marathon Prediction section/chart from the model (median + interval + P-ceiling + trend + LOO flag)
-- [ ] **Durability leads with measured drift-onset**, β_d as optimistic bound (Decision 4); def-box states assumptions
+## 7. Integration
+- [ ] `fit/sync.py`: refit + cache step (gated/flagged)
+- [ ] Report: re-source Marathon Prediction section/chart (median + interval + P-ceiling + trend + LOO flag); durability leads with measured signal, β_d optimistic bound (Decision 4)
 - [ ] `fit/cli.py`: `fit forecast` command + refit trigger
-- [ ] **Graceful degradation** (Decision 7): no pymc / no/stale posterior → anchor headline + loud note; assert never the retired table
-- [ ] Tests: degradation path, no `_vdot_to_marathon_seconds` import on the dashboard path
+- [ ] **Graceful degradation** (Decision 7): no pymc / stale posterior → anchor headline + loud note; assert never the retired table
 
-## 6. Retire Phase 2 of D1
+## 8. LTHR source (open input — feeds `h` + maximal-effort HR)
+- [ ] Decide: ingest Garmin watch lactate threshold vs confirm manually (`fit calibrate lthr`)
+- [ ] If ingest: check `fit/garmin.py` / the Garmin client exposes lactate-threshold HR/pace; add fetch + store as a calibration row; let the anchor consume it
+
+## 9. Retire Phase 2 of D1
 - [ ] Replace the three trend consumers (`_prediction_trend_data`, trend badge, charts "VDOT (from VO2max)") with `trend_series`
-- [ ] Delete `_vdot_to_marathon_seconds` + `_VDOT_TABLE` and the `TODO(marathon-durability-model)` flag; remove now-dead direct-table tests
+- [ ] Delete `_vdot_to_marathon_seconds` + `_VDOT_TABLE` + the `TODO(marathon-durability-model)` flag; remove dead direct-table tests
 
-## 7. Contract & docs
-- [ ] Sync MCP coaching context + `fit-coach` SKILL.md to the new headline semantics (median+interval+ceiling) — `CLAUDE.md` contract
-- [ ] Update `DATA_LINEAGE.md` (model lineage; mark `training_load` opaque) and `LINEAGE_REVIEW.md` status (F2/F4/F5/F6 closed)
+## 10. Contract & docs
+- [ ] Sync MCP coaching context + `fit-coach` SKILL.md to the new headline semantics (`CLAUDE.md` contract)
+- [ ] Update `DATA_LINEAGE.md` (model lineage; `training_load` opaque) + `LINEAGE_REVIEW.md` status (F2/F4/F5/F6 closed)
 - [ ] Def-box: extrapolation penalty, maximal-HR input, interval ≠ race-day spread, P = fitness-sufficiency ceiling
 
-## 8. Validate
+## 11. Validate
 - [ ] `openspec validate marathon-durability-model --strict`
-- [ ] Full suite green; `fit report` builds with and without the `forecast` extra installed
+- [ ] Full suite green; `fit report` builds with and without the `forecast` extra
