@@ -1327,53 +1327,60 @@ def _race_countdown(conn):
                 def _fmt_time(s):
                     return f"{s // 3600}:{(s % 3600) // 60:02d}"
 
-                # Center line = current race forecast from the calibrated VDOT
-                # anchor (single source; NOT Garmin VO2max via the retired table).
-                from fit.fitness import anchor_race_time
+                # Single source of truth for the headline. Prefer the durability-model
+                # MEDIAN (so the hero stat matches the model block below — no two
+                # conflicting numbers). Else the calibrated-VDOT anchor + method-spread
+                # margin (conservative). Never the retired table.
                 target_km = race.get("distance_km") or 42.195
-                center_secs = anchor_race_time(conn, target_km)
-                vo2 = conn.execute(
-                    "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1"
-                ).fetchone()
+                target_secs = _parse_time(result["target_time"]) if result.get("target_time") else None
 
-                # Method spread margin (half-width of all prediction sources)
-                races_db = conn.execute("""
-                    SELECT distance_km, result_time FROM race_calendar
-                    WHERE status = 'completed' AND result_time IS NOT NULL
-                    ORDER BY date DESC LIMIT 5
-                """).fetchall()
-                race_data = [
-                    {"distance_km": r["distance_km"], "time_seconds": _parse_time(r["result_time"])}
-                    for r in races_db if r["distance_km"] and r["result_time"]
-                ]
-                preds = predict_race_time(
-                    conn=conn, races=race_data,
-                    vo2max=vo2["vo2max"] if vo2 else None,
-                )
-                all_secs = []
-                if preds.get("riegel"):
-                    all_secs.extend(p["predicted_seconds"] for p in preds["riegel"])
-                if preds.get("vdot") and preds["vdot"].get("predicted_seconds"):
-                    all_secs.append(preds["vdot"]["predicted_seconds"])
-
+                center_secs = None
                 margin_secs = 0
-                if len(all_secs) >= 2:
-                    margin_secs = (max(all_secs) - min(all_secs)) / 2
-                else:
-                    margin_secs = preds.get("confidence", {}).get("margin_seconds", 480)
+                try:
+                    from fit.marathon.predict import forecast as _model_forecast
+                    from fit.marathon import model as _marathon_model
+                    _post = _marathon_model.load_posterior()
+                    if _post is not None:
+                        _fc = _model_forecast(conn, avg_hr=167, goal_seconds=target_secs, posterior=_post)
+                        if _fc:
+                            center_secs = _fc["median"]      # margin 0 → hero == model block
+                            result["confidence_level"] = "model"
+                except Exception:
+                    pass
 
-                if center_secs:
-                    # Conservative = center + margin (upper bound of chart band)
-                    conservative_secs = center_secs + margin_secs
-                    result["prediction_mid"] = _fmt_time(round(conservative_secs))
+                if center_secs is None:
+                    from fit.fitness import anchor_race_time
+                    center_secs = anchor_race_time(conn, target_km)
+                    vo2 = conn.execute(
+                        "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1"
+                    ).fetchone()
+                    races_db = conn.execute("""
+                        SELECT distance_km, result_time FROM race_calendar
+                        WHERE status = 'completed' AND result_time IS NOT NULL
+                        ORDER BY date DESC LIMIT 5
+                    """).fetchall()
+                    race_data = [
+                        {"distance_km": r["distance_km"], "time_seconds": _parse_time(r["result_time"])}
+                        for r in races_db if r["distance_km"] and r["result_time"]
+                    ]
+                    preds = predict_race_time(conn=conn, races=race_data,
+                                              vo2max=vo2["vo2max"] if vo2 else None)
+                    all_secs = []
+                    if preds.get("riegel"):
+                        all_secs.extend(p["predicted_seconds"] for p in preds["riegel"])
+                    if preds.get("vdot") and preds["vdot"].get("predicted_seconds"):
+                        all_secs.append(preds["vdot"]["predicted_seconds"])
+                    if len(all_secs) >= 2:
+                        margin_secs = (max(all_secs) - min(all_secs)) / 2
+                    else:
+                        margin_secs = preds.get("confidence", {}).get("margin_seconds", 480)
                     result["confidence_level"] = preds.get("confidence", {}).get("level", "low")
 
-                    # Gap based on conservative prediction vs target
-                    if result.get("target_time"):
-                        target_secs = _parse_time(result["target_time"])
-                        if target_secs > 0:
-                            gap = round((conservative_secs - target_secs) / 60)
-                            result["gap_minutes"] = gap
+                if center_secs:
+                    conservative_secs = center_secs + margin_secs
+                    result["prediction_mid"] = _fmt_time(round(conservative_secs))
+                    if target_secs and target_secs > 0:
+                        result["gap_minutes"] = round((conservative_secs - target_secs) / 60)
 
                 # Trend badge: compare oldest vs newest weekly VO2max (proxy for prediction trend)
                 trend_rows = conn.execute("""
