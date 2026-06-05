@@ -16,15 +16,15 @@
 - [x] Tests (`tests/test_marathon_preparedness.py`, 8): shrink monotone in quality, clamped [floor,1], default fallback, effort-gated. Real data: 3 long runs, −2.0% fade → floor
 
 ## 4. Model (Decisions 1, 5, 8)
-- [ ] `fit(efforts)`: drop δ; priors per design; `mu = alpha + beta_d·x + phi·c + kappa·h` (**no penalty term in the graph**)
-- [ ] Sample with `nuts_sampler="nutpie"` (fallback default NUTS/numpyro); **save posterior to `~/.fit/marathon_posterior.nc` immediately**
-- [ ] Mandated workflow: prior-predictive plausibility → divergences==0 / r_hat<1.01 / ESS>400 → posterior-predictive + LOO-PIT; seeded smoke test
+- [x] `fit(efforts)`: drop δ; priors per design; no penalty term in the graph (`model.build_model`/`fit`)
+- [x] nutpie (fallback NUTS); posterior cached to `~/.fit/marathon_posterior.zarr` (arviz 1.x needs no NetCDF C backend)
+- [x] `diagnostics` gate (divergences/r̂/ESS) + `prior_predictive_minutes`; seeded smoke test. Real fit PASSES (0 div, r̂=1.0, ESS 779). [ppc/LOO-PIT plot TODO]
 - [ ] Prior-vs-data movement summary for β_d et al. (Decision 5); prior-sensitivity re-fit in QA
 - [ ] Verify pymc6 / arviz1 API (Context7) before writing — `pm.sample`/`az.summary`/`az.loo` changed since the v5 prototype
 - [ ] Structure tests via `pymc.testing.mock_sample`
 
 ## 5. Predict & derived
-- [ ] `predict(post, c, avg_hr, distance, goal) -> {median, lo, hi, p_ceiling}`; **extrapolation penalty = predict-time `HalfStudentT(ν=4, extrapolation_scale)` overlay** (ν=4 a labelled heavy-tail convention), `pen = γ·max(0, log(d/d_max))`
+- [x] `predict.predict` + `predict.forecast`: predict-time `HalfStudentT(ν=4, extrapolation_scale)` overlay, `pen=γ·max(0,log(d/d_max))`; interval = posterior-of-mean + penalty (NOT residual σ); p_ceiling
 - [ ] `trend_series(post, daily_load)` — replaces the table-based trend charts
 - [ ] `derived_metrics`: phi-value, layoff curve, β_d (prior-vs-data caveat), κ, live race-equivalency (per-distance penalty), required-fitness-for-goal
 - [ ] `residuals` (day-quality) and `influence` via `az.loo(pointwise=True)` Pareto-k (flag k>0.7); `pm.compute_log_likelihood` first
