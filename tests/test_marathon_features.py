@@ -1,17 +1,17 @@
 """Feature extraction for the marathon-durability model (no PyMC).
 
-Covers effort selection, incoming CTL/ATL computed strictly BEFORE each effort day,
-the x/c/h/logt covariates, LTHR sourced from the calibration anchor, and the
-graceful-failure cases the caller turns into "degrade to the anchor headline".
+Covers effort selection, incoming chronic load (the shared ACWR primitive, evaluated
+strictly BEFORE each effort), the x/c/h/logt covariates, goal-adaptive D_REF, LTHR from
+the calibration anchor, and the graceful-failure cases the caller turns into "degrade to
+the anchor headline".
 """
 
 import math
 from datetime import date, timedelta
 
-import numpy as np
 import pytest
 
-from fit.marathon.features import extract_efforts, TAU_CTL, TAU_ATL, D_REF
+from fit.marathon.features import extract_efforts, CHRONIC_WINDOW_DAYS, MARATHON_KM
 
 
 def _d(days_ago):
@@ -41,7 +41,6 @@ def _act(db, aid, days_ago, *, run_type, distance_km, duration_min, avg_hr,
 class TestExtractEffortsHappy:
     def test_covariates_and_attrs(self, db):
         _set_lthr(db, 170.0)
-        # prior load history so CTL > 0
         _act(db, "load1", 40, run_type="easy", distance_km=8, duration_min=45,
              avg_hr=140, training_load=80)
         _act(db, "race10", 30, run_type="race", distance_km=10.0, duration_min=50,
@@ -53,27 +52,35 @@ class TestExtractEffortsHappy:
         assert set(eff["id"]) == {"race10", "raceHM"}
 
         hm = eff[eff["id"] == "raceHM"].iloc[0]
-        assert hm["x"] == pytest.approx(math.log(21.1) - math.log(D_REF))
+        # No target race set → D_REF falls back to the marathon.
+        assert eff.attrs["goal"] == pytest.approx(MARATHON_KM)
+        assert hm["x"] == pytest.approx(math.log(21.1) - math.log(MARATHON_KM))
         assert hm["h"] == pytest.approx((168 - 170.0) / 5.0)
         assert hm["logt"] == pytest.approx(math.log(110))
         assert eff.attrs["d_max"] == pytest.approx(21.1)
         assert eff.attrs["lthr"] == pytest.approx(170.0)
 
-    def test_ctl_atl_strictly_before(self, db):
+    def test_chronic_is_trailing_mean_strictly_before(self, db):
         _set_lthr(db)
-        # one prior load 7 days before the effort, plus a big SAME-DAY load that must
-        # be excluded (incoming fitness, not inflated by the effort's own load).
+        # one prior load 7 days before the effort; a big SAME-DAY load must be excluded
+        # (incoming fitness). chronic = sum(in-window loads) / window.
         _act(db, "prior", 37, run_type="easy", distance_km=8, duration_min=45,
              avg_hr=140, training_load=100)
         _act(db, "race", 30, run_type="race", distance_km=10.0, duration_min=50,
-             avg_hr=175, training_load=999)  # 999 is same-day → must NOT count
-
+             avg_hr=175, training_load=999)  # 999 same-day → excluded
         eff = extract_efforts(db)
-        row = eff.iloc[0]
-        expected_ctl = 100 * math.exp(-7 / TAU_CTL) / TAU_CTL
-        expected_atl = 100 * math.exp(-7 / TAU_ATL) / TAU_ATL
-        assert row["ctl"] == pytest.approx(expected_ctl, rel=1e-6)
-        assert row["atl"] == pytest.approx(expected_atl, rel=1e-6)
+        assert eff.iloc[0]["chronic"] == pytest.approx(100 / CHRONIC_WINDOW_DAYS, rel=1e-6)
+
+    def test_goal_adaptive_recenters_x(self, db, monkeypatch):
+        _set_lthr(db)
+        _act(db, "load", 40, run_type="easy", distance_km=8, duration_min=45,
+             avg_hr=140, training_load=80)
+        _act(db, "race10", 20, run_type="race", distance_km=10.0, duration_min=50, avg_hr=175)
+        # Target a half-marathon → x re-centres on 21.1, not the marathon.
+        monkeypatch.setattr("fit.goals.get_target_race", lambda conn: {"distance_km": 21.1})
+        eff = extract_efforts(db)
+        assert eff.attrs["goal"] == pytest.approx(21.1)
+        assert eff.iloc[0]["x"] == pytest.approx(math.log(10.0) - math.log(21.1))
 
 
 class TestExtractEffortsUnhappy:
@@ -83,16 +90,15 @@ class TestExtractEffortsUnhappy:
              avg_hr=140, training_load=80)
         _act(db, "race", 30, run_type="race", distance_km=10, duration_min=50, avg_hr=175)
         _act(db, "interval", 25, run_type="interval", distance_km=12, duration_min=55,
-             avg_hr=178, effort_class="Very Hard")           # intervals excluded
+             avg_hr=178, effort_class="Very Hard")
         _act(db, "easy", 20, run_type="easy", distance_km=10, duration_min=60, avg_hr=140)
         _act(db, "tempo_easy", 15, run_type="tempo", distance_km=10, duration_min=50,
-             avg_hr=150, effort_class="Easy")                # tempo but not Hard/Very Hard
+             avg_hr=150, effort_class="Easy")
         eff = extract_efforts(db)
         assert set(eff["id"]) == {"race"}
 
     def test_drops_effort_without_prior_history(self, db):
         _set_lthr(db)
-        # "early" race has no load before it → CTL=0 → dropped; "later" has history.
         _act(db, "early", 60, run_type="race", distance_km=10, duration_min=50, avg_hr=175)
         _act(db, "load", 30, run_type="easy", distance_km=8, duration_min=45,
              avg_hr=140, training_load=90)
@@ -123,7 +129,6 @@ class TestExtractEffortsUnhappy:
         _set_lthr(db)
         _act(db, "load", 40, run_type="easy", distance_km=8, duration_min=45,
              avg_hr=140, training_load=80)
-        _act(db, "race_no_hr", 30, run_type="race", distance_km=10, duration_min=50,
-             avg_hr=0)                                        # avg_hr=0 excluded by SQL
+        _act(db, "race_no_hr", 30, run_type="race", distance_km=10, duration_min=50, avg_hr=0)
         with pytest.raises(ValueError, match="no qualifying efforts"):
             extract_efforts(db)
