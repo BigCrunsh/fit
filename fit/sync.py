@@ -508,10 +508,37 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
         except Exception as e:
             logger.debug("Splits backfill skipped: %s", e)
 
+    # Refit the marathon-durability posterior on fresh data (best-effort; never blocks a
+    # sync). Skipped silently when the `forecast` extra is absent or there's no fittable
+    # history — the dashboard degrades to the anchor headline (Decision 7).
+    if _refit_marathon_forecast(conn):
+        counts["forecast_refit"] = 1
+
     if warnings:
         counts["warnings"] = warnings
     logger.info("Sync complete: %s", counts)
     return counts
+
+
+def _refit_marathon_forecast(conn: sqlite3.Connection) -> bool:
+    """Refit + cache the marathon posterior. Returns True on success, False on any
+    skip/failure (missing extra, no efforts, sampler error) — sync must never fail here."""
+    try:
+        from fit.marathon import model as _model
+        from fit.marathon.features import extract_efforts
+    except ImportError:
+        return False
+    try:
+        ds = extract_efforts(conn)
+    except ValueError:
+        return False
+    try:
+        _model.fit(ds)  # samples + caches to ~/.fit/marathon_posterior.zarr
+        logger.info("Marathon forecast posterior refit")
+        return True
+    except Exception as e:  # pragma: no cover - defensive (sampler/env issues)
+        logger.warning("Marathon forecast refit skipped: %s", e)
+        return False
 
 
 def _match_race_calendar(conn: sqlite3.Connection) -> None:

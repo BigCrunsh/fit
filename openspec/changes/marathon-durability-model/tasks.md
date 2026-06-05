@@ -27,7 +27,7 @@
 - [x] `predict.predict` + `predict.forecast`: predict-time `HalfStudentT(ν=4, extrapolation_scale)` overlay, `pen=γ·max(0,log(d/d_max))`; interval = posterior-of-mean + penalty (NOT residual σ); p_ceiling
 - [x] `trend_series` — marathon-equiv tracking chronic load over time (replaces the table-based chart)
 - [x] `derived_metrics`: β_d/φ/κ (prior-vs-data flag), race-equivalency (per-distance HR schedule + penalty), `required_chronic_for_goal`
-- [x] `influence` via `az.loo` Pareto-k vs adaptive `good_k`. [`residuals` for the correlation engine: TODO]
+- [x] `influence` via `az.loo` Pareto-k vs adaptive `good_k`; `residuals` (observed−predicted, day-quality) for the correlation engine
 - [x] Tests (`tests/test_marathon_model.py`): overlay wider, pen=0 within range, p-ceiling monotone, derived structure, required-chronic, trend, influence (slow)
 
 ## 6. Unified durability + extrapolation watch view (Decision 9 — REQUIRED, the one new chart)
@@ -38,7 +38,7 @@
 - [ ] Guardrail tests: thin/noisy or far-from-`GENERIC_WALL_SCALE` → fallback + label
 
 ## 7. Integration
-- [ ] `fit/sync.py`: refit + cache step (gated/flagged)
+- [x] `fit/sync.py`: `_refit_marathon_forecast` step (best-effort; skips without extra/history, never blocks sync)
 - [ ] Report: re-source Marathon Prediction section/chart (median + interval + P-ceiling + trend + LOO flag); durability leads with measured signal, β_d optimistic bound (Decision 4)
 - [x] `fit/cli.py`: `fit forecast` (--refit/--hr) — headline+interval+P, durability, race-equivalency, required-chronic, influential efforts; degrades to anchor
 - [ ] **Graceful degradation** (Decision 7): no pymc / stale posterior → anchor headline + loud note; assert never the retired table

@@ -139,6 +139,17 @@ class TestTrendSeries:
         assert all(p["lo"] <= p["median"] <= p["hi"] for p in ts)
 
 
+class TestResiduals:
+    def test_residual_is_observed_minus_predicted(self):
+        from fit.marathon.predict import residuals
+        ds = _synthetic_ds(n=10)
+        out = residuals(_synthetic_idata(alpha=5.46, beta_d=1.06), ds)
+        assert {"predicted_logt", "residual"} <= set(out.columns)
+        # residual == logt − predicted_logt, exactly
+        assert np.allclose(out["residual"], out["logt"] - out["predicted_logt"])
+        assert len(out) == len(ds.efforts)
+
+
 class TestForecastDegrade:
     def test_forecast_returns_none_without_posterior(self, db):
         # LTHR + a qualifying effort exist, but no cached posterior and none passed → None
@@ -152,6 +163,12 @@ class TestForecastDegrade:
                    ((date.today() - timedelta(days=400)).isoformat(),))
         db.commit()
         assert forecast(db, posterior=None) is None     # degrade, not crash
+
+
+class TestSyncRefit:
+    def test_refit_skips_without_history(self, db):
+        from fit.sync import _refit_marathon_forecast
+        assert _refit_marathon_forecast(db) is False     # empty db → graceful skip, no crash
 
 
 @pytest.mark.slow

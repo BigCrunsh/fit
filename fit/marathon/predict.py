@@ -203,6 +203,19 @@ def influence(idata, ds):
     return {"good_k": good_k, "efforts": rows}
 
 
+def residuals(idata, ds):
+    """Day-quality residual per effort: observed log-time − model-predicted mean, with
+    distance/fitness/effort netted out (design §11 G). A cleaner correlation input than
+    raw pace — a temperature/sleep effect is no longer confounded by how fit/long each
+    effort was. Returns the efforts frame with `predicted_logt` + `residual` columns
+    (positive residual = slower than expected = a worse day)."""
+    a, b, phi, kappa = (float(np.mean(_flat(idata, p))) for p in ("alpha", "beta_d", "phi", "kappa"))
+    eff = ds.efforts.copy()
+    eff["predicted_logt"] = a + b * eff["x"] + phi * eff["c"] + kappa * eff["h"]
+    eff["residual"] = eff["logt"] - eff["predicted_logt"]
+    return eff
+
+
 def trend_series(conn, idata, ds, *, days=420, step_days=14, maximal_h=-1.2,
                  extrapolation_scale=0.0, nu=4, seed=0):
     """Marathon-equivalent at maximal effort tracking chronic load over time (Panel B —
