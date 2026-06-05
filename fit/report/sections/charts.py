@@ -1137,10 +1137,10 @@ def _all_charts(conn):
         })})
 
     # Calibration history scatter — one chart per dense metric. Marker
-    # shape encodes drift-test classification (triangle-up = upper bound:
-    # AeT < value; triangle-down = lower bound: AeT > value; circle =
-    # direct estimate). Marker fill encodes confidence (filled = high,
-    # hollow = medium, red ring = low). Active row gets a larger radius.
+    # shape encodes source/classification (square = device-measured Garmin LT;
+    # triangle-up = drift upper bound: AeT < value; diamond = lower bound:
+    # AeT > value; circle = direct estimate). Marker fill encodes confidence
+    # (filled = high, hollow = medium, red ring = low). Active row = larger radius.
     from fit.report.sections.cards import _calibration_history as _ch_builder
     cal_metrics = _ch_builder(conn)
     for m in cal_metrics:
@@ -1151,10 +1151,13 @@ def _all_charts(conn):
         styles, fills, borders, radii = [], [], [], []
         for r in m["rows"]:
             points.append({"x": r["date"], "y": r["value"]})
-            # Marker shape by classification — drift_test rows have one;
-            # everything else gets a plain circle.
+            # Marker shape: device-measured rows (Garmin auto-detected LT) are a
+            # square so the watch threshold stands out from race-derived estimates;
+            # drift_test rows encode their classification; everything else a circle.
             cls = r.get("classification")
-            if cls == "upper_bound":
+            if r.get("method") == "garmin_lt":
+                styles.append("rect")               # ■ watch-detected (device measurement)
+            elif cls == "upper_bound":
                 styles.append("triangle")          # ▲ AeT < this value
             elif cls == "lower_bound":
                 styles.append("rectRot")            # ◆ AeT > this value (diamond placeholder for Chart.js)
