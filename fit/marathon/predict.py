@@ -203,6 +203,43 @@ def influence(idata, ds):
     return {"good_k": good_k, "efforts": rows}
 
 
+def durability_panel(idata, ds, *, c_ref=0.0, maximal_h=-1.2, extrapolation_scale=0.0,
+                     nu=4, n_grid=60, seed=0):
+    """Data for Panel A (marathon_v2) — the durability collapse.
+
+    Every effort is normalised to a common fitness (`c_ref`) and maximal effort
+    (`maximal_h`) by removing φ·(c−c_ref) and κ·(h−maximal_h), so once fitness and effort
+    are netted out the points collapse onto ONE power law of slope β_d. Returns per-effort
+    points (km, normalised minutes, colour by distance), the fitted curve, and the 90%
+    band that fans out past `d_max` via the wall penalty (the grey extrapolation band).
+
+    **Pass `c_ref = today's fitness c`** so the curve's goal point equals the headline
+    forecast (dashboard consistency) — at c_ref=0 it's the reference-fitness curve, which
+    would disagree with a current-fitness headline.
+    """
+    a, b, phi, kappa = (_flat(idata, p) for p in ("alpha", "beta_d", "phi", "kappa"))
+    bm, pm, km = (float(np.median(v)) for v in (b, phi, kappa))
+    eff = ds.efforts
+    points = [
+        {"distance_km": float(d),
+         "minutes": float(np.exp(lt - pm * (c - c_ref) - km * (h - maximal_h)))}
+        for d, lt, c, h in zip(eff["distance_km"], eff["logt"], eff["c"], eff["h"])
+    ]
+    lo_d = max(2.5, float(eff["distance_km"].min()) * 0.9)
+    grid = np.exp(np.linspace(np.log(lo_d), np.log(ds.goal * 1.02), n_grid))
+    rng = np.random.default_rng(seed)
+    curve = []
+    for d in grid:
+        x = np.log(d / ds.goal)
+        mu = a + b * x + phi * c_ref + kappa * maximal_h   # draws of the mean at c_ref + maximal effort
+        gap = max(0.0, float(np.log(d / ds.d_max)))
+        mins = np.exp(mu + _wall_penalty_draws(nu, extrapolation_scale, gap, mu.shape[0], rng))
+        curve.append({"distance_km": float(d), "median": float(np.median(mins)),
+                      "lo": float(np.percentile(mins, 5)), "hi": float(np.percentile(mins, 95))})
+    return {"points": points, "curve": curve, "d_max": ds.d_max, "goal": ds.goal,
+            "beta_d": bm}
+
+
 def residuals(idata, ds):
     """Day-quality residual per effort: observed log-time − model-predicted mean, with
     distance/fitness/effort netted out (design §11 G). A cleaner correlation input than

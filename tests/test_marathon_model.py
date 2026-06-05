@@ -139,6 +139,32 @@ class TestTrendSeries:
         assert all(p["lo"] <= p["median"] <= p["hi"] for p in ts)
 
 
+class TestDurabilityPanel:
+    def test_collapse_and_band_fans_out(self):
+        from fit.marathon.predict import durability_panel
+        ds = _synthetic_ds(n=20)
+        dp = durability_panel(_synthetic_idata(alpha=np.log(240), beta_d=1.06),
+                              ds, c_ref=0.0, extrapolation_scale=0.04, nu=4)
+        assert len(dp["points"]) == len(ds.efforts)
+        assert len(dp["curve"]) >= 30
+        # band fans out past d_max (extrapolation): width at the goal > width at d_max
+        def width_at(d):
+            c = min(dp["curve"], key=lambda r: abs(r["distance_km"] - d))
+            return c["hi"] - c["lo"]
+        assert width_at(ds.goal) > width_at(ds.d_max)
+        assert all(c["lo"] <= c["median"] <= c["hi"] for c in dp["curve"])
+
+    def test_c_ref_shifts_level_not_collapse(self):
+        # changing c_ref shifts the whole curve but the points still track it
+        from fit.marathon.predict import durability_panel
+        ds = _synthetic_ds(n=15)
+        idata = _synthetic_idata(phi=-0.05)
+        a = durability_panel(idata, ds, c_ref=0.0)
+        b = durability_panel(idata, ds, c_ref=1.0)
+        # higher fitness reference → faster curve at the goal
+        assert b["curve"][-1]["median"] < a["curve"][-1]["median"]
+
+
 class TestResiduals:
     def test_residual_is_observed_minus_predicted(self):
         from fit.marathon.predict import residuals
