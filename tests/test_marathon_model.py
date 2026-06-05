@@ -82,14 +82,16 @@ class TestPredictOverlay:
         assert easy["p_ceiling"] > hard["p_ceiling"]
 
 
-def _synthetic_ds(n=25, alpha=5.46, beta_d=1.06, seed=0):
+def _synthetic_ds(n=25, alpha=5.46, beta_d=1.06, seed=0, goal=42.195):
     rng = np.random.default_rng(seed)
-    x = np.linspace(-2.6, -0.1, n)            # short→near-goal efforts (durability span)
+    # efforts spanning 3 km → a half-marathon (the real durability span); x = log(d/goal)
+    dist = np.exp(np.linspace(np.log(3.0), np.log(21.1), n))
+    x = np.log(dist / goal)
     c = rng.normal(0, 1, n)
     h = rng.normal(0, 0.5, n)
     logt = alpha + beta_d * x + 0.0 * c + 0.0 * h + rng.normal(0, 0.03, n)
-    eff = pd.DataFrame({"x": x, "c": c, "h": h, "logt": logt})
-    return EffortDataset(efforts=eff, d_max=21.1, lthr=170.0, goal=42.195)
+    eff = pd.DataFrame({"distance_km": dist, "x": x, "c": c, "h": h, "logt": logt})
+    return EffortDataset(efforts=eff, d_max=float(dist.max()), lthr=170.0, goal=goal)
 
 
 class TestBuildModel:
