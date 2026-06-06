@@ -966,20 +966,8 @@ def _all_charts(conn):
                 "borderColor": ACCENT, "backgroundColor": ACCENT + "15", "fill": False,
                 "borderWidth": 2, "pointRadius": 2, "spanGaps": True,
             })
-    elif len(vo2_monthly) >= 3:
-        from fit.analysis import _vdot_to_marathon_seconds
-        vdot_points = []
-        for v in vo2_monthly:
-            secs = _vdot_to_marathon_seconds(v["avg_vo2"])
-            if target_km != 42.195:
-                secs = secs * (target_km / 42.195) ** 1.06
-            vdot_points.append({"x": v["month"] + "-15", "y": round(secs / 60, 1)})
-        datasets.append({
-            "label": "VDOT (from VO2max)", "data": vdot_points,
-            "borderColor": ACCENT, "backgroundColor": ACCENT + "15", "fill": True,
-            "borderWidth": 2, "pointRadius": 2,
-            "spanGaps": True,
-        })
+    # (No table fallback: the forecast line is model-only — D1 Phase 2. When the model
+    # isn't fit, the chart shows the race anchors without a line.)
 
     # Dataset 2: Riegel scatter (actual race → extrapolated to target distance).
     if race_points:

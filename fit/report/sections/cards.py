@@ -1314,7 +1314,7 @@ def _race_countdown(conn):
             # at today. Uses VO2max-derived prediction + method spread margin,
             # exactly matching what the prediction trend chart shows.
             try:
-                from fit.analysis import predict_race_time, _vdot_to_marathon_seconds
+                from fit.analysis import predict_race_time
 
                 def _parse_time(t):
                     parts = t.split(":")
@@ -1382,30 +1382,17 @@ def _race_countdown(conn):
                     if target_secs and target_secs > 0:
                         result["gap_minutes"] = round((conservative_secs - target_secs) / 60)
 
-                # Trend badge: compare oldest vs newest weekly VO2max (proxy for prediction trend)
-                trend_rows = conn.execute("""
-                    SELECT week, vo2max_avg FROM (
-                        SELECT strftime('%Y-W%W', date) as week,
-                               AVG(vo2max) as vo2max_avg
-                        FROM activities
-                        WHERE vo2max IS NOT NULL
-                          AND date >= date('now', '-56 days')
-                        GROUP BY week
-                        ORDER BY week
-                    ) WHERE vo2max_avg IS NOT NULL
-                """).fetchall()
-                if len(trend_rows) >= 2:
-                    old_v = trend_rows[0]["vo2max_avg"]
-                    new_v = trend_rows[-1]["vo2max_avg"]
-                    if old_v and new_v and old_v > 30:
-                        # Convert VO2max change to approximate time change
-                        old_secs = _vdot_to_marathon_seconds(old_v)
-                        new_secs = _vdot_to_marathon_seconds(new_v)
-                        delta_min = round((new_secs - old_secs) / 60)
-                        weeks = len(trend_rows)
+                # Trend badge: forecast change over the last ~8 weeks, from the model
+                # (first vs last weekly median). No table — no badge if the model isn't fit.
+                from datetime import date as _date, timedelta as _td
+                wk_dates = [(_date.today() - _td(days=7 * i)).isoformat() for i in range(8, -1, -1)]
+                mt = _model_week_trend(conn, wk_dates)
+                if mt:
+                    vals = [mt[d][0] for d in wk_dates if d in mt]
+                    if len(vals) >= 2:
+                        delta_min = round((vals[-1] - vals[0]) / 60)
                         if delta_min != 0:
-                            sign = "+" if delta_min > 0 else ""
-                            result["trend_badge"] = f"{sign}{delta_min} min / {weeks} wk"
+                            result["trend_badge"] = f"{'+' if delta_min > 0 else ''}{delta_min} min / 8 wk"
             except Exception:
                 pass  # prediction enrichment is best-effort
 
@@ -1939,7 +1926,6 @@ def _prediction_trend_data(conn):
     checkpoints, phases, target_min, today.
     """
     try:
-        from fit.analysis import _vdot_to_marathon_seconds
         from fit.goals import get_target_race
 
         target = get_target_race(conn)
@@ -1989,23 +1975,15 @@ def _prediction_trend_data(conn):
 
         labels = []
         pred = []
-        # Panel B: prefer the durability-model median at each week's chronic load. The
-        # weekly-VO2max→table path is the fallback only (D1 Phase 2 — table retired).
+        # Panel B: marathon-equiv median at each week's chronic load — model only (the
+        # weekly-VO2max→table path is retired, D1 Phase 2). No model fit → no trend chart.
         model_trend = _model_week_trend(conn, [w["week_start"] for w in weeks])
+        if model_trend is None:
+            return None
         for w in weeks:
             labels.append(w["week_start"])
-            if model_trend is not None:
-                mt = model_trend.get(w["week_start"])
-                pred.append(round(mt[0], 1) if mt else None)
-            elif w["vo2max_avg"] and w["vo2max_avg"] > 30:
-                marathon_secs = _vdot_to_marathon_seconds(w["vo2max_avg"])
-                if target_km != 42.195:
-                    race_secs = marathon_secs * (target_km / 42.195) ** 1.06
-                else:
-                    race_secs = marathon_secs
-                pred.append(round(race_secs / 60, 1))
-            else:
-                pred.append(None)
+            mt = model_trend.get(w["week_start"])
+            pred.append(round(mt[0], 1) if mt else None)
 
         # Extend labels to race date
         race_date = target.get("date", "")
@@ -2019,39 +1997,16 @@ def _prediction_trend_data(conn):
                     labels.append(last.strftime("%Y-%m-%d"))
                     pred.append(None)
 
-        # Confidence band. Model: per-point 90% credible interval (asymmetric). Fallback:
-        # method-spread margin (symmetric) from the per-race extrapolations.
-        if model_trend is not None:
-            upper, lower = [], []
-            for lbl, p in zip(labels, pred):
-                mt = model_trend.get(lbl)
-                if mt and p is not None:
-                    lower.append(round(mt[1], 1))
-                    upper.append(round(mt[2], 1))
-                else:
-                    upper.append(None)
-                    lower.append(None)
-        else:
-            from fit.analysis import predict_race_time
-            races = conn.execute("""
-                SELECT distance_km, result_time FROM race_calendar
-                WHERE status = 'completed' AND result_time IS NOT NULL
-                ORDER BY date DESC LIMIT 5
-            """).fetchall()
-            race_data = [
-                {"distance_km": r["distance_km"], "time_seconds": _parse_time(r["result_time"])}
-                for r in races if r["distance_km"] and r["result_time"]
-            ]
-            preds = predict_race_time(conn=conn, races=race_data, vo2max=None)
-            all_pred_secs = [p["predicted_seconds"] for p in preds.get("riegel", [])]
-            if preds.get("vdot") and preds["vdot"].get("predicted_seconds"):
-                all_pred_secs.append(preds["vdot"]["predicted_seconds"])
-            if len(all_pred_secs) >= 2:
-                margin_min = (max(all_pred_secs) - min(all_pred_secs)) / 2 / 60
+        # Confidence band: per-point 90% credible interval (asymmetric) from the model.
+        upper, lower = [], []
+        for lbl, p in zip(labels, pred):
+            mt = model_trend.get(lbl)
+            if mt and p is not None:
+                lower.append(round(mt[1], 1))
+                upper.append(round(mt[2], 1))
             else:
-                margin_min = preds.get("confidence", {}).get("margin_seconds", 480) / 60
-            upper = [round(p + margin_min, 1) if p is not None else None for p in pred]
-            lower = [round(p - margin_min, 1) if p is not None else None for p in pred]
+                upper.append(None)
+                lower.append(None)
 
         # Training phases for the band
         phases_raw = conn.execute("""

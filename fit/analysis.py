@@ -543,29 +543,12 @@ def compute_rolling_week(conn: sqlite3.Connection, end_date: date | None = None,
 from fit.training_load import compute_rolling_acwr  # noqa: F401,E402
 
 
-# ── Daniels VDOT Lookup Table ──
-# VO2max → marathon time in seconds (from Daniels' Running Formula)
-_VDOT_TABLE = [
-    (35, 19800),   # ~5:30:00
-    (38, 18000),   # ~5:00:00
-    (40, 16800),   # ~4:40:00
-    (42, 16080),   # ~4:28:00
-    (45, 14700),   # ~4:05:00
-    (48, 13680),   # ~3:48:00
-    (50, 13080),   # ~3:38:00
-    (52, 12480),   # ~3:28:00
-    (55, 11700),   # ~3:15:00
-    (58, 10980),   # ~3:03:00
-    (60, 10500),   # ~2:55:00
-]
-
-
 def compute_daniels_paces(vo2max: float | None, lthr: int | None = None) -> dict | None:
     """Compute Daniels training paces (E/M/T/I/R) in seconds per km.
 
-    Anchored on VDOT (= vo2max) — marathon time is derived from the table
-    above, and the five paces are computed as offsets from M pace using
-    Daniels' typical spreads:
+    Anchored on VDOT (= vo2max) — marathon time is derived via the Daniels formula
+    inverse (`vdot_to_race_time`), and the five paces are computed as offsets from M
+    pace using Daniels' typical spreads:
 
       E (Easy)        — M + 45 sec/km to M + 60 sec/km
       M (Marathon)    — from VDOT table
@@ -607,37 +590,6 @@ def compute_daniels_paces(vo2max: float | None, lthr: int | None = None) -> dict
         "I": {"lo": m_pace - 25, "hi": m_pace - 20},
         "R": {"lo": m_pace - 33, "hi": m_pace - 28},
     }
-
-
-def _vdot_to_marathon_seconds(vo2max: float) -> float:
-    """Interpolate marathon time from Daniels VDOT table.
-
-    RETIRED from the forecast (D1). The race-day headline is now anchored via
-    ``anchor_race_time`` (calibrated VDOT → Daniels formula inverse), NOT this
-    table fed by Garmin VO2max. This function survives ONLY for the three
-    VO2max-trend-over-time consumers (``_prediction_trend_data``, the trend
-    badge, the charts "VDOT (from VO2max)" line), which need a per-week series
-    the single-value anchor can't provide.
-    TODO(marathon-durability-model): delete this + ``_VDOT_TABLE`` once the
-    Bayesian ``trend_series`` replaces those charts.
-
-    Uses linear interpolation between table points.
-    Clamps to table boundaries for out-of-range values.
-    """
-    if vo2max <= _VDOT_TABLE[0][0]:
-        return float(_VDOT_TABLE[0][1])
-    if vo2max >= _VDOT_TABLE[-1][0]:
-        return float(_VDOT_TABLE[-1][1])
-
-    for i in range(len(_VDOT_TABLE) - 1):
-        v1, t1 = _VDOT_TABLE[i]
-        v2, t2 = _VDOT_TABLE[i + 1]
-        if v1 <= vo2max <= v2:
-            # Linear interpolation
-            frac = (vo2max - v1) / (v2 - v1)
-            return t1 + frac * (t2 - t1)
-
-    return float(_VDOT_TABLE[-1][1])
 
 
 def predict_race_time(conn: sqlite3.Connection | None = None,

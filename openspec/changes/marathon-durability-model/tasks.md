@@ -51,8 +51,8 @@
 - [x] Tests (`tests/test_lthr_ingestion.py`, 8) + live-confirmed: anchor 164 (proxy) → **173** (watch)
 
 ## 9. Retire Phase 2 of D1
-- [ ] Replace the three trend consumers (`_prediction_trend_data`, trend badge, charts "VDOT (from VO2max)") with `trend_series`
-- [ ] Delete `_vdot_to_marathon_seconds` + `_VDOT_TABLE` + the `TODO(marathon-durability-model)` flag; remove dead direct-table tests
+- [x] All three trend consumers re-sourced from the model (`_prediction_trend_data` model-only; trend badge from `_model_week_trend`; charts forecast line model-only)
+- [x] Deleted `_vdot_to_marathon_seconds` + `_VDOT_TABLE`; removed the dead TestDanielsVDOT table tests. D1 Phase 2 closed.
 
 ## 10. Contract & docs
 - [ ] Sync MCP coaching context + `fit-coach` SKILL.md to the new headline semantics (`CLAUDE.md` contract)
