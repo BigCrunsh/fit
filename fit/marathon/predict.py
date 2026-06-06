@@ -14,6 +14,10 @@ from __future__ import annotations
 
 import numpy as np
 
+# Maximal sustainable marathon avg HR — an input assumption (±2 bpm ≈ ±3 min). The single
+# source for every "maximal-effort" forecast call; h = (MAXIMAL_MARATHON_HR − LTHR)/H_DIV.
+MAXIMAL_MARATHON_HR = 167
+
 
 def _flat(idata, name):
     return idata.posterior[name].to_numpy().flatten()
@@ -257,16 +261,21 @@ def trend_series(conn, idata, ds, *, days=420, step_days=14, maximal_h=-1.2,
                  extrapolation_scale=0.0, nu=4, seed=0):
     """Marathon-equivalent at maximal effort tracking chronic load over time (Panel B —
     replaces the table-based prediction-trend chart). One point per `step_days`."""
+    import pandas as pd
     from datetime import date, timedelta
-    from fit.training_load import chronic_load
+    from fit.training_load import DAILY_LOAD_SQL, chronic_load_before
     from fit.marathon.features import CHRONIC_REF, CHRONIC_SCALE
 
     gap = max(0.0, float(np.log(ds.goal / ds.d_max)))
+    # Load daily loads once; chronic_load_before is pure (no per-step full-table read).
+    dl = pd.read_sql_query(DAILY_LOAD_SQL, conn, parse_dates=["date"])
+    day_ord = dl["date"].map(pd.Timestamp.toordinal).to_numpy() if not dl.empty else np.array([])
+    day_load = dl["load"].fillna(0.0).to_numpy() if not dl.empty else np.array([])
     out = []
     today = date.today()
     for back in range(days, -1, -step_days):
         d = today - timedelta(days=back)
-        c = (chronic_load(conn, asof=d) - CHRONIC_REF) / CHRONIC_SCALE
+        c = (chronic_load_before(d.toordinal(), day_ord, day_load) - CHRONIC_REF) / CHRONIC_SCALE
         r = predict(idata, x=0.0, c=c, h=maximal_h, gap=gap,
                     extrapolation_scale=extrapolation_scale, nu=nu, seed=seed)
         out.append({"date": d.isoformat(), "median": r["median"], "lo": r["lo"], "hi": r["hi"]})

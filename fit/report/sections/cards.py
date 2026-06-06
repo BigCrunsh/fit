@@ -1337,11 +1337,11 @@ def _race_countdown(conn):
                 center_secs = None
                 margin_secs = 0
                 try:
-                    from fit.marathon.predict import forecast as _model_forecast
+                    from fit.marathon.predict import forecast as _model_forecast, MAXIMAL_MARATHON_HR
                     from fit.marathon import model as _marathon_model
                     _post = _marathon_model.load_posterior()
                     if _post is not None:
-                        _fc = _model_forecast(conn, avg_hr=167, goal_seconds=target_secs, posterior=_post)
+                        _fc = _model_forecast(conn, avg_hr=MAXIMAL_MARATHON_HR, goal_seconds=target_secs, posterior=_post)
                         if _fc:
                             center_secs = _fc["median"]      # margin 0 → hero == model block
                             result["confidence_level"] = "model"
@@ -1889,11 +1889,12 @@ def _model_week_trend(conn, week_starts):
     try:
         from datetime import date as _date
         import numpy as _np
+        import pandas as _pd
         from fit.marathon import model as _M
-        from fit.marathon.predict import predict as _predict
+        from fit.marathon.predict import predict as _predict, MAXIMAL_MARATHON_HR
         from fit.marathon.preparedness import extrapolation_prior
-        from fit.marathon.features import extract_efforts, CHRONIC_REF, CHRONIC_SCALE
-        from fit.training_load import chronic_load
+        from fit.marathon.features import extract_efforts, CHRONIC_REF, CHRONIC_SCALE, H_DIV
+        from fit.training_load import DAILY_LOAD_SQL, chronic_load_before
     except ImportError:
         return None
     post = _M.load_posterior()
@@ -1905,14 +1906,18 @@ def _model_week_trend(conn, week_starts):
         return None
     prior = extrapolation_prior(conn, ds.goal)
     gap = max(0.0, float(_np.log(ds.goal / ds.d_max)))
-    h = (167 - ds.lthr) / 5.0
+    h = (MAXIMAL_MARATHON_HR - ds.lthr) / H_DIV
+    # Load daily loads ONCE (chronic_load_before is pure) — not a full-table read per week.
+    dl = _pd.read_sql_query(DAILY_LOAD_SQL, conn, parse_dates=["date"])
+    day_ord = dl["date"].map(_pd.Timestamp.toordinal).to_numpy() if not dl.empty else _np.array([])
+    day_load = dl["load"].fillna(0.0).to_numpy() if not dl.empty else _np.array([])
     out = {}
     for ws in week_starts:
         try:
-            cl = chronic_load(conn, asof=_date.fromisoformat(ws))
-        except Exception:
+            ref = _date.fromisoformat(ws).toordinal()
+        except ValueError:
             continue
-        c = (cl - CHRONIC_REF) / CHRONIC_SCALE
+        c = (chronic_load_before(ref, day_ord, day_load) - CHRONIC_REF) / CHRONIC_SCALE
         r = _predict(post, x=0.0, c=c, h=h, gap=gap,
                      extrapolation_scale=prior["scale"], nu=prior["nu"])
         out[ws] = (r["median"] / 60.0, r["lo"] / 60.0, r["hi"] / 60.0)
@@ -2200,11 +2205,11 @@ def _race_readiness_hero(conn):
         # the VDOT-anchor time is the fallback. effective_vdot still shows as the engine.
         pred_secs = None
         try:
-            from fit.marathon.predict import forecast as _model_forecast
+            from fit.marathon.predict import forecast as _model_forecast, MAXIMAL_MARATHON_HR
             from fit.marathon import model as _marathon_model
             _post = _marathon_model.load_posterior()
             if _post is not None:
-                _fc = _model_forecast(conn, avg_hr=167, goal_seconds=target_secs, posterior=_post)
+                _fc = _model_forecast(conn, avg_hr=MAXIMAL_MARATHON_HR, goal_seconds=target_secs, posterior=_post)
                 if _fc:
                     pred_secs = _fc["median"]
                     result["prediction_source"] = "model"
