@@ -65,7 +65,14 @@ def _marathon_forecast(conn, maximal_hr=167):
         c = _current_c(conn)
         dm = derived_metrics(idata, ds, c=c, maximal_h=(maximal_hr - ds.lthr) / 5.0,
                              extrapolation_scale=ex["scale"], nu=ex["nu"])
+        import math
         bd = dm["durability_beta_d"]
+        phi, kap = dm["fitness_value_phi"], dm["effort_kappa"]
+        goal_min = fc["median"] / 60.0
+        # φ: Δ per +10 chronic-load units; κ: Δ per +5 bpm vs LTHR (both Δlog-time).
+        phi_min = goal_min * (math.exp(phi["median"]) - 1)
+        phi_pct = (math.exp(phi["median"]) - 1) * 100
+        kappa_pct = (math.exp(kap["median"]) - 1) * 100
         infl = influence(idata, ds)
         flagged = [e for e in infl["efforts"] if e["influential"]]
         return {
@@ -77,6 +84,10 @@ def _marathon_forecast(conn, maximal_hr=167):
             "goal_km": ds.goal,
             "beta_d": f"{bd['median']:.3f}", "beta_d_ci": f"{bd['lo']:.3f}–{bd['hi']:.3f}",
             "beta_d_dominated": bool(bd["prior_dominated"]),
+            "phi_reading": f"{phi_min:+.1f} min ({phi_pct:+.1f}%) per +10 fitness",
+            "phi_dominated": bool(phi["prior_dominated"]),
+            "kappa_reading": f"{kappa_pct:+.1f}% pace per +5 bpm",
+            "kappa_dominated": bool(kap["prior_dominated"]),
             "extrap_reason": ex["reason"], "extrap_defaulted": bool(ex["defaulted"]),
             "unvalidated": bool(ds.d_max < ds.goal), "d_max": round(ds.d_max, 1),
             "equiv": [{"label": r["label"], "time": _hms(r["median"])} for r in dm["race_equivalency"]],

@@ -557,6 +557,26 @@
   <div class="sec-sub" style="margin-top:16px"><strong>Durability collapse.</strong> Every effort normalised to today's fitness &amp; a maximal effort — if your durability is consistent they fall onto one power law (slope = β<sub>d</sub>). The band past your longest run is the honest extrapolation to the goal; points run blue (short) → red (long).</div>
   <div class="chart-box chart-canvas-lg"><canvas id="chart-durability"></canvas></div>
   {% endif %}
+  {% if marathon_forecast and marathon_forecast.source == 'model' %}
+  <div class="sec-sub" style="margin-top:12px"><strong>Durability-model params</strong> — what the model unlocks beyond the headline (pair these with the Fitness Dimensions above: β<sub>d</sub> is your <em>performance</em> durability, while the Resilience dimension is the <em>measured</em> drift-onset one).</div>
+  <div style="display:flex;gap:32px;flex-wrap:wrap;margin:8px 0 4px">
+    <div>
+      <div class="kicker">Durability β<sub>d</sub></div>
+      <div class="stat-value-lg">{{ marathon_forecast.beta_d }}</div>
+      <div class="race-hero-subtitle">{{ marathon_forecast.beta_d_ci }}{% if marathon_forecast.beta_d_dominated %} · prior-dominated{% endif %}</div>
+    </div>
+    <div>
+      <div class="kicker">Fitness value (φ)</div>
+      <div style="font-size:15px;font-weight:600;font-family:var(--mono)">{{ marathon_forecast.phi_reading }}</div>
+      {% if marathon_forecast.phi_dominated %}<div class="race-hero-subtitle">prior-dominated</div>{% endif %}
+    </div>
+    <div>
+      <div class="kicker">HR↔pace (κ)</div>
+      <div style="font-size:15px;font-weight:600;font-family:var(--mono)">{{ marathon_forecast.kappa_reading }}</div>
+      {% if marathon_forecast.kappa_dominated %}<div class="race-hero-subtitle">prior-dominated</div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
   {% if profile_takeaways.prediction %}
   <div class="sec-takeaway">{{ profile_takeaways.prediction }}{% if prediction_confidence %} <span class="sec-takeaway-meta">· confidence {{ prediction_confidence.level }}{% if prediction_confidence.reason %} ({{ prediction_confidence.reason }}){% endif %}</span>{% endif %}</div>
   {% elif race_countdown and race_countdown.prediction_mid and race_countdown.target_time %}
