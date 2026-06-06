@@ -74,8 +74,11 @@ flowchart LR
   a_hr --> VDOTp
   r_t --> VDOTp
   VDOTp -->|"get_calibration_anchor (max 180d, sticky)"| ANCH["VDOT anchor"]:::fn
-  ANCH -->|"vdot_to_race_time · daniels paces"| M_VDOT["VDOT card · Pace zones · Readiness verdict"]:::met
-  a_vo2 -->|"predict_race_time + table"| M_FC["Forecast · countdown"]:::met
+  ANCH -->|"vdot_to_race_time · daniels paces"| M_VDOT["VDOT card · Pace zones"]:::met
+  a_d -->|"extract_efforts + chronic_load + LTHR"| EFF["EffortDataset (x·c·h)"]:::fn
+  a_hr --> EFF
+  a_tl --> EFF
+  EFF -->|"marathon durability model (Bayesian)<br/>+ wall penalty (preparedness)"| M_FC["Forecast · countdown · Panel A/B · P(goal)"]:::met
   a_tl -->|"_aggregate_date_range"| WK["weekly_agg: load · zones · monotony"]:::fn
   a_hr -->|"compute_hr_zones (LTHR/MaxHR/AeT)"| HZ["hr_zone"]:::fn
   HZ --> WK
@@ -119,8 +122,9 @@ flowchart LR
   AN -->|"vdot_to_race_time(42.195)<br/>Daniels inverse"| ME["marathon-equiv"]:::fn
   ME --> VC["VDOT card (_vdot_comparison)"]:::out
   EF -->|"vdot_to_race_time"| RH["Race-readiness hero"]:::out
-  VO2 -->|"raw — bypasses anchor"| PR["predict_race_time"]:::dup
-  PR -->|"_vdot_to_marathon_seconds<br/>TABLE (pessimistic)"| FC["Forecast · countdown<br/>chart-marathon-pred"]:::out
+  RT -->|"extract_efforts + chronic_load + LTHR"| EFFP["EffortDataset (x·c·h)"]:::fn
+  HR --> EFFP
+  EFFP -->|"durability model (Bayesian) + wall penalty"| FC["Forecast · countdown · Panel A/B · P(goal)"]:::out
   VO2 -->|"median 28d"| AE["Aerobic dimension"]:::out
 ```
 
@@ -250,8 +254,10 @@ flowchart LR
 | ACWR (ISO acute) | `analysis._compute_acwr` (`analysis.py:840`) | ISO-week acute / 4 ISO-week chronic | **stored** in weekly_agg.acwr |
 | Daniels VDOT from race | `fitness.compute_vdot_from_race` (`fitness.py:247`) | `_oxygen_cost`,`_vo2max_fraction` | VDOT = O2cost(v)/%VO2max(t) |
 | VDOT → race time (inverse) | `fitness.vdot_to_race_time` (`fitness.py:285`) | `compute_vdot_from_race` | binary search |
-| VDOT → marathon seconds (TABLE) | `analysis._vdot_to_marathon_seconds` (`analysis.py:637`) | `_VDOT_TABLE` | **interpolated table — deliberately pessimistic, disagrees with the inverse** |
-| race-time prediction | `analysis.predict_race_time` (`analysis.py:659`) | Riegel `T·(D₂/D₁)^1.06` + `_vdot_to_marathon_seconds` | per-race Riegel + Daniels-table VDOT + band |
+| ~~VDOT → marathon seconds (TABLE)~~ | — | — | **DELETED** (D1) — superseded by the durability model |
+| marathon forecast | `fit.marathon.predict.forecast` + `durability_panel`/`trend_series`/`derived_metrics` | `model.fit` posterior · `preparedness.extrapolation_prior` · `chronic_load` · `maximal_effort_h` | median + 90% interval + P(goal); the single forecast source |
+| chronic load (fitness state) | `fit.training_load.chronic_load[_before]` | daily `training_load` trailing-28d mean | shared with ACWR's chronic denominator |
+| race-time prediction (Riegel) | `analysis.predict_race_time` (`analysis.py`) | Riegel `T·(D₂/D₁)^1.06`; vdot leg via the anchor | per-race extrapolation; the cold-start fallback only |
 | aerobic dim | `fitness._compute_aerobic` (`fitness.py:83`) | activities.vo2max 28d; `_median`,`_compute_trend` | median Garmin VO2max |
 | threshold dim | `fitness._compute_threshold` (`fitness.py:109`) | activities.speed_per_bpm_z2 28d | median Z2 spb |
 | economy dim | `fitness._compute_economy` (`fitness.py:137`) | activities.speed_per_bpm 28d | median spb |
@@ -287,9 +293,9 @@ All builders take `conn`, live in `fit/report/sections/`. Charts in `charts.py:_
 | Quantity | Builder (`file:line`) | Calls / reads |
 |---|---|---|
 | Headline + signal | `_headline` (`cards.py:28`), `_headline_signal` (`:44`) | `headline.generate_headline`; daily_health, weekly_agg.acwr, training_phases |
-| Prediction string | `_prediction_summary` (`predictions.py:10`) | `_vdot_to_marathon_seconds`; race_calendar; activities.vo2max |
-| Race countdown card | `_race_countdown` (`cards.py:1311`) | `narratives.generate_race_countdown`, `predict_race_time`, `_vdot_to_marathon_seconds`; activities.vo2max |
-| Prediction-trend chart data | `_prediction_trend_data` (`cards.py:1916`) | `_vdot_to_marathon_seconds`, `predict_race_time`, `derive_checkpoint_targets`; activities.vo2max |
+| Marathon forecast block | `_marathon_forecast` (`predictions.py`) | durability model: `forecast`+`derived_metrics`+`influence`; degrades to `anchor_race_time` |
+| Race countdown card | `_race_countdown` (`cards.py`) | hero Prediction = model median (`forecast`), anchor fallback; `narratives.generate_race_countdown` |
+| Prediction-trend chart (Panel B) | `_prediction_trend_data` (`cards.py`) | `_model_week_trend` (model median+band per week); `derive_checkpoint_targets` |
 | Attention panel | `_attention_items` (`cards.py:550`) | calibration status/anchor/suggestions, `get_fitness_anchors`; coaching.json |
 | Overview objectives | `_overview_objectives` (`cards.py:1747`) | `derive_objectives`; **latest weekly_agg row** + 4-wk Z2 |
 | Readiness summary | `_readiness_summary` (`cards.py:1820`) | daily_health, weekly_agg.acwr/monotony |
@@ -334,10 +340,10 @@ The same concept computed by different routes, producing values that can disagre
 
 | # | Concept | Competing implementations (`file:line`) | How they differ | Status |
 |---|---|---|---|---|
-| D1 | **VDOT → marathon time** | `analysis._vdot_to_marathon_seconds` table (`analysis.py:637`) **vs** `fitness.vdot_to_race_time` formula (`fitness.py:285`) | Disagree (table deliberately pessimistic). Only `predict_race_time`/forecast use the table; paces/checkpoints/objectives use the formula → forecast & training paces quote different marathon-equivalents | **in flight** — `marathon-durability-model` replaces the forecast path |
-| D2 | **"current VDOT / aerobic capacity"** | raw `activities.vo2max` (predictions, charts, trend-badges, countdown) · `get_calibration_anchor('vdot')` (paces, vdot card, MCP) · `effective_vdot` (readiness hero, capability, dims) · `_compute_aerobic` median Garmin · `get_fitness_anchors` (chart-vo2, attention) | up to 5 "engine" numbers; anchor is canonical but the prediction/chart/badge paths still read raw Garmin (optimistic) | **partially fixed** (anchor wired into paces/dims/MCP/effective_vdot); forecast+charts+badges still on raw Garmin → finish in `marathon-durability-model` |
-| D3 | **marathon/race prediction** | `_prediction_summary` (`predictions.py:10`) · `_race_prediction` (`predictions.py:84`) · `_race_countdown` (`cards.py:1311`) · `_prediction_trend_data` (`cards.py:1916`) · `chart-marathon-pred` (`charts.py:893`) · `_race_readiness_hero` (`cards.py:2155`) | 6 builders; some Riegel+table range, one "conservative upper bound", one from effective_vdot — Overview prediction ≠ Profile readiness verdict; Riegel race-source (result_time vs COALESCE) inconsistent | **in flight** — model unifies the forecast (one source of truth per IA/integration spec) |
-| D4 | **durability** | `_compute_resilience` MAX onset (`fitness.py:165`, via `compute_cardiac_drift`) · run-story inline onset (`periodization.py:92`) · `narratives.detect_walk_break_need` cross-run proxy (`:427`) · fixed Riegel exp 1.06 in `predict_race_time` · (future) model `beta_d` | 4–5 "how well you hold up" computations, no shared definition | **open** — design `marathon-durability-model` to present resilience + `beta_d` as two lenses; consolidate the drift definition |
+| D1 | **VDOT → marathon time** | ~~`_vdot_to_marathon_seconds` table vs `vdot_to_race_time` formula~~ | — | **RESOLVED** — the table + `_VDOT_TABLE` are **deleted**; the forecast is the durability model, training paces use the formula inverse |
+| D2 | **"current VDOT / aerobic capacity"** | raw `activities.vo2max` (predictions, charts, trend-badges, countdown) · `get_calibration_anchor('vdot')` (paces, vdot card, MCP) · `effective_vdot` (readiness hero, capability, dims) · `_compute_aerobic` median Garmin · `get_fitness_anchors` (chart-vo2, attention) | up to 5 "engine" numbers; anchor is canonical but the prediction/chart/badge paths still read raw Garmin (optimistic) | **mostly fixed** — paces/dims/MCP/effective_vdot on the anchor; the forecast/trend/badge paths now read the durability model (off raw Garmin VO2max). `chart-vo2` keeps Garmin VO2max as the engine-trend (correct) |
+| D3 | **marathon/race prediction** | `_marathon_forecast`, `_race_countdown`, `_race_readiness_hero`, `_prediction_trend_data`, `chart-marathon-pred`, `chart-durability`, MCP `_ctx_forecast` | — | **RESOLVED** — all read the one durability-model forecast (median+interval+P); Overview hero/block/trend + Profile hero/Panel A/Panel B agree (verified 4:03). Degrade to the anchor, never the table |
+| D4 | **durability** | `_compute_resilience` drift-onset (HR:pace) · long-run **pace-fade** (speed) · model `beta_d` | — | **ADDRESSED** — glossary states the two siblings (Resilience = HR-decoupling, Pace-fade = speed give-back); dashboard leads with the measured signals, `beta_d` as the optimistic bound. Drift-definition consolidation (D5) still open |
 | D5 | **cardiac-drift onset** | `compute_cardiac_drift` library (`fit_file.py:220`) **vs** inline chart rule (`charts.py:622,664`) | two independent onset algorithms on the same splits → different km for the same run | **open** (small) — route charts through the library primitive |
 | D6 | **ACWR** | `compute_rolling_acwr` (live, `analysis.py:530`) **vs** `_compute_acwr` stored in weekly_agg (`:840`) | acute term differs (rolling-7d vs ISO-week); **alert fires on rolling but auto-dismisses on ISO** (`alerts.py:132` vs `:294`) | **open** — pick one acute definition; align fire/dismiss |
 | D7 | **weekly volume / objectives** | `_overview_objectives` latest ISO `weekly_agg` (`cards.py:1747`) **vs** `_training_objectives` `compute_rolling_week` (`:3453`) | Overview "Volume" (ISO week) ≠ Training "Volume" (rolling 7d) for the same day; Z2 uses 4-wk-avg vs rolling | **open** — IA change should make Overview summarize the Training number |
@@ -395,6 +401,9 @@ these meanings; a name that contradicts the glossary is a bug.
   → median + 90% interval + P(goal). Sourced from `predict.forecast` everywhere (Overview
   hero/block/trend, Profile hero/Panel A/Panel B, `fit forecast` CLI, MCP coaching
   context). The old `_vdot_to_marathon_seconds` VDOT→time table is **deleted** (D1).
+  Maximal-effort HR is LTHR-relative + goal-adaptive (`maximal_effort_h`: ≈LTHR+10 at 5k →
+  LTHR at the half → LTHR−6 at the marathon), not an absolute constant — see design.md
+  "Constants & assumptions". β_d = durability exponent; φ = fitness value; κ = HR↔pace.
   Degrades to the calibrated-VDOT anchor (`anchor_race_time`) when the model isn't fit.
 - **β_d (durability exponent)** — the fitted Riegel power-law slope. The *optimistic*
   cross-distance bound ("what holds if the power law extends"); the dashboard leads with

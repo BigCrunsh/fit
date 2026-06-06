@@ -260,3 +260,51 @@ Posterior cached to `~/.fit/marathon_posterior.nc`; refit on `fit sync` (flagged
    duration (±2 bpm ≈ ±3 min). Re-derive relative to the *actual* LTHR anchor, not 172.
 5. **Freshness term** `psi·TSB` — defer (roadmap).
 ```
+
+## Constants & assumptions — justification (audit)
+
+Every fixed number the change introduces, its source, and whether it's personalised or
+reusable. Rule: nothing is a silent magic number — each is cosmetic, a reuse of an
+existing concept, a data-personalised default, or a labelled assumption the watch layer
+(Decision 9) + a 30 km+ effort validate.
+
+| Constant | Value | Source / justification | Personalised? Reusable? |
+|---|---|---|---|
+| `_MAXIMAL_HR_OFFSET` schedule | 5k +10 / 10k +5 / HM 0 / M −6 bpm vs LTHR | physiological "maximal race HR rises above threshold for short, falls below for long". **Validated vs the athlete's own race max-HRs**: 10k max 179≈+5(178), HM max 173=+0(173). Marathon (−6) is the irreducible assumption (no marathon raced; handover §8). | **Personalised**: LTHR-relative (tracks the calibrated anchor) + goal-adaptive. Reuses the LTHR anchor. *Not* fit per-athlete from race HRs — those are effort-confounded (their 5ks are submaximal ~172), the exact problem the model exists for. |
+| `PRIOR_BETA_D` | N(1.06, 0.05) | Riegel textbook exponent; weak SD | Posterior updates it; flagged `prior_dominated` when the data can't (F4) |
+| `PRIOR_PHI`,`PRIOR_KAPPA` | N(0, 0.05) | weakly-informative; a >5%/unit effect is implausible | data-identified |
+| `PRIOR_SIGMA` | HalfNormal(0.06) | race log-time noise ≈3–6% | data |
+| `PRIOR_NU` | Gamma(2, 0.1) | standard Student-T robustness | data |
+| `alpha` prior | N(log(goal·5.5), 0.5) | goal-adaptive centre (~5:30/km crude); wide | cosmetic — data dominates the intercept |
+| `CHRONIC_WINDOW_DAYS` | 28 | **reuses ACWR's chronic window** (4 ISO weeks) | one shared load concept (F2) |
+| `CHRONIC_REF/SCALE` | 50 / 10 | cosmetic centring of `c` (doesn't change β_d; φ rescales) | matches the prototype convention |
+| `H_DIV` | 5 | κ expressed per 5 bpm | cosmetic |
+| `NU` (wall penalty) | 4 | labelled heavy-tail convention (smallest integer with finite kurtosis); headline far more sensitive to scale | assumption, monitored |
+| `GENERIC_WALL_SCALE` | 0.04 | population wall scale (median penalty ≈+2%) — the **default** | personalised by the pace-fade `shrink`; labelled when defaulted |
+| `SHRINK_FLOOR` | 0.5 | never <½ the default until a goal-distance effort validates | tuning knob — **flagged**, monitored (Decision 9) |
+| `FADE_LO / FADE_HI` | 0% / 8% | pace-fade credit band (hold→floor, ≥8% fade→no credit) | tuning knob — **flagged**, calibrate vs data |
+| `QUALITY_MIN_KM` | 15 | "long run" threshold | relates to the existing long-run rule |
+| `QUALITY_WINDOW_DAYS` | 112 | marathon-build horizon (16 wk) | assumption |
+| `QUALITY_EFFORT` | Moderate+ | **reuses `effort_class`** | reuse |
+| `_STD_DISTANCES` | 5k/10k/HM/M | standard race distances for the equivalency table | display choice |
+
+**Residual tuning knobs** (not yet data-calibrated): `GENERIC_WALL_SCALE`, `SHRINK_FLOOR`,
+`FADE_HI`, `NU`. All are extrapolation-penalty parameters — the part with *no* validating
+data until a 30 km+ effort. They are labelled, defaulted-conservatively, and the
+Decision-9 watch layer surfaces their effect; the 30 km+ effort is what calibrates them.
+
+## Improvements identified (backlog)
+
+- **`forecast_context(conn)` refactor** (efficiency/altitude): the posterior is loaded ~5×
+  and `extract_efforts`/`extrapolation_prior` run 3–5× per report build. One shared
+  context object passed to all consumers would collapse this. Deferred from /simplify
+  (5-function refactor, regression risk). Highest-value cleanup.
+- **MaxHR cap on `maximal_effort_h`**: short-distance offsets (LTHR+10) are unbounded; for
+  an athlete with a small LTHR→MaxHR reserve they could exceed MaxHR. Cap at the calibrated
+  MaxHR (reuse the anchor). Not binding for the current athlete (183 < 195).
+- **Calibrate the penalty knobs** (`GENERIC_WALL_SCALE`/`FADE_HI`/`SHRINK_FLOOR`/`NU`) once
+  a 30 km+ effort exists — the validation overlay (Decision 9) is the mechanism.
+- **Automate the prior-sensitivity re-fit** (Decision 5) + add the PyMC ppc / LOO-PIT plots
+  (Decision 8) — currently a manual QA step.
+- **F3 (VDOT-anchor maximality bias)**: the forecast models effort via `h`, but the VDOT
+  *anchor* still assumes near-maximal races — reconcile in a follow-up.
