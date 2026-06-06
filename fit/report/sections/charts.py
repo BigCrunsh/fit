@@ -11,6 +11,15 @@ from fit.report.sections import SAFE, CAUTION, DANGER, Z1, Z2, Z3, Z4, Z5, ACCEN
 logger = logging.getLogger(__name__)
 
 
+def _distance_color(d, dmin, dmax):
+    """Blue (short) → yellow (mid) → red (long) — RdYlBu_r, matching marathon_v2's
+    distance colouring. Returns a hex string."""
+    lo, mid, hi = (0x45, 0x75, 0xb4), (0xfe, 0xe0, 0x90), (0xd7, 0x30, 0x27)
+    t = 0.0 if dmax <= dmin else max(0.0, min(1.0, (d - dmin) / (dmax - dmin)))
+    a, b, f = (lo, mid, t * 2) if t < 0.5 else (mid, hi, (t - 0.5) * 2)
+    return "#%02x%02x%02x" % tuple(round(a[i] + (b[i] - a[i]) * f) for i in range(3))
+
+
 def _week_to_iso_date(week_str):
     """Convert ISO week string (e.g., '2026-W14') to ISO date of that Sunday."""
     from datetime import datetime
@@ -1000,6 +1009,68 @@ def _all_charts(conn):
                                    "y": {"reverse": True, "grid": {"color": "rgba(255,255,255,0.03)"},
                                          "title": {"display": True, "text": "time (lower = faster)"}}}}
         })})
+
+    # Panel A — durability collapse (marathon_v2). Distance×time on log-log; every effort
+    # normalised to today's fitness + maximal effort collapses onto one β_d power law,
+    # with the grey band fanning out past d_max (the honest extrapolation).
+    try:
+        from fit.marathon import model as _M
+        _post = _M.load_posterior()
+        if _post is not None:
+            from fit.marathon.predict import durability_panel, _current_c
+            from fit.marathon.preparedness import extrapolation_prior
+            from fit.marathon.features import extract_efforts
+            _ds = extract_efforts(conn)
+            _pr = extrapolation_prior(conn, _ds.goal)
+            dp = durability_panel(_post, _ds, c_ref=_current_c(conn),
+                                  maximal_h=(167 - _ds.lthr) / 5.0,
+                                  extrapolation_scale=_pr["scale"], nu=_pr["nu"])
+            dmin = min(p["distance_km"] for p in dp["points"])
+            dmax = max(p["distance_km"] for p in dp["points"])
+            pts = [{"x": round(p["distance_km"], 2), "y": round(p["minutes"], 1)} for p in dp["points"]]
+            pt_colors = [_distance_color(p["distance_km"], dmin, dp["goal"]) for p in dp["points"]]
+            curve = [{"x": round(c["distance_km"], 2), "y": round(c["median"], 1)} for c in dp["curve"]]
+            hi = [{"x": round(c["distance_km"], 2), "y": round(c["hi"], 1)} for c in dp["curve"]]
+            lo = [{"x": round(c["distance_km"], 2), "y": round(c["lo"], 1)} for c in dp["curve"]]
+            charts.append({"id": "chart-durability", "config": json.dumps({
+                "type": "scatter",
+                "data": {"datasets": [
+                    {"label": "90% band", "data": hi, "showLine": True, "fill": "+1",
+                     "backgroundColor": ACCENT + "22", "borderColor": "rgba(0,0,0,0)",
+                     "pointRadius": 0, "order": 3},
+                    {"label": "_lo", "data": lo, "showLine": True, "fill": False,
+                     "borderColor": "rgba(0,0,0,0)", "pointRadius": 0, "order": 3},
+                    {"label": "durability curve (β_d=%.3f)" % dp["beta_d"], "data": curve,
+                     "showLine": True, "borderColor": ACCENT, "borderWidth": 2,
+                     "pointRadius": 0, "tension": 0.1, "order": 2},
+                    {"label": "efforts (normalised)", "data": pts, "showLine": False,
+                     "pointBackgroundColor": pt_colors, "pointBorderColor": "#0008",
+                     "pointBorderWidth": 1, "pointRadius": 5, "order": 1},
+                ]},
+                "options": {"responsive": True, "maintainAspectRatio": False,
+                    "plugins": {
+                        "legend": {"display": True, "position": "bottom",
+                                   "labels": {"boxWidth": 12}},
+                        "annotation": {"annotations": {
+                            "dmax": {"type": "line", "xMin": round(dp["d_max"], 2), "xMax": round(dp["d_max"], 2),
+                                     "borderColor": CAUTION + "70", "borderWidth": 1, "borderDash": [4, 3],
+                                     "label": {"content": "longest run", "display": True, "position": "start",
+                                               "rotation": 90, "font": {"size": 8}, "color": CAUTION,
+                                               "backgroundColor": "rgba(0,0,0,0)"}},
+                            "goal": {"type": "line", "xMin": round(dp["goal"], 2), "xMax": round(dp["goal"], 2),
+                                     "borderColor": ACCENT + "90", "borderWidth": 1,
+                                     "label": {"content": "goal", "display": True, "position": "end",
+                                               "font": {"size": 8}, "color": ACCENT,
+                                               "backgroundColor": "rgba(0,0,0,0)"}}}}},
+                    "scales": {
+                        "x": {"type": "logarithmic", "title": {"display": True, "text": "distance (km)"},
+                              "min": dmin * 0.9, "max": dp["goal"] * 1.08,
+                              "grid": {"color": "rgba(255,255,255,0.04)"}},
+                        "y": {"type": "logarithmic", "title": {"display": True, "text": "time @ today's fitness, max effort"},
+                              "grid": {"color": "rgba(255,255,255,0.04)"}}}}
+            }, ensure_ascii=False)})
+    except Exception as e:  # never break the report on the forecast chart
+        logger.debug("durability chart skipped: %s", e)
 
     # Plan adherence mirrored bar chart (Training tab)
     try:
