@@ -2240,16 +2240,29 @@ def _race_readiness_hero(conn):
         if effective_vdot and required_vdot:
             result["vdot_gap"] = round(required_vdot - effective_vdot, 1)
 
-        # What can current fitness produce?
-        if effective_vdot:
+        # What can current fitness produce? Prefer the durability-model median so this
+        # matches the Overview headline + Panel A (one forecast across the dashboard);
+        # the VDOT-anchor time is the fallback. effective_vdot still shows as the engine.
+        pred_secs = None
+        try:
+            from fit.marathon.predict import forecast as _model_forecast
+            from fit.marathon import model as _marathon_model
+            _post = _marathon_model.load_posterior()
+            if _post is not None:
+                _fc = _model_forecast(conn, avg_hr=167, goal_seconds=target_secs, posterior=_post)
+                if _fc:
+                    pred_secs = _fc["median"]
+                    result["prediction_source"] = "model"
+        except Exception:
+            pred_secs = None
+        if pred_secs is None and effective_vdot:
             pred_secs = vdot_to_race_time(effective_vdot, distance_km)
-            if pred_secs:
-                h = int(pred_secs // 3600)
-                m = int((pred_secs % 3600) // 60)
-                s = int(pred_secs % 60)
-                result["predicted_time"] = f"{h}:{m:02d}:{s:02d}"
-                gap_min = round((pred_secs - target_secs) / 60)
-                result["gap_minutes"] = gap_min
+        if pred_secs:
+            h = int(pred_secs // 3600)
+            m = int((pred_secs % 3600) // 60)
+            s = int(pred_secs % 60)
+            result["predicted_time"] = f"{h}:{m:02d}:{s:02d}"
+            result["gap_minutes"] = round((pred_secs - target_secs) / 60)
 
         # Verdict based on gap and trend
         gap = result.get("vdot_gap")
@@ -2275,6 +2288,21 @@ def _race_readiness_hero(conn):
                 result["verdict"] = "at_risk"
         else:
             result["verdict"] = "at_risk"
+
+        # When the headline is the model, the verdict must agree with the model gap
+        # (not the VDOT-engine gap) so "ready" never sits next to a "4 min short" time.
+        if result.get("prediction_source") == "model" and result.get("gap_minutes") is not None:
+            gm = result["gap_minutes"]
+            if gm <= 0:
+                result["verdict"] = "ready"
+            elif gm <= 2:
+                result["verdict"] = "almost"
+            elif days_left and days_left > 90:
+                result["verdict"] = "on_track"   # a few min to close with months left
+            elif gm <= 8:
+                result["verdict"] = "tight"
+            else:
+                result["verdict"] = "at_risk"
 
         return result
     except Exception as e:

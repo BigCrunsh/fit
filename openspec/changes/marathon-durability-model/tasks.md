@@ -31,8 +31,8 @@
 - [x] Tests (`tests/test_marathon_model.py`): overlay wider, pen=0 within range, p-ceiling monotone, derived structure, required-chronic, trend, influence (slow)
 
 ## 6. Detailed marathon view (the marathon_v2.png 2-panel chart + watch layer)
-- [~] **Panel B — fitness-tracking trend** (marathon-equiv vs fitness over time, per-effort points by distance): re-source the Overview prediction-trend chart from `trend_series` (IN PROGRESS); replaces the table-fed line
-- [ ] **Panel A — durability collapse** (NEW; was "optional"): log-log distance×time, every effort normalised to reference fitness+maximal effort collapsing onto one power law of slope β_d, with the grey extrapolation band to the goal; per-effort points coloured by distance. (`predict.durability_panel` data builder + chart)
+- [x] **Panel B — trend** re-sourced from the model on BOTH Overview (chart-pred-trend) and Profile (chart-marathon-pred); table-fed line retired
+- [x] **Panel A — durability collapse** (`durability_panel` + chart-durability): log-log collapse, β_d curve, grey extrapolation band, distance-coloured points, longest-run/goal markers. Consistent with headline (curve@goal == 4:03)
 - [ ] Decomposed headline + baselines (`GENERIC_WALL_SCALE`, zero-penalty); penalty/`extrapolation_scale` tracked over time
 - [ ] Unified durability panel: existing `resilience` drift-onset + new pace-fade + long-run distance progression (state the drift-vs-pace-fade difference)
 - [ ] **Co-locate the fitness dimensions** (aerobic/threshold/economy/resilience) with the marathon view + the model coefficients (β_d/φ/κ) as tracked "fitness params" — SCOPE: confirm with user (existing dims panel vs model coeffs vs both)

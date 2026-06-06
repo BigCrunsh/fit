@@ -952,9 +952,21 @@ def _all_charts(conn):
     # This replaces the prior approach of sharing a category label axis with
     # YYYY-MM strings, which gave even spacing instead of true date spacing.
 
-    # Dataset 1: VDOT line (monthly VO2max → predicted time). Mid-month
-    # (YYYY-MM-15) keeps each point visually centered within its month.
-    if len(vo2_monthly) >= 3:
+    # Dataset 1: forecast line. Prefer the durability MODEL (median marathon-equiv at
+    # each month's chronic load — Profile's Panel B, consistent with the Overview trend);
+    # fall back to the retired VDOT table only when the model isn't fit.
+    from fit.report.sections.cards import _model_week_trend
+    month_dates = [v["month"] + "-15" for v in vo2_monthly]
+    model_line = _model_week_trend(conn, month_dates) if month_dates else None
+    if model_line is not None:
+        pts = [{"x": d, "y": round(model_line[d][0], 1)} for d in month_dates if d in model_line]
+        if pts:
+            datasets.append({
+                "label": "Forecast (durability model)", "data": pts,
+                "borderColor": ACCENT, "backgroundColor": ACCENT + "15", "fill": False,
+                "borderWidth": 2, "pointRadius": 2, "spanGaps": True,
+            })
+    elif len(vo2_monthly) >= 3:
         from fit.analysis import _vdot_to_marathon_seconds
         vdot_points = []
         for v in vo2_monthly:
