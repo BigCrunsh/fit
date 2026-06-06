@@ -249,3 +249,29 @@ replaces those charts, and the table + `_VDOT_TABLE` are deleted then. Building 
 throwaway race-VDOT time-series now was rejected; relabelling to a raw-VO2max axis
 was rejected (changes the chart's meaning for an interim).
 
+
+---
+
+## Resolution status (marathon-durability-model — 2026-06)
+
+The Bayesian durability model is built and wired; the findings above are addressed:
+
+- **F1 — three forecasts → one.** RESOLVED. `_vdot_to_marathon_seconds` + `_VDOT_TABLE`
+  are **deleted** (D1 Phase 2). Every surface — Overview hero + headline block + trend,
+  Profile hero + Panel A + Panel B, the `fit forecast` CLI, and the MCP coaching context
+  — reads the single model forecast (one number everywhere; verified consistent).
+- **F2 — two load models.** RESOLVED. One shared `chronic_load` primitive
+  (`fit/training_load.py`); the model's fitness state `c` and ACWR's chronic denominator
+  are the same concept. `training_load` marked opaque in the glossary.
+- **F3 — maximality bias in the VDOT anchor.** PARTIALLY addressed: the *forecast* now
+  models effort via the HR covariate `h` (a submaximal effort isn't read as poor fitness).
+  The VDOT *anchor* itself still assumes near-maximal races (documented; separate change).
+- **F4 — β_d prior-dominated.** ADDRESSED. `derived_metrics` flags `prior_dominated`
+  (shown on the dashboard + coaching context) so the exponent is never sold as measured.
+- **F5 — 2× extrapolation; durability readouts disagree.** ADDRESSED. The drift-informed
+  (preparedness) `HalfStudentT` wall penalty widens the band past `d_max`; an
+  "⚠ unvalidated extrapolation" banner + the 30 km+ validation overlay are shown; Panel A
+  draws the grey extrapolation band; durability leads with the measured pace-fade/resilience,
+  β_d as the optimistic bound.
+- **F6 — stale model must not revert to the bad path.** RESOLVED. Graceful degradation is
+  to the **calibrated-VDOT anchor headline** (loud, no interval), never the deleted table.

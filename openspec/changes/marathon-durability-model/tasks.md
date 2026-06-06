@@ -55,8 +55,8 @@
 - [x] Deleted `_vdot_to_marathon_seconds` + `_VDOT_TABLE`; removed the dead TestDanielsVDOT table tests. D1 Phase 2 closed.
 
 ## 10. Contract & docs
-- [ ] Sync MCP coaching context + `fit-coach` SKILL.md to the new headline semantics (`CLAUDE.md` contract)
-- [ ] Update `DATA_LINEAGE.md` (model lineage; `training_load` opaque) + `LINEAGE_REVIEW.md` status (F2/F4/F5/F6 closed)
+- [x] MCP coaching context (`_ctx_forecast`) + `fit-coach` SKILL.md synced to the model headline (median+interval+P-ceiling, unvalidated caveat, chronic-load lever)
+- [x] `DATA_LINEAGE.md` glossary (marathon forecast = model; table deleted) + `LINEAGE_REVIEW.md` F1–F6 resolution status
 - [ ] Def-box: extrapolation penalty, maximal-HR input, interval ≠ race-day spread, P = fitness-sufficiency ceiling
 
 ## 11. Validate

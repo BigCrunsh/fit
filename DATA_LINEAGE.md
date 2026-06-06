@@ -391,6 +391,11 @@ these meanings; a name that contradicts the glossary is a bug.
 - **Effort (qualifying)** — a continuous intensity-bearing run: a race, or
   tempo/progression at Hard/Very-Hard effort. Intervals are excluded (their distance
   includes recoveries). Maximality is carried by HR (`h`), never assumed from the label.
+- **Marathon forecast** — the single race-day headline: `fit/marathon/` Bayesian model
+  → median + 90% interval + P(goal). Sourced from `predict.forecast` everywhere (Overview
+  hero/block/trend, Profile hero/Panel A/Panel B, `fit forecast` CLI, MCP coaching
+  context). The old `_vdot_to_marathon_seconds` VDOT→time table is **deleted** (D1).
+  Degrades to the calibrated-VDOT anchor (`anchor_race_time`) when the model isn't fit.
 - **β_d (durability exponent)** — the fitted Riegel power-law slope. The *optimistic*
   cross-distance bound ("what holds if the power law extends"); the dashboard leads with
   the measured Resilience/Pace-fade signals when they disagree.
