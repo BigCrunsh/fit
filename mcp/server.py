@@ -556,7 +556,7 @@ def _ctx_forecast(conn) -> list[str]:
     the unvalidated-extrapolation caveat, and the chronic-load lever.
     """
     try:
-        from fit.marathon.predict import forecast as run_forecast, required_chronic_for_goal, _current_c, MAXIMAL_MARATHON_HR
+        from fit.marathon.predict import forecast as run_forecast, required_chronic_for_goal, _current_c
         from fit.marathon import model as _M
         from fit.marathon.features import extract_efforts
     except ImportError:
@@ -579,7 +579,7 @@ def _ctx_forecast(conn) -> list[str]:
         except (ValueError, IndexError):
             goal_secs = None
 
-    fc = run_forecast(conn, avg_hr=MAXIMAL_MARATHON_HR, goal_seconds=goal_secs, posterior=post)
+    fc = run_forecast(conn, goal_seconds=goal_secs, posterior=post)
     if not fc:
         return []
 

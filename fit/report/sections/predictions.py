@@ -25,10 +25,13 @@ def _goal_seconds(conn):
         return None
 
 
-def _marathon_forecast(conn, maximal_hr=167):
+def _marathon_forecast(conn, maximal_hr=None):
     """Bayesian forecast section for the dashboard — a template-ready dict, always
     present (`available`/`source`), degrading to the calibrated-VDOT anchor headline when
-    the model can't run (never the retired table; design Decision 7)."""
+    the model can't run (never the retired table; design Decision 7).
+
+    `maximal_hr=None` → the goal's distance-appropriate, LTHR-relative maximal effort
+    (`maximal_effort_h`); pass an absolute HR only to override."""
     goal_secs = _goal_seconds(conn)
 
     def _anchor(reason):
@@ -63,8 +66,7 @@ def _marathon_forecast(conn, maximal_hr=167):
             return _anchor("forecast could not be produced")
         ex = fc["extrapolation"]
         c = _current_c(conn)
-        dm = derived_metrics(idata, ds, c=c, maximal_h=(maximal_hr - ds.lthr) / 5.0,
-                             extrapolation_scale=ex["scale"], nu=ex["nu"])
+        dm = derived_metrics(idata, ds, c=c, extrapolation_scale=ex["scale"], nu=ex["nu"])
         import math
         bd = dm["durability_beta_d"]
         phi, kap = dm["fitness_value_phi"], dm["effort_kappa"]

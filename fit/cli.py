@@ -106,7 +106,7 @@ def _goal_seconds(conn):
 
 @main.command()
 @click.option("--refit", is_flag=True, help="Refit the model now instead of using the cached posterior.")
-@click.option("--hr", type=int, default=167, help="Maximal goal-effort avg HR (an input assumption; ±2 bpm ≈ ±3 min).")
+@click.option("--hr", type=int, default=None, help="Override the maximal goal-effort avg HR (default: the goal's distance-appropriate, LTHR-relative effort; ±2 bpm ≈ ±3 min).")
 def forecast(refit, hr):
     """Bayesian marathon forecast — median + 90% interval + P(goal-ceiling).
 
@@ -162,10 +162,11 @@ def forecast(refit, hr):
 
     ex = fc["extrapolation"]
     c = _current_c(conn)
-    dm = derived_metrics(idata, ds, c=c, maximal_h=(hr - ds.lthr) / 5.0,
-                         extrapolation_scale=ex["scale"], nu=ex["nu"])
+    dm = derived_metrics(idata, ds, c=c, extrapolation_scale=ex["scale"], nu=ex["nu"])
 
-    console.print(f"\n[bold]Marathon forecast[/bold] (goal {ds.goal:g} km, maximal effort HR {hr}, LTHR {ds.lthr:g})")
+    from fit.marathon.predict import maximal_effort_h
+    eff_hr = hr if hr is not None else round(ds.lthr + maximal_effort_h(ds.goal) * 5)
+    console.print(f"\n[bold]Marathon forecast[/bold] (goal {ds.goal:g} km, maximal effort HR {eff_hr}, LTHR {ds.lthr:g})")
     console.print(f"  [bold cyan]{_fmt_hms(fc['median'])}[/bold cyan]  "
                   f"90% [{_fmt_hms(fc['lo'])} … {_fmt_hms(fc['hi'])}]")
     if goal_secs and "p_ceiling" in fc:

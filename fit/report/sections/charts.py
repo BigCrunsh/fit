@@ -1017,13 +1017,12 @@ def _all_charts(conn):
         from fit.marathon import model as _M
         _post = _M.load_posterior()
         if _post is not None:
-            from fit.marathon.predict import durability_panel, _current_c, MAXIMAL_MARATHON_HR
+            from fit.marathon.predict import durability_panel, _current_c
             from fit.marathon.preparedness import extrapolation_prior
-            from fit.marathon.features import extract_efforts, H_DIV
+            from fit.marathon.features import extract_efforts
             _ds = extract_efforts(conn)
             _pr = extrapolation_prior(conn, _ds.goal)
             dp = durability_panel(_post, _ds, c_ref=_current_c(conn),
-                                  maximal_h=(MAXIMAL_MARATHON_HR - _ds.lthr) / H_DIV,
                                   extrapolation_scale=_pr["scale"], nu=_pr["nu"])
             dmin = min(p["distance_km"] for p in dp["points"])
             dmax = max(p["distance_km"] for p in dp["points"])
