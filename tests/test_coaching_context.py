@@ -54,7 +54,7 @@ def conn():
     # Recent LTHR calibration so it isn't flagged stale in unrelated assertions.
     c.execute(
         "INSERT INTO calibration (metric, value, method, confidence, date, active) "
-        "VALUES ('lthr', 172, 'race_extract', 'high', date('now','-10 days'), 1)"
+        "VALUES ('lthr', 172, 'race_candidate', 'high', date('now','-10 days'), 1)"
     )
     c.commit()
     return c
@@ -160,7 +160,7 @@ class TestZoneDistributionWindow:
         for wk in ["2025-W50", "2025-W51", "2025-W52", "2026-W01", "2026-W02"]:
             c.execute("INSERT INTO weekly_agg VALUES (?, 40, 40)", (wk,))
         c.commit()
-        line = [l for l in server._ctx_training(c) if "Zone distribution" in l][0]
+        line = [ln for ln in server._ctx_training(c) if "Zone distribution" in ln][0]
         assert "Z4+Z5=0.0%" in line       # recent reality
         assert "Z4+Z5=40" not in line     # not the 6-month artifact
 
@@ -172,7 +172,7 @@ class TestZoneDistributionWindow:
                              ("2026-W21", 60, 8), ("2026-W22", 72, 6)]:
             c.execute("INSERT INTO weekly_agg VALUES (?, ?, ?)", (wk, z12, z45))
         c.commit()
-        line = [l for l in server._ctx_training(c) if "Zone distribution" in l][0]
+        line = [ln for ln in server._ctx_training(c) if "Zone distribution" in ln][0]
         # avg of the 4 non-null weeks: z45 = (5+10+8+6)/4 = 7.25
         assert "Z4+Z5=7.2" in line or "Z4+Z5=7.3" in line
 
@@ -183,7 +183,7 @@ class TestFitnessAnchorLine:
         # The standardized anchor reads a vdot calibration row, not a raw activity.
         conn.execute(
             "INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
-            "VALUES ('vdot', 41, 'race_estimate', 'low', date('now','-10 days'), 0, '[]')"
+            "VALUES ('vdot', 41, 'race_observation', 'low', date('now','-10 days'), 0, '[]')"
         )
         conn.execute(
             "INSERT INTO activities (id, date, type, distance_km, duration_min, "

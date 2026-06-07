@@ -258,6 +258,31 @@ class TestFetchHealth:
         h = results[0]
         assert h["training_readiness"] == 65
 
+    def test_readiness_takes_morning_peak_not_post_activity_crash(self):
+        # Garmin recalculates readiness through the day; the LATEST reading crashes after a
+        # hard run (recovery-time spike). We must capture the morning/pre-activity PEAK —
+        # how recovered you went INTO the day — not the post-run value.
+        api = self._mock_api()
+        api.get_training_readiness.return_value = [
+            {"score": 12, "level": "POOR", "calendarDate": "2025-01-01", "timestamp": "2025-01-01T06:12:00.0"},
+            {"score": 76, "level": "HIGH", "calendarDate": "2025-01-01", "timestamp": "2025-01-01T04:00:00.0"},
+            {"score": 75, "level": "HIGH", "calendarDate": "2025-01-01", "timestamp": "2025-01-01T00:47:00.0"},
+        ]
+        h = fetch_health(api, date(2025, 1, 1), date(2025, 1, 1))[0]
+        assert h["training_readiness"] == 76        # morning peak, NOT the post-run 12
+        assert h["readiness_level"] == "HIGH"
+
+    def test_readiness_ignores_prior_day_reading(self):
+        # The day's list can include the previous night's reading — it must not leak in.
+        api = self._mock_api()
+        api.get_training_readiness.return_value = [
+            {"score": 40, "level": "LOW", "calendarDate": "2025-01-01", "timestamp": "2025-01-01T16:00:00.0"},
+            {"score": 73, "level": "MODERATE", "calendarDate": "2025-01-01", "timestamp": "2025-01-01T04:15:00.0"},
+            {"score": 90, "level": "PRIME", "calendarDate": "2024-12-31", "timestamp": "2024-12-31T22:47:00.0"},
+        ]
+        h = fetch_health(api, date(2025, 1, 1), date(2025, 1, 1))[0]
+        assert h["training_readiness"] == 73        # same-day peak, NOT the 90 from the night before
+
     def test_multi_day_range(self):
         api = self._mock_api()
         results = fetch_health(api, date(2025, 1, 1), date(2025, 1, 3))

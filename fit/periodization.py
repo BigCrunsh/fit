@@ -89,16 +89,12 @@ def _summarize_splits(splits: list, run: dict) -> dict:
     if n == 0:
         return {}
 
-    # Find drift onset (if any)
+    # Find drift onset (if any) — via the canonical, grade-adjusted compute_cardiac_drift
+    # (single source of truth; was a separate HR-only ×1.05 heuristic).
     drift_onset = None
     if n >= 4:
-        first_half_hr = [s["avg_hr"] for s in split_dicts[:n // 2] if s.get("avg_hr")]
-        if first_half_hr:
-            baseline_hr = sum(first_half_hr) / len(first_half_hr)
-            for s in split_dicts[n // 2:]:
-                if s.get("avg_hr") and s["avg_hr"] > baseline_hr * 1.05:
-                    drift_onset = s["split_num"]
-                    break
+        from fit.fit_file import compute_cardiac_drift
+        drift_onset = compute_cardiac_drift(split_dicts).get("drift_onset_km")
 
     # Pace consistency
     paces = [s["pace_sec_per_km"] for s in split_dicts if s.get("pace_sec_per_km")]

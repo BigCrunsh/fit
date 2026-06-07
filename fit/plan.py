@@ -895,25 +895,12 @@ def get_readiness_recommendation(conn, config):
     )
     threshold = base_threshold
 
-    # Check for return-to-run (gap >= 14 days in last 30 days)
-    gap_check = conn.execute(f"""
-        SELECT MAX(date) as last_run FROM activities
-        WHERE type IN {RUNNING_TYPES_SQL}
-          AND date < date('now', '-14 days')
-          AND date >= date('now', '-60 days')
-    """).fetchone()
-    recent_run = conn.execute(f"""
-        SELECT MIN(date) as first_recent FROM activities
-        WHERE type IN {RUNNING_TYPES_SQL} AND date >= date('now', '-14 days')
-    """).fetchone()
-
-    if gap_check and gap_check["last_run"] and recent_run and recent_run["first_recent"]:
-        gap_days = (
-            date.fromisoformat(recent_run["first_recent"])
-            - date.fromisoformat(gap_check["last_run"])
-        ).days
-        if gap_days >= 14:
-            threshold = max(threshold, 50)
+    # Return-to-run: raise the gate to 50 during a training gap. Single source —
+    # fit.analysis.detect_training_gap — shared with run_alerts and the alert
+    # auto-dismiss, instead of a second hand-rolled gap query (D12).
+    from fit.analysis import detect_training_gap
+    if detect_training_gap(conn):
+        threshold = max(threshold, 50)
 
     if readiness is None:
         return {

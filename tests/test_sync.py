@@ -287,3 +287,28 @@ class TestGetAffectedWeeks:
         for w in weeks:
             assert isinstance(w, str)
             assert "-W" in w
+
+
+class TestAetCandidateRowAccess:
+    """Regression: the AeT auto-derive loop reads activity rows from the DB (sqlite3.Row),
+    which has NO .get() — `a.get('name', '?')` crashed `fit sync` with AttributeError once a
+    >=12km run with splits landed in the window. Names can be NULL, so access via indexing
+    with an `or` default."""
+
+    def test_row_has_no_get_use_index_with_default(self, db):
+        import pytest
+        db.execute(
+            "INSERT INTO activities (id, date, name, type, distance_km, avg_hr, run_type) "
+            "VALUES ('a1', '2026-06-01', NULL, 'running', 15.0, 150, 'long')"
+        )
+        db.commit()
+        a = db.execute(
+            "SELECT id, date, name, type, distance_km, avg_hr, run_type "
+            "FROM activities WHERE id = 'a1'"
+        ).fetchone()
+        # The old form crashed; document why it's unsupported on a Row.
+        with pytest.raises(AttributeError):
+            a.get("name", "?")
+        # The fixed form (indexing + `or` default) handles a NULL name without raising.
+        note = f"from {a['name'] or '?'} ({a['distance_km']}km)"
+        assert note == "from ? (15.0km)"

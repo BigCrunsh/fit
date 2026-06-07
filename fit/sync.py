@@ -3,7 +3,6 @@
 import logging
 import sqlite3
 from datetime import date, timedelta
-from pathlib import Path
 
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn
 
@@ -11,8 +10,6 @@ from fit import garmin, weather
 from fit.analysis import RUNNING_TYPES_SQL, enrich_activity, compute_weekly_agg
 from fit.calibration import (
     add_calibration,
-    derive_confidence,
-    derive_flags,
     extract_aet_from_steady_run,
     extract_lthr_from_race,
     extract_max_hr_from_activity,
@@ -23,6 +20,40 @@ logger = logging.getLogger(__name__)
 
 # Suppress console logging during progress bars (file logging continues)
 _console_suppressed = False
+
+
+def _sync_lactate_threshold(conn: sqlite3.Connection, api) -> bool:
+    """Ingest the watch's auto-detected lactate-threshold HR as a device-anchored
+    calibration row (method 'device_lt').
+
+    Stored only when the value changes (≥1 bpm) — building an LT time-series without
+    daily duplicates. The row is authoritative for the LTHR anchor: above the
+    race-avg-HR proxy, below a deliberate human confirm (see DEVICE_METHODS). This
+    replaces reverse-engineering LTHR from race HR with the watch's own measurement.
+    Best-effort: never blocks a sync.
+    """
+    try:
+        lt = garmin.fetch_lactate_threshold(api)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning("LTHR ingest skipped: %s", e)
+        return False
+    if not lt or not lt.get("lthr"):
+        return False
+    value = round(float(lt["lthr"]), 1)
+    prev = conn.execute(
+        "SELECT value FROM calibration WHERE metric='lthr' AND method='device_lt' "
+        "ORDER BY date DESC, created_at DESC LIMIT 1"
+    ).fetchone()
+    prev_val = float(prev[0]) if prev else None
+    if prev_val is not None and abs(prev_val - value) < 1.0:
+        return False  # unchanged — keep the existing dated row (no daily duplicates)
+    note = "Garmin auto-detected lactate threshold"
+    spd = lt.get("lt_speed_mps")
+    if spd:
+        note += f" (LT speed {spd:.3f} m/s)"
+    add_calibration(conn, "lthr", value, "device_lt", "high", date.today(), notes=note)
+    logger.info("Ingested Garmin lactate threshold: %.0f bpm", value)
+    return True
 
 
 def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool = False,
@@ -37,6 +68,10 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     """
     token_dir = config["sync"]["garmin_token_dir"]
     api = garmin.connect(token_dir)
+
+    # Ingest the watch's auto-detected lactate threshold BEFORE reading the LTHR
+    # calibration below, so zone computation uses the freshest device threshold.
+    _sync_lactate_threshold(conn, api)
 
     if full:
         start = date(2024, 1, 1)  # reasonable far-back date
@@ -114,7 +149,7 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
             # Race max counts as a hard-effort context (medium); other
             # running activities get `activity_max` method which derive_flags
             # marks as `weak_context` → low confidence.
-            method = "race_extract" if a.get("run_type") == "race" else "activity_max"
+            method = "race_candidate" if a.get("run_type") == "race" else "activity_max"
             prior_cal = max_hr_cal  # may be None on first run
             flags = derive_flags("max_hr", candidate_max, method, prior_cal)
             confidence = derive_confidence(method, flags)
@@ -148,7 +183,7 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
                             logger.debug("Skipping LTHR extract for activity %s: bad date",
                                          enriched.get("id"))
                         else:
-                            # Write as informational history (race_estimate), NOT
+                            # Write as informational history (race_observation), NOT
                             # an active calibration. LTHR is human-confirmed — the
                             # athlete promotes a value via `fit calibrate lthr`
                             # after the dashboard flags the suggestion. This keeps
@@ -157,14 +192,14 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
                             # calibration.backfill_race_lthr.)
                             already = conn.execute(
                                 "SELECT 1 FROM calibration WHERE metric='lthr' "
-                                "AND method='race_estimate' AND source_activity_id=? LIMIT 1",
+                                "AND method='race_observation' AND source_activity_id=? LIMIT 1",
                                 (enriched["id"],),
                             ).fetchone()
                             if not already:
                                 conn.execute("""
                                     INSERT INTO calibration (metric, value, method,
                                         confidence, date, source_activity_id, notes, active, flags)
-                                    VALUES ('lthr', ?, 'race_estimate', 'low', ?, ?, ?, 0, '[]')
+                                    VALUES ('lthr', ?, 'race_observation', 'low', ?, ?, ?, 0, '[]')
                                 """, (candidate_lthr, cal_date.isoformat(), enriched["id"],
                                       f"Race estimate from {enriched.get('name')} "
                                       f"({enriched.get('distance_km', '?')}km)"))
@@ -183,7 +218,7 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
             existing_cal = get_active_calibration(conn, "vo2max")
             if not existing_cal or existing_cal["value"] != latest_vo2["vo2max"]:
                 add_calibration(conn, "vo2max", latest_vo2["vo2max"],
-                                "garmin_estimate", "medium",
+                                "device_vo2max", "medium",
                                 date.fromisoformat(latest_vo2["date"]))
 
         # 3c. AeT auto-derive — walk recent running activities ≥12 km that have
@@ -227,7 +262,7 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
                 cal_date,
                 source_activity_id=a["id"],
                 notes=(f"drift {result['drift_pct']}% ({classification}) "
-                       f"from {a.get('name', '?')} ({a['distance_km']}km)"),
+                       f"from {a['name'] or '?'} ({a['distance_km']}km)"),
                 flags=flags,
             )
 
@@ -470,10 +505,37 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
         except Exception as e:
             logger.debug("Splits backfill skipped: %s", e)
 
+    # Refit the marathon-durability posterior on fresh data (best-effort; never blocks a
+    # sync). Skipped silently when the `forecast` extra is absent or there's no fittable
+    # history — the dashboard degrades to the anchor headline (Decision 7).
+    if _refit_marathon_forecast(conn):
+        counts["forecast_refit"] = 1
+
     if warnings:
         counts["warnings"] = warnings
     logger.info("Sync complete: %s", counts)
     return counts
+
+
+def _refit_marathon_forecast(conn: sqlite3.Connection) -> bool:
+    """Refit + cache the marathon posterior. Returns True on success, False on any
+    skip/failure (missing extra, no efforts, sampler error) — sync must never fail here."""
+    try:
+        from fit.marathon import model as _model
+        from fit.marathon.features import extract_efforts
+    except ImportError:
+        return False
+    try:
+        ds = extract_efforts(conn)
+    except ValueError:
+        return False
+    try:
+        _model.fit(ds)  # samples + caches to ~/.fit/marathon_posterior.zarr
+        logger.info("Marathon forecast posterior refit")
+        return True
+    except Exception as e:  # pragma: no cover - defensive (sampler/env issues)
+        logger.warning("Marathon forecast refit skipped: %s", e)
+        return False
 
 
 def _match_race_calendar(conn: sqlite3.Connection) -> None:
@@ -532,7 +594,7 @@ def _match_race_calendar(conn: sqlite3.Connection) -> None:
     # race whose tag a past re-enrichment stripped (classify_run_type never
     # reproduces 'race') would otherwise stay mislabeled forever — it counts
     # as easy/tempo/long in every stat and never feeds race calibration.
-    conn.execute(f"""
+    conn.execute("""
         UPDATE activities SET run_type = 'race'
         WHERE id IN (
             SELECT activity_id FROM race_calendar

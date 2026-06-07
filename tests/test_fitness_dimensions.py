@@ -27,11 +27,21 @@ class TestDimensionMedian:
         r = _compute_economy(db)
         assert r["current_value"] == 1.12        # median, not the latest 1.50
 
-    def test_aerobic_uses_median(self, db):
-        for i, v in enumerate([48, 49, 50, 49, 60]):   # 60 = optimistic Garmin spike
+    def test_aerobic_anchors_on_vdot_not_garmin(self, db):
+        # Garmin VO2max readings (incl. an optimistic 60) must NOT set the value — the
+        # calibrated VDOT anchor does (Garmin only shapes the trend, and reads high).
+        for i, v in enumerate([48, 49, 50, 49, 60]):
             _run(db, f"a{i}", days_ago=20 - i*3, vo2=v)
+        db.execute("INSERT INTO calibration (metric, value, method, confidence, date, active) "
+                   "VALUES ('vdot', 38, 'manual', 'high', date('now','-1 day'), 1)")
+        db.commit()
         r = _compute_aerobic(db)
-        assert r["current_value"] == 49.0        # median, not 60
+        assert r["current_value"] == 38.0        # the calibrated VDOT anchor, NOT the Garmin median 49
+        assert r["unit"] == "VDOT"
+
+    def test_aerobic_empty_without_any_signal(self, db):
+        # No anchor, no race, no Garmin → degrade gracefully (not a fabricated value).
+        assert _compute_aerobic(db)["current_value"] is None
 
     def test_window_excludes_old_readings(self, db):
         _run(db, "old", days_ago=DIMENSION_WINDOW_DAYS + 10, spb=2.0)  # outside window

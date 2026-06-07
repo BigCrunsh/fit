@@ -3,7 +3,6 @@ and the race-countdown prediction-confidence helper."""
 
 from datetime import date, timedelta
 
-import pytest
 
 from fit.report.sections.cards import _attention_items, _prediction_confidence
 
@@ -184,3 +183,32 @@ class TestLthrSuggestion:
                                           garmin_time="1:10:33")
         items = _attention_items(db)
         assert "lthr_suggestion" not in {i["tag"] for i in items}
+
+    def test_no_suggestion_when_active_is_device_measured(self, db):
+        # A device-measured LTHR (Garmin auto-LT) is trusted over any race proxy,
+        # so a race-implied nudge is suppressed even when it differs >=3.
+        db.execute(
+            "INSERT INTO calibration (metric, value, method, confidence, date, active) "
+            "VALUES ('lthr', 171, 'device_lt', 'high', ?, 1)",
+            ((date.today() - timedelta(days=1)).isoformat(),),
+        )
+        db.commit()
+        _add_completed_race_with_activity(db, "2026-03-22", "HM", 21.1, 173,
+                                          garmin_time="2:01:48")  # implies ~175
+        items = _attention_items(db)
+        assert "lthr_suggestion" not in {i["tag"] for i in items}
+
+
+class TestVdotNoAnchor:
+    """Only the genuine "no performance anchor at all" case is flagged — never the
+    structural Garmin-reads-higher gap (Garmin's wrist VO2max is optimistic by design)."""
+
+    def test_flags_when_no_anchor_but_garmin_present(self, db, config):
+        # Garmin VO2max exists, but no qualifying running anchor → prompt a time trial.
+        db.execute("INSERT INTO activities (id, date, type, vo2max) VALUES ('a1', ?, 'running', 49)",
+                   (date.today().isoformat(),))
+        db.commit()
+        tags = {i["tag"] for i in _attention_items(db)}
+        assert "vdot_no_anchor" in tags
+        # The retired "anchors disagree" item must never appear.
+        assert "vdot_anchor_disagreement" not in tags

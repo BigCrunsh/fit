@@ -26,13 +26,14 @@ logger = logging.getLogger(__name__)
 
 
 def _headline(conn):
+    from fit.training_load import compute_rolling_acwr
     latest = conn.execute("SELECT training_readiness FROM daily_health ORDER BY date DESC LIMIT 1").fetchone()
-    acwr_row = conn.execute("SELECT acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
+    acwr_val = compute_rolling_acwr(conn)   # rolling-7d acute (the documented hybrid; matches coaching/CLI/alerts)
     phase = conn.execute("SELECT * FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
     last_ci = conn.execute("SELECT date, sleep_quality FROM checkins ORDER BY date DESC LIMIT 1").fetchone()
     return generate_headline(
         readiness=latest["training_readiness"] if latest else None,
-        acwr=acwr_row["acwr"] if acwr_row else None,
+        acwr=acwr_val,
         phase=dict(phase) if phase else None,
         last_checkin_date=last_ci["date"] if last_ci else None,
         today=date.today().isoformat(),
@@ -58,55 +59,33 @@ def _headline_signal(conn):
 
 
 def _prediction_summary(conn):
-    """Compact prediction with confidence for the race card header.
+    """Compact race forecast for the race card header.
 
-    Shows range from multiple sources, not just VDOT point estimate.
+    Single source = the calibrated VDOT anchor (anchor_race_time), NOT Garmin
+    VO2max via the retired table. Returns None when there is no usable anchor.
     """
     try:
-        from fit.analysis import predict_race_time
-        races = conn.execute("""
-            SELECT distance_km, result_time FROM race_calendar
-            WHERE status = 'completed' AND result_time IS NOT NULL
-            ORDER BY date DESC LIMIT 5
-        """).fetchall()
-        vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
+        from fit.fitness import anchor_race_time
+        from fit.calibration import get_calibration_anchor
+        from fit.goals import get_target_race
 
-        def _parse_time(t):
-            parts = t.split(":")
-            if len(parts) == 3:
-                return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-            elif len(parts) == 2:
-                return int(parts[0]) * 60 + int(parts[1])
-            return 0
+        target = get_target_race(conn)
+        target_km = (target.get("distance_km") if target else None) or 42.195
 
-        race_data = [{"distance_km": r["distance_km"], "time_seconds": _parse_time(r["result_time"])}
-                     for r in races if r["distance_km"] and r["result_time"]]
-        preds = predict_race_time(races=race_data, vo2max=vo2["vo2max"] if vo2 else None)
-
-        # Collect all predictions
-        all_secs = []
-        if preds.get("riegel"):
-            all_secs.extend(p["predicted_seconds"] for p in preds["riegel"])
-        if preds.get("vdot") and preds["vdot"].get("predicted_seconds"):
-            all_secs.append(preds["vdot"]["predicted_seconds"])
-
-        if not all_secs:
-            return None
-
-        lo = min(all_secs)
-        hi = max(all_secs)
-
-        def _fmt(s):
-            return f"{s // 3600}:{(s % 3600) // 60:02d}"
-
-        confidence = preds.get("confidence", {})
-        level = confidence.get("level", "low")
-        level_label = {"high": "", "moderate": " (moderate confidence)", "low": " (low confidence)"}
-
-        if hi - lo < 300:  # within 5 min — show single value
-            return f"Prediction: {_fmt((lo + hi) // 2)}{level_label.get(level, '')}"
+        headline = anchor_race_time(conn, target_km)
+        note = ""
+        if headline:
+            anchor = get_calibration_anchor(conn, "vdot") or {}
+            note = " (stale — re-test)" if anchor.get("stale") else ""
         else:
-            return f"Prediction: {_fmt(lo)}–{_fmt(hi)}{level_label.get(level, '')}"
+            # No calibrated anchor → conservative (slowest) Riegel extrapolation
+            # from actual races. Never the retired Garmin-VO2max table.
+            from fit.analysis import riegel_fallback_secs
+            headline = riegel_fallback_secs(conn, target_km)
+            note = " (race estimate)" if headline else ""
+        if not headline:
+            return None
+        return f"Prediction: {headline // 3600}:{(headline % 3600) // 60:02d}{note}"
     except Exception:
         return None
 
@@ -169,16 +148,16 @@ def _status_cards(conn):
                   "sub": " · ".join(vo2_sub)})
 
     w = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
-    w_target = conn.execute("SELECT target_value FROM goals WHERE type = 'metric' AND name LIKE '%eight%' AND active = 1 LIMIT 1").fetchone()
+    w_target = _weight_target(conn)
     w_sub = []
-    if w_target and w_target["target_value"]:
-        w_sub.append(f"→ {w_target['target_value']}kg")
+    if w_target:
+        w_sub.append(f"→ {w_target}kg")
     cards.append({"label": "Weight", "value": f"{w['weight_kg']:.1f}" if w else "—", "unit": "kg", "color": CAUTION,
                   "sub": " · ".join(w_sub)})
 
-    acwr = conn.execute("SELECT acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
-    if acwr and acwr["acwr"]:
-        v = acwr["acwr"]
+    from fit.training_load import compute_rolling_acwr
+    v = compute_rolling_acwr(conn)   # rolling-7d acute — single source with coaching/CLI/alerts
+    if v:
         cards.append({"label": "ACWR", "value": f"{v:.2f}", "unit": "",
                       "color": SAFE if 0.8 <= v <= 1.3 else CAUTION if v <= 1.5 else DANGER,
                       "sub": "safe" if 0.8 <= v <= 1.3 else "caution" if v <= 1.5 else "DANGER"})
@@ -230,7 +209,7 @@ def _journey(conn):
     if not phases:
         return None
 
-    colors = {"completed": "rgba(34,197,94,0.4)", "active": "rgba(129,140,248,0.5)", "planned": "rgba(255,255,255,0.08)"}
+    colors = {"completed": "rgba(34,197,94,0.4)", "active": "rgba(129,140,248,0.5)", "planned": "var(--track)"}
     segments = []
     position = ""
     for p in phases:
@@ -626,13 +605,11 @@ def _attention_items(conn):
         _add(severity=sev, message=headline(days),
              tag=f"stale_{name}", command=cmd, detail=detail, source=source_fn(days))
 
-    # VDOT source disagreement: best fitness anchor vs Garmin VO2max diverge.
-    # The anchor comes from get_fitness_anchors — any training-or-race effort
-    # meeting the criteria (5-25km, avg HR ≥ LTHR, consistent pacing). When
-    # Garmin is materially above the best anchor by ≥3 VDOT, the prediction
-    # is being optimistic and the user needs a fresh max-effort data point.
-    # When there's no anchor at all (LTHR uncalibrated, or no qualifying
-    # efforts), that's a different attention item — "schedule a TT".
+    # No fitness anchor at all → VDOT falls back to Garmin alone; prompt a time trial.
+    # We deliberately do NOT flag "Garmin reads higher than your anchor": Garmin's wrist
+    # VO2max is optimistic by ~5-10 by design, so that gap is structural, not actionable
+    # (and the Physiology tile already shows Garmin as a labeled reference). Only the
+    # genuine "no performance data to anchor on" case is worth a nudge.
     try:
         from fit.fitness import get_fitness_anchors
 
@@ -657,33 +634,8 @@ def _attention_items(conn):
                 ),
                 source="fit.fitness.get_fitness_anchors returned 0 qualifying activities.",
             )
-        elif anchors and garmin_vo2:
-            # Use most recent qualifying anchor — current evidence, not peak.
-            latest = sorted(anchors, key=lambda a: a["date"], reverse=True)[0]
-            gap = garmin_vo2 - latest["vdot"]
-            if gap >= 3:
-                days_old = (date.today() - date.fromisoformat(latest["date"])).days
-                severity = "warning" if gap >= 5 else "info"
-                _add(
-                    severity=severity,
-                    message=f"VDOT anchors disagree by {gap:.0f} (anchor {latest['vdot']} vs Garmin {garmin_vo2:.0f})",
-                    tag="vdot_anchor_disagreement",
-                    detail=(
-                        f"Latest anchor: {latest['name'] or 'effort'} on "
-                        f"{latest['date']} ({days_old}d ago, {latest['distance_km']:g}km "
-                        f"at avg HR {latest['avg_hr']}). Garmin's estimate is "
-                        f"{gap:.0f} VDOT higher. Schedule a fresh 5K/10K at true "
-                        f"max effort (avg HR ≥ LTHR throughout) to verify which "
-                        f"source is right."
-                    ),
-                    source=(
-                        f"Latest of {len(anchors)} qualifying anchor(s) from "
-                        f"fit.fitness.get_fitness_anchors; Garmin VO2max from "
-                        "most-recent activity."
-                    ),
-                )
     except Exception as e:
-        logger.debug("vdot_anchor_disagreement check failed: %s", e)
+        logger.debug("vdot_no_anchor check failed: %s", e)
 
     # Completed races missing an official result_time. The watch time
     # (garmin_time) covers predictions in the meantime, but the official chip
@@ -719,8 +671,15 @@ def _attention_items(conn):
     # avoids non-max efforts (e.g. a steady 12km logged as a race) dragging
     # the suggestion down.
     try:
-        from fit.calibration import get_active_calibration as _gac, extract_lthr_from_race
+        from fit.calibration import (get_active_calibration as _gac,
+                                      extract_lthr_from_race, DEVICE_METHODS)
         active_lthr = _gac(conn, "lthr")
+        # A device-measured LTHR (Garmin auto-detected LT) is the trusted anchor —
+        # it outranks any race-derived estimate (precedence: confirmed > device >
+        # policy), so a race-implied LTHR nudge is noise against it. Skip when the
+        # active value is device-sourced; it re-enables if the device stops feeding it.
+        if active_lthr and active_lthr.get("method") in DEVICE_METHODS:
+            active_lthr = None
         hm = conn.execute(f"""
             SELECT a.date, a.name, a.distance_km, a.avg_hr
             FROM race_calendar rc JOIN activities a ON a.id = rc.activity_id
@@ -808,10 +767,41 @@ def _prediction_confidence(conn):
     return {"level": level, "reason": ", ".join(reasons)}
 
 
+def _vdot_entry(conn):
+    """The aerobic anchor tile = the performance-anchored VDOT (`_effective_vdot` —
+    the same figure the Aerobic dimension and pace zones read), NOT Garmin's wrist
+    VO2max, which reads ~5-10 points high and is shown only as a diagnostic reference.
+    SSOT: the card must lead with the number everything downstream derives from."""
+    from fit.fitness import _effective_vdot, _get_garmin_vo2max
+
+    ev = _effective_vdot(conn)
+    garmin = _get_garmin_vo2max(conn)
+    if ev is None:
+        return {
+            "key": "vdot", "label": "VDOT", "unit": "", "value": None,
+            "description": "Performance-anchored aerobic index (Daniels) — runs your pace zones.",
+            "date": None, "days_ago": None, "trend": None, "is_primary": False,
+            "reference": None, "reference_title": None,
+            "missing_action": {
+                "message": "Confirm a race-effort VDOT to anchor your aerobic capacity.",
+                "link_anchor": "prof-vo2max",
+            },
+        }
+    return {
+        "key": "vdot", "label": "VDOT", "unit": "", "value": round(ev),
+        "description": "Performance-anchored aerobic index (Daniels) — runs your pace zones.",
+        "date": None, "days_ago": None, "trend": None, "is_primary": False,
+        "reference": f"Garmin VO2max {round(garmin)}" if garmin is not None else None,
+        "reference_title": ("Garmin's wrist VO2max reads ~5-10 points high; the race-anchored "
+                            "VDOT is what drives your pace zones and predictions."),
+        "missing_action": None,
+    }
+
+
 def _physiology(conn):
     """Build the "Your Physiology" card data for the Overview tab.
 
-    Returns a list of 4 anchor dicts (LTHR, MaxHR, AeT, VO2max), each with:
+    Returns a list of 4 anchor dicts (LTHR, MaxHR, AeT, VDOT), each with:
       - key: short identifier
       - label: display name
       - value: current value or None
@@ -824,7 +814,7 @@ def _physiology(conn):
       - missing_action: dict {message, link_anchor} when not yet calibrated
 
     Order: primary first, then by physiological hierarchy (LTHR, MaxHR, AeT,
-    VO2max). When AeT is implemented (aet-anchored-zones) it should slide
+    VDOT). When AeT is implemented (aet-anchored-zones) it should slide
     into the primary slot above LTHR.
     """
     from fit.calibration import get_active_calibration
@@ -841,7 +831,7 @@ def _physiology(conn):
                 "key": metric, "label": label, "unit": unit,
                 "value": None, "description": desc,
                 "date": None, "days_ago": None, "trend": None,
-                "is_primary": False,
+                "is_primary": False, "reference": None, "reference_title": None,
                 "missing_action": {
                     "message": missing_msg or f"Calibrate via `fit calibrate {metric} <value>`",
                     "link_anchor": missing_link,
@@ -879,6 +869,7 @@ def _physiology(conn):
             "value": cal["value"], "description": desc,
             "date": cal["date"], "days_ago": days_ago,
             "trend": trend, "is_primary": False,
+            "reference": None, "reference_title": None,
             "missing_action": None,
         }
 
@@ -897,10 +888,7 @@ def _physiology(conn):
             missing_msg="Run a 15+ km steady-pace effort to derive AeT from HR drift.",
             missing_link="aet-instructions",
         ),
-        _entry(
-            "vo2max", "VO2max", "",
-            "Aerobic capacity. Predicts race times via VDOT (Daniels).",
-        ),
+        _vdot_entry(conn),
     ]
 
     # Mark primary anchor per the active zone model. The default (`lthr`) puts
@@ -934,7 +922,7 @@ def _pace_zones(conn):
     if not anchor or anchor.get("value") is None:
         return {"available": False, "missing": "No qualifying effort yet — run a 5–10 km at ≥ LTHR to anchor your paces."}
     vdot = anchor["value"]
-    vdot_source = "garmin" if anchor.get("method") == "garmin_estimate" else "anchor"
+    vdot_source = "garmin" if anchor.get("method") == "device_vo2max" else "anchor"
 
     paces = compute_daniels_paces(vo2max=vdot)
     if not paces:
@@ -1336,7 +1324,7 @@ def _race_countdown(conn):
             # at today. Uses VO2max-derived prediction + method spread margin,
             # exactly matching what the prediction trend chart shows.
             try:
-                from fit.analysis import predict_race_time, _vdot_to_marathon_seconds
+                from fit.analysis import predict_race_time
 
                 def _parse_time(t):
                     parts = t.split(":")
@@ -1349,82 +1337,69 @@ def _race_countdown(conn):
                 def _fmt_time(s):
                     return f"{s // 3600}:{(s % 3600) // 60:02d}"
 
-                # Current VO2max → predicted race time (center line of chart)
-                vo2 = conn.execute(
-                    "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1"
-                ).fetchone()
+                # Single source of truth for the headline. Prefer the durability-model
+                # MEDIAN (so the hero stat matches the model block below — no two
+                # conflicting numbers). Else the calibrated-VDOT anchor + method-spread
+                # margin (conservative). Never the retired table.
+                target_km = race.get("distance_km") or 42.195
+                target_secs = _parse_time(result["target_time"]) if result.get("target_time") else None
+
                 center_secs = None
-                if vo2 and vo2["vo2max"] and vo2["vo2max"] > 30:
-                    marathon_secs = _vdot_to_marathon_seconds(vo2["vo2max"])
-                    target_km = race.get("distance_km") or 42.195
-                    if target_km != 42.195:
-                        center_secs = marathon_secs * (target_km / 42.195) ** 1.06
-                    else:
-                        center_secs = marathon_secs
-
-                # Method spread margin (half-width of all prediction sources)
-                races_db = conn.execute("""
-                    SELECT distance_km, result_time FROM race_calendar
-                    WHERE status = 'completed' AND result_time IS NOT NULL
-                    ORDER BY date DESC LIMIT 5
-                """).fetchall()
-                race_data = [
-                    {"distance_km": r["distance_km"], "time_seconds": _parse_time(r["result_time"])}
-                    for r in races_db if r["distance_km"] and r["result_time"]
-                ]
-                preds = predict_race_time(
-                    conn=conn, races=race_data,
-                    vo2max=vo2["vo2max"] if vo2 else None,
-                )
-                all_secs = []
-                if preds.get("riegel"):
-                    all_secs.extend(p["predicted_seconds"] for p in preds["riegel"])
-                if preds.get("vdot") and preds["vdot"].get("predicted_seconds"):
-                    all_secs.append(preds["vdot"]["predicted_seconds"])
-
                 margin_secs = 0
-                if len(all_secs) >= 2:
-                    margin_secs = (max(all_secs) - min(all_secs)) / 2
-                else:
-                    margin_secs = preds.get("confidence", {}).get("margin_seconds", 480)
+                try:
+                    from fit.marathon.predict import forecast as _model_forecast
+                    _fc = _model_forecast(conn, goal_seconds=target_secs)  # cached shared load
+                    if _fc:
+                        center_secs = _fc["median"]          # margin 0 → hero == model block
+                        result["confidence_level"] = "model"
+                except Exception:
+                    pass
 
-                if center_secs:
-                    # Conservative = center + margin (upper bound of chart band)
-                    conservative_secs = center_secs + margin_secs
-                    result["prediction_mid"] = _fmt_time(round(conservative_secs))
+                if center_secs is None:
+                    from fit.fitness import anchor_race_time
+                    center_secs = anchor_race_time(conn, target_km)
+                    vo2 = conn.execute(
+                        "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1"
+                    ).fetchone()
+                    races_db = conn.execute("""
+                        SELECT distance_km, result_time FROM race_calendar
+                        WHERE status = 'completed' AND result_time IS NOT NULL
+                        ORDER BY date DESC LIMIT 5
+                    """).fetchall()
+                    race_data = [
+                        {"distance_km": r["distance_km"], "time_seconds": _parse_time(r["result_time"])}
+                        for r in races_db if r["distance_km"] and r["result_time"]
+                    ]
+                    preds = predict_race_time(conn=conn, races=race_data,
+                                              vo2max=vo2["vo2max"] if vo2 else None)
+                    all_secs = []
+                    if preds.get("riegel"):
+                        all_secs.extend(p["predicted_seconds"] for p in preds["riegel"])
+                    if preds.get("vdot") and preds["vdot"].get("predicted_seconds"):
+                        all_secs.append(preds["vdot"]["predicted_seconds"])
+                    if len(all_secs) >= 2:
+                        margin_secs = (max(all_secs) - min(all_secs)) / 2
+                    else:
+                        margin_secs = preds.get("confidence", {}).get("margin_seconds", 480)
                     result["confidence_level"] = preds.get("confidence", {}).get("level", "low")
 
-                    # Gap based on conservative prediction vs target
-                    if result.get("target_time"):
-                        target_secs = _parse_time(result["target_time"])
-                        if target_secs > 0:
-                            gap = round((conservative_secs - target_secs) / 60)
-                            result["gap_minutes"] = gap
+                if center_secs:
+                    conservative_secs = center_secs + margin_secs
+                    result["prediction_mid"] = _fmt_time(round(conservative_secs))
+                    if target_secs and target_secs > 0:
+                        result["gap_minutes"] = round((conservative_secs - target_secs) / 60)
 
-                # Trend badge: compare oldest vs newest weekly VO2max (proxy for prediction trend)
-                trend_rows = conn.execute("""
-                    SELECT week, vo2max_avg FROM (
-                        SELECT strftime('%Y-W%W', date) as week,
-                               AVG(vo2max) as vo2max_avg
-                        FROM activities
-                        WHERE vo2max IS NOT NULL
-                          AND date >= date('now', '-56 days')
-                        GROUP BY week
-                        ORDER BY week
-                    ) WHERE vo2max_avg IS NOT NULL
-                """).fetchall()
-                if len(trend_rows) >= 2:
-                    old_v = trend_rows[0]["vo2max_avg"]
-                    new_v = trend_rows[-1]["vo2max_avg"]
-                    if old_v and new_v and old_v > 30:
-                        # Convert VO2max change to approximate time change
-                        old_secs = _vdot_to_marathon_seconds(old_v)
-                        new_secs = _vdot_to_marathon_seconds(new_v)
-                        delta_min = round((new_secs - old_secs) / 60)
-                        weeks = len(trend_rows)
+                # Trend badge: forecast change over the last ~8 weeks, from the model
+                # (first vs last weekly median). No table — no badge if the model isn't fit.
+                from datetime import date as _date, timedelta as _td
+                wk_dates = [(_date.today() - _td(days=7 * i)).isoformat() for i in range(8, -1, -1)]
+                mt = _model_week_trend(conn, wk_dates)
+                if mt:
+                    vals = [mt[d][0] for d in wk_dates if d in mt]
+                    if len(vals) >= 2:
+                        delta_min = round((vals[-1] - vals[0]) / 60)
                         if delta_min != 0:
-                            sign = "+" if delta_min > 0 else ""
-                            result["trend_badge"] = f"{sign}{delta_min} min / {weeks} wk"
+                            result["trend_badge"] = f"{'+' if delta_min > 0 else ''}{delta_min} min / 8 wk"
             except Exception:
                 pass  # prediction enrichment is best-effort
 
@@ -1614,6 +1589,20 @@ def _fitness_profile_data(conn):
         return None
 
 
+def _weight_target(conn):
+    """The active weight goal's target_value (kg), or None — the single canonical query.
+
+    `goals` has no `metric` column; a weight goal is a `type='metric'` row whose name
+    contains "weight" (the only weight-goal shape the app inserts). The older
+    `WHERE metric='weight'` queries silently returned nothing (swallowed by try/except).
+    """
+    row = conn.execute(
+        "SELECT target_value FROM goals WHERE type = 'metric' AND name LIKE '%eight%' "
+        "AND active = 1 LIMIT 1"
+    ).fetchone()
+    return row["target_value"] if row else None
+
+
 def _weight_card_data(conn):
     """Weight summary for the fitness profile card."""
     try:
@@ -1637,16 +1626,7 @@ def _weight_card_data(conn):
                 change_span = f"{days // 30}mo"
             else:
                 change_span = f"{days // 365}yr"
-        # Try to find weight target from goals
-        target = None
-        try:
-            goal = conn.execute(
-                "SELECT target_value FROM goals WHERE metric = 'weight' AND active = 1 LIMIT 1"
-            ).fetchone()
-            if goal:
-                target = goal["target_value"]
-        except Exception:
-            pass
+        target = _weight_target(conn)
         return {
             "current": round(current, 1),
             "target": target,
@@ -1704,55 +1684,64 @@ def _objective_history(conn):
     }
 
 
-def _next_workouts(conn):
-    """Next 3 planned workouts for the Overview tab."""
+def _next_workouts_base(conn, limit=3):
+    """Shared loader for upcoming planned workouts — one place for the query, the
+    Garmin/Runna name-cleaning, and the date labels. `_next_workouts` (Overview) uses
+    these fields directly; `_next_workouts_enriched` (Training) decorates them with the
+    expected zone + HR range. Each row carries the raw `target_zone` for the latter."""
+    import re
     try:
         rows = conn.execute("""
-            SELECT date, workout_name, workout_type, target_distance_km
+            SELECT date, workout_name, workout_type, target_distance_km, target_zone
             FROM planned_workouts
             WHERE date >= date('now') AND status = 'active'
-            ORDER BY date LIMIT 3
-        """).fetchall()
-        result = []
-        today = date.today()
-        for r in rows:
-            d = date.fromisoformat(r["date"])
-            days = (d - today).days
-            # Format date as "Wed Apr 9"
-            date_label = d.strftime("%a %b %-d")
-            # Clean up workout name (strip "W N Day. " prefix)
-            name = r["workout_name"] or r["workout_type"] or "Run"
-            # Strip Garmin/Runna prefixes like "Berlin - W 1 So. " or "W 1 Fr. "
-            import re
-            prefix_match = re.match(r'^(?:.*?W\s*\d+\s*\w+\.\s*)', name)
-            if prefix_match:
-                name = name[prefix_match.end():]
-            # Also strip redundant distance suffix if present e.g. "(7,5 km)"
-            name = re.sub(r'\s*\(\d+[,.]?\d*\s*km\)\s*$', '', name)
-            # Truncate long names at word boundary
-            if len(name) > 40:
-                name = name[:37].rsplit(' ', 1)[0] + "..."
-            result.append({
-                "name": name,
-                "type": r["workout_type"] or "easy",
-                "distance_km": r["target_distance_km"] or "?",
-                "date_label": date_label,
-                "days": max(0, days),
-            })
-        return result
+            ORDER BY date LIMIT ?
+        """, (limit,)).fetchall()
     except Exception:
         return []
+    today = date.today()
+    out = []
+    for r in rows:
+        d = date.fromisoformat(r["date"])
+        name = r["workout_name"] or r["workout_type"] or "Run"
+        prefix_match = re.match(r'^(?:.*?W\s*\d+\s*\w+\.\s*)', name)  # "Berlin - W 1 So. " / "W 1 Fr. "
+        if prefix_match:
+            name = name[prefix_match.end():]
+        name = re.sub(r'\s*\(\d+[,.]?\d*\s*km\)\s*$', '', name)       # redundant "(7,5 km)" suffix
+        if len(name) > 40:
+            name = name[:37].rsplit(' ', 1)[0] + "..."
+        out.append({
+            "name": name,
+            "type": r["workout_type"] or "easy",
+            "distance_km": r["target_distance_km"] or "?",
+            "date_label": d.strftime("%a %b %-d"),
+            "days": max(0, (d - today).days),
+            "target_zone": r["target_zone"],
+        })
+    return out
+
+
+def _next_workouts(conn):
+    """Next 3 planned workouts for the Overview tab (no HR enrichment)."""
+    out = _next_workouts_base(conn)
+    for w in out:
+        w.pop("target_zone", None)
+    return out
 
 
 def _overview_objectives(conn):
     """Objectives summary for Overview tab — always from weekly_agg, not derived_objectives."""
     try:
+        # Volume / long-run / Z2 come from the rolling 7-day window — the single
+        # source shared with the Training tab, CLI status and coaching (CLAUDE.md:
+        # "Rolling 7-day window, not ISO weeks"). Only the streak stays ISO-week.
+        from fit.analysis import compute_rolling_week
         latest = conn.execute(
-            "SELECT run_km, longest_run_km, z12_pct, consecutive_weeks_3plus "
-            "FROM weekly_agg ORDER BY week DESC LIMIT 1"
+            "SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1"
         ).fetchone()
         if not latest:
             return None
+        rolling = compute_rolling_week(conn)
 
         history = _objective_history(conn)
 
@@ -1785,18 +1774,12 @@ def _overview_objectives(conn):
                 return "var(--caution)"
             return "var(--danger)"
 
-        vol = latest["run_km"] or 0
-        long_r = latest["longest_run_km"] or 0
+        vol = rolling.get("run_km") or 0
+        long_r = rolling.get("longest_run_km") or 0
         streak = latest["consecutive_weeks_3plus"] or 0
 
-        # Z2 compliance: use rolling average over recent training weeks
-        # (single-week snapshots are misleading — 1 easy run = 100%)
-        z2_rows = conn.execute("""
-            SELECT z12_pct FROM weekly_agg
-            WHERE z12_pct IS NOT NULL AND run_km > 0
-            ORDER BY week DESC LIMIT 4
-        """).fetchall()
-        z2 = round(sum(r["z12_pct"] for r in z2_rows) / len(z2_rows)) if z2_rows else 0
+        # Z2 compliance from the same rolling 7-day window (SSOT with Training/coaching).
+        z2 = round(rolling["z12_pct"]) if rolling.get("z12_pct") is not None else 0
 
         vol_pct = _pct(vol, targets["weekly_volume"])
         long_pct = _pct(long_r, targets["long_run"])
@@ -1808,7 +1791,7 @@ def _overview_objectives(conn):
              "pct": vol_pct, "color": _color(vol_pct), "history": history.get("weekly_volume", []), "spark_id": "spark-obj-vol"},
             {"label": "Long Run", "value": f"{long_r:.0f}", "sub": f"of {targets['long_run']:.0f} km" if targets["long_run"] else "km",
              "pct": long_pct, "color": _color(long_pct), "history": history.get("long_run", []), "spark_id": "spark-obj-long"},
-            {"label": "Z2 Time", "value": f"{z2:.0f}%", "sub": f"target {targets['z2_time']:.0f}% · 4wk avg",
+            {"label": "Z2 Time", "value": f"{z2:.0f}%", "sub": f"target {targets['z2_time']:.0f}% · 7-day",
              "pct": z2_pct, "color": _color(z2_pct), "history": history.get("z2_time", []), "spark_id": "spark-obj-z2"},
             {"label": "Consistency", "value": f"{streak:.0f}", "sub": f"of {targets['consistency']:.0f} wks",
              "pct": streak_pct, "color": _color(streak_pct), "history": history.get("consistency", []), "spark_id": "spark-obj-streak"},
@@ -1913,6 +1896,47 @@ def _checkpoint_data(conn):
         return []
 
 
+def _model_week_trend(conn, week_starts):
+    """Per-week durability-model marathon-equiv (median, lo, hi) in MINUTES — Panel B of
+    the marathon_v2 chart. Returns None when the model isn't available (→ table fallback,
+    being retired). Loads the cached posterior once, then predicts at each week's chronic
+    load (maximal effort)."""
+    try:
+        from datetime import date as _date
+        import numpy as _np
+        import pandas as _pd
+        from fit.marathon.predict import (
+            predict as _predict, effort_h_for_distance, effort_schedule, forecast_context,
+        )
+        from fit.marathon.features import CHRONIC_REF, CHRONIC_SCALE
+        from fit.training_load import DAILY_LOAD_SQL, chronic_load_before
+    except ImportError:
+        return None
+    ctx = forecast_context(conn)        # shared load (posterior + efforts + prior)
+    if ctx is None:
+        return None
+    post, ds, prior = ctx.idata, ctx.ds, ctx.prior
+    gap = max(0.0, float(_np.log(ds.goal / ds.d_max)))
+    sched = effort_schedule(ds)         # duration-keyed maximal h is c-dependent → resolve once, apply per week
+    # Load daily loads ONCE (chronic_load_before is pure) — not a full-table read per week.
+    dl = _pd.read_sql_query(DAILY_LOAD_SQL, conn, parse_dates=["date"])
+    day_ord = dl["date"].map(_pd.Timestamp.toordinal).to_numpy() if not dl.empty else _np.array([])
+    day_load = dl["load"].fillna(0.0).to_numpy() if not dl.empty else _np.array([])
+    out = {}
+    for ws in week_starts:
+        try:
+            ref = _date.fromisoformat(ws).toordinal()
+        except ValueError:
+            continue
+        c = (chronic_load_before(ref, day_ord, day_load) - CHRONIC_REF) / CHRONIC_SCALE
+        h = effort_h_for_distance(post, ds, ds.goal, c=c, extrapolation_scale=prior["scale"],
+                                  nu=prior["nu"], schedule=sched)
+        r = _predict(post, x=0.0, c=c, h=h, gap=gap,
+                     extrapolation_scale=prior["scale"], nu=prior["nu"])
+        out[ws] = (r["median"] / 60.0, r["lo"] / 60.0, r["hi"] / 60.0)
+    return out or None
+
+
 def _prediction_trend_data(conn):
     """Generate prediction trend chart data for the Overview race card.
 
@@ -1920,7 +1944,6 @@ def _prediction_trend_data(conn):
     checkpoints, phases, target_min, today.
     """
     try:
-        from fit.analysis import _vdot_to_marathon_seconds
         from fit.goals import get_target_race
 
         target = get_target_race(conn)
@@ -1970,17 +1993,15 @@ def _prediction_trend_data(conn):
 
         labels = []
         pred = []
+        # Panel B: marathon-equiv median at each week's chronic load — model only (the
+        # weekly-VO2max→table path is retired, D1 Phase 2). No model fit → no trend chart.
+        model_trend = _model_week_trend(conn, [w["week_start"] for w in weeks])
+        if model_trend is None:
+            return None
         for w in weeks:
             labels.append(w["week_start"])
-            if w["vo2max_avg"] and w["vo2max_avg"] > 30:
-                marathon_secs = _vdot_to_marathon_seconds(w["vo2max_avg"])
-                if target_km != 42.195:
-                    race_secs = marathon_secs * (target_km / 42.195) ** 1.06
-                else:
-                    race_secs = marathon_secs
-                pred.append(round(race_secs / 60, 1))
-            else:
-                pred.append(None)
+            mt = model_trend.get(w["week_start"])
+            pred.append(round(mt[0], 1) if mt else None)
 
         # Extend labels to race date
         race_date = target.get("date", "")
@@ -1994,40 +2015,16 @@ def _prediction_trend_data(conn):
                     labels.append(last.strftime("%Y-%m-%d"))
                     pred.append(None)
 
-        # Confidence band: method spread (same as header range).
-        # Collect all prediction sources, compute half-spread as margin.
-        from fit.analysis import predict_race_time
-        races = conn.execute("""
-            SELECT distance_km, result_time FROM race_calendar
-            WHERE status = 'completed' AND result_time IS NOT NULL
-            ORDER BY date DESC LIMIT 5
-        """).fetchall()
-        race_data = [
-            {"distance_km": r["distance_km"],
-             "time_seconds": _parse_time(r["result_time"])}
-            for r in races if r["distance_km"] and r["result_time"]
-        ]
-        vo2_row = conn.execute(
-            "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1"
-        ).fetchone()
-        preds = predict_race_time(
-            conn=conn, races=race_data,
-            vo2max=vo2_row["vo2max"] if vo2_row else None,
-        )
-        all_pred_secs = []
-        if preds.get("riegel"):
-            all_pred_secs.extend(p["predicted_seconds"] for p in preds["riegel"])
-        if preds.get("vdot") and preds["vdot"].get("predicted_seconds"):
-            all_pred_secs.append(preds["vdot"]["predicted_seconds"])
-
-        if len(all_pred_secs) >= 2:
-            margin_min = (max(all_pred_secs) - min(all_pred_secs)) / 2 / 60
-        else:
-            # Fallback: use confidence-based margin if only one source
-            margin_min = preds.get("confidence", {}).get("margin_seconds", 480) / 60
-
-        upper = [round(p + margin_min, 1) if p is not None else None for p in pred]
-        lower = [round(p - margin_min, 1) if p is not None else None for p in pred]
+        # Confidence band: per-point 90% credible interval (asymmetric) from the model.
+        upper, lower = [], []
+        for lbl, p in zip(labels, pred):
+            mt = model_trend.get(lbl)
+            if mt and p is not None:
+                lower.append(round(mt[1], 1))
+                upper.append(round(mt[2], 1))
+            else:
+                upper.append(None)
+                lower.append(None)
 
         # Training phases for the band
         phases_raw = conn.execute("""
@@ -2094,9 +2091,10 @@ def _prediction_trend_data(conn):
                     continue
 
                 # "Needed" time: Riegel back-calc from target race to this distance
+                from fit.analysis import RIEGEL_EXPONENT
                 needed_secs = 0
                 if target_secs > 0:
-                    needed_secs = target_secs * (r_km / target_km) ** 1.06
+                    needed_secs = target_secs * (r_km / target_km) ** RIEGEL_EXPONENT
 
                 # Actual time (completed) or derived target (upcoming)
                 time_secs = 0
@@ -2109,7 +2107,7 @@ def _prediction_trend_data(conn):
 
                 if time_secs > 0:
                     # Riegel forward: checkpoint time → target race equivalent
-                    marathon_equiv = time_secs * (target_km / r_km) ** 1.06
+                    marathon_equiv = time_secs * (target_km / r_km) ** RIEGEL_EXPONENT
                     me_min = marathon_equiv / 60
 
                     cp_data = {
@@ -2216,16 +2214,27 @@ def _race_readiness_hero(conn):
         if effective_vdot and required_vdot:
             result["vdot_gap"] = round(required_vdot - effective_vdot, 1)
 
-        # What can current fitness produce?
-        if effective_vdot:
+        # What can current fitness produce? Prefer the durability-model median so this
+        # matches the Overview headline + Panel A (one forecast across the dashboard);
+        # the VDOT-anchor time is the fallback. effective_vdot still shows as the engine.
+        pred_secs = None
+        try:
+            from fit.marathon.predict import forecast as _model_forecast
+            _fc = _model_forecast(conn, goal_seconds=target_secs)  # cached shared load
+            if _fc:
+                pred_secs = _fc["median"]
+                result["prediction_source"] = "model"
+                result["p_sub_goal"] = _fc.get("p_ceiling")  # so the verdict can cite goal odds
+        except Exception:
+            pred_secs = None
+        if pred_secs is None and effective_vdot:
             pred_secs = vdot_to_race_time(effective_vdot, distance_km)
-            if pred_secs:
-                h = int(pred_secs // 3600)
-                m = int((pred_secs % 3600) // 60)
-                s = int(pred_secs % 60)
-                result["predicted_time"] = f"{h}:{m:02d}:{s:02d}"
-                gap_min = round((pred_secs - target_secs) / 60)
-                result["gap_minutes"] = gap_min
+        if pred_secs:
+            h = int(pred_secs // 3600)
+            m = int((pred_secs % 3600) // 60)
+            s = int(pred_secs % 60)
+            result["predicted_time"] = f"{h}:{m:02d}:{s:02d}"
+            result["gap_minutes"] = round((pred_secs - target_secs) / 60)
 
         # Verdict based on gap and trend
         gap = result.get("vdot_gap")
@@ -2251,6 +2260,21 @@ def _race_readiness_hero(conn):
                 result["verdict"] = "at_risk"
         else:
             result["verdict"] = "at_risk"
+
+        # When the headline is the model, the verdict must agree with the model gap
+        # (not the VDOT-engine gap) so "ready" never sits next to a "4 min short" time.
+        if result.get("prediction_source") == "model" and result.get("gap_minutes") is not None:
+            gm = result["gap_minutes"]
+            if gm <= 0:
+                result["verdict"] = "ready"
+            elif gm <= 2:
+                result["verdict"] = "almost"
+            elif days_left and days_left > 90:
+                result["verdict"] = "on_track"   # a few min to close with months left
+            elif gm <= 8:
+                result["verdict"] = "tight"
+            else:
+                result["verdict"] = "at_risk"
 
         return result
     except Exception as e:
@@ -2342,8 +2366,8 @@ def _fitness_gap_analysis(conn):
 
         dims = []
         dim_config = [
-            ("aerobic", "VO2max", "var(--z2)", True,
-             "Top-end engine — how much O₂ you can use. Sets the ceiling on race pace."),
+            ("aerobic", "VDOT", "var(--z2)", True,
+             "Aerobic engine — your race-derived VDOT (Daniels). Sets the ceiling on race pace."),
             ("threshold", "spd/bpm", "var(--z3)", True,
              "Sustainable hard pace — how long you can hold ~1h all-out. Marathon pace lives here."),
             ("economy", "spd/bpm", "var(--accent)", True,
@@ -2386,6 +2410,16 @@ def _fitness_gap_analysis(conn):
                 "sowhat": sowhat,
             })
 
+        # Aerobic is now the calibrated VDOT anchor (single source with the forecast). Note the
+        # Garmin VO2max gap for context — Garmin reads high and is reference-only (chart-vo2).
+        _vdot = profile.get("effective_vdot")
+        _gvo2 = profile.get("garmin_vo2max")
+        if _vdot and _gvo2 and (_gvo2 - _vdot) >= 5:
+            for d in dims:
+                if d["name"] == "Aerobic":
+                    d["caveat"] = (f"Your calibrated VDOT; Garmin VO₂max reads ~+{_gvo2 - _vdot:.0f} "
+                                   f"({_gvo2:.0f}) and is reference-only (see Anchor vs Garmin).")
+
         # Limiter = the dimension furthest below the goal (lowest % of required).
         # A marathon is paced by the weakest relevant capacity, so flag it.
         scored = [d for d in dims if d["pct_uncapped"] is not None]
@@ -2419,16 +2453,7 @@ def _body_comp_data(conn):
         rows = list(reversed(rows))  # oldest first
         latest = rows[-1]
 
-        # Weight target from goals
-        weight_target = None
-        try:
-            goal = conn.execute(
-                "SELECT target_value FROM goals WHERE metric = 'weight' AND active = 1 LIMIT 1"
-            ).fetchone()
-            if goal:
-                weight_target = goal["target_value"]
-        except Exception:
-            pass
+        weight_target = _weight_target(conn)
 
         # Compute change over window
         weight_change = None
@@ -3255,7 +3280,7 @@ def _last_7_days_runs(conn):
                         "x": {"grid": {"display": False},
                                "ticks": {"display": not has_structure,
                                          "font": {"size": 7},
-                                         "color": "rgba(255,255,255,0.4)",
+                                         "color": "#64748b",
                                          "maxRotation": 0, "autoSkip": False,
                                          "__skip_empty": True}},
                         "y": {"position": "left",
@@ -3642,25 +3667,20 @@ def _last_7_days_hero(conn, config=None):
             "phase_name": phase["name"],
         }
 
-    # Compliance ring: planned vs completed in last 7 days
+    # Compliance ring: the canonical plan-adherence definition (current ISO week,
+    # rest days excluded, distance/zone matching) via compute_plan_adherence — the
+    # SAME source as the weekly adherence strip, not a bespoke rolling-7d date-count
+    # (which counted rest days and any-activity-on-a-planned-date, inflating the %).
     try:
-        planned = conn.execute("""
-            SELECT COUNT(*) as total FROM planned_workouts
-            WHERE date BETWEEN ? AND ? AND status != 'skipped'
-        """, (window_start, today.isoformat())).fetchone()
-        completed = conn.execute("""
-            SELECT COUNT(DISTINCT pw.date) as n FROM planned_workouts pw
-            INNER JOIN activities a ON a.date = pw.date AND a.type IN {types}
-            WHERE pw.date BETWEEN ? AND ?
-        """.format(types=RUNNING_TYPES_SQL), (window_start, today.isoformat())).fetchone()
-        if planned and planned["total"] > 0:
-            result["compliance_total"] = planned["total"]
-            result["compliance_completed"] = min(
-                completed["n"], planned["total"]
-            ) if completed else 0
-            result["compliance_pct"] = round(
-                result["compliance_completed"] / planned["total"] * 100
-            )
+        from fit.plan import compute_plan_adherence
+        adherence = compute_plan_adherence(conn)
+        non_rest = [p for p in adherence["planned"] if p["workout_type"] != "rest"]
+        matched = sum(1 for m in adherence["matches"]
+                      if m["actual"] is not None and not m.get("rest_day"))
+        if non_rest:
+            result["compliance_total"] = len(non_rest)
+            result["compliance_completed"] = matched
+            result["compliance_pct"] = adherence["weekly_compliance_pct"]
     except Exception:
         pass
 
@@ -3688,61 +3708,28 @@ def _expected_zone_for_type(workout_type):
 
 
 def _next_workouts_enriched(conn):
-    """Next planned workouts with expected zone and HR range."""
-    import re
-    try:
-        rows = conn.execute("""
-            SELECT date, workout_name, workout_type, target_distance_km,
-                   target_zone
-            FROM planned_workouts
-            WHERE date >= date('now') AND status = 'active'
-            ORDER BY date LIMIT 3
-        """).fetchall()
-    except Exception:
+    """Next planned workouts (shared base) decorated with expected zone + HR range."""
+    workouts = _next_workouts_base(conn)
+    if not workouts:
         return []
 
-    # Get max_hr from calibration
     cal = conn.execute(
         "SELECT value FROM calibration WHERE metric='max_hr' AND active=1 "
         "ORDER BY date DESC LIMIT 1"
     ).fetchone()
     max_hr = cal["value"] if cal else None
 
-    today = date.today()
-    result = []
-    for r in rows:
-        d = date.fromisoformat(r["date"])
-        days = (d - today).days
-
-        # Clean workout name
-        name = r["workout_name"] or r["workout_type"] or "Run"
-        prefix_match = re.match(r'^(?:.*?W\s*\d+\s*\w+\.\s*)', name)
-        if prefix_match:
-            name = name[prefix_match.end():]
-        name = re.sub(r'\s*\(\d+[,.]?\d*\s*km\)\s*$', '', name)
-        if len(name) > 40:
-            name = name[:37].rsplit(' ', 1)[0] + "..."
-
-        wtype = r["workout_type"] or "easy"
-        zone = (r["target_zone"] or _expected_zone_for_type(wtype)).upper()
+    for w in workouts:
+        zone = (w.pop("target_zone") or _expected_zone_for_type(w["type"])).upper()
         if not zone.startswith("Z"):
-            zone = _expected_zone_for_type(wtype)
-
-        hr_range = None
+            zone = _expected_zone_for_type(w["type"])
+        w["zone"] = zone
         if max_hr:
             lo, hi = _zone_hr_range(zone, max_hr)
-            hr_range = f"{lo}–{hi}"
-
-        result.append({
-            "name": name,
-            "type": wtype,
-            "distance_km": r["target_distance_km"] or "?",
-            "date_label": d.strftime("%a %b %-d"),
-            "days": max(0, days),
-            "zone": zone,
-            "hr_range": hr_range,
-        })
-    return result
+            w["hr_range"] = f"{lo}–{hi}"
+        else:
+            w["hr_range"] = None
+    return workouts
 
 
 def _training_phases_json(conn):

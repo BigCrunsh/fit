@@ -157,15 +157,11 @@ def _check_deload_overdue(conn: sqlite3.Connection, today: str) -> dict | None:
     if len(weeks) < 3:
         return None
 
-    # Count consecutive build weeks (no deload) from most recent
-    consecutive_build = 0
-    for i in range(len(weeks) - 1):
-        current_km = weeks[i]["run_km"] or 0
-        prev_km = weeks[i + 1]["run_km"] or 0
-        if prev_km > 0 and current_km < prev_km * 0.7:
-            # This was a deload week — volume dropped >=30%
-            break
-        consecutive_build += 1
+    # One 30%-drop build-streak rule, shared with periodization (D13) instead of a
+    # second hand-rolled loop. (`_count_consecutive_build_weeks` counts build weeks
+    # newest-first, stopping at the first ≥30% volume drop.)
+    from fit.periodization import _count_consecutive_build_weeks
+    consecutive_build = _count_consecutive_build_weeks(weeks)
 
     if consecutive_build >= 4:
         return _fire(conn, today, "deload_overdue",
@@ -257,8 +253,11 @@ def _condition_still_holds(conn: sqlite3.Connection, alert_type: str) -> bool:
             row = conn.execute(
                 "SELECT training_readiness FROM daily_health ORDER BY date DESC LIMIT 1"
             ).fetchone()
-            # Use base threshold of 40 (conservative — don't dismiss too eagerly)
-            return bool(row and row["training_readiness"] and row["training_readiness"] < 40)
+            # Match the firing threshold (gap-aware): 50 during return-to-run, else 40.
+            # A hardcoded 40 here meant a gap-window alert that fired at 50 could never
+            # auto-dismiss (readiness 40-49 → still held), leaving a stale alert (D12).
+            threshold = 50 if detect_training_gap(conn) else 40
+            return bool(row and row["training_readiness"] and row["training_readiness"] < threshold)
 
         if alert_type == "alcohol_hrv":
             today_hrv = conn.execute(

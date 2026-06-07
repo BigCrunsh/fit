@@ -7,75 +7,127 @@ from fit.report.sections import SAFE, CAUTION, DANGER, Z1, Z2, Z3, Z4, Z5, ACCEN
 logger = logging.getLogger(__name__)
 
 
-def _prediction_summary(conn):
-    """Compact prediction with confidence for the race card header.
+def _hms(secs):
+    secs = int(round(secs))
+    return f"{secs // 3600}:{(secs % 3600) // 60:02d}:{secs % 60:02d}"
 
-    Shows range from multiple sources, not just VDOT point estimate.
+
+def _goal_seconds(conn):
+    row = conn.execute(
+        "SELECT target_time FROM goals WHERE active = 1 AND target_time IS NOT NULL "
+        "ORDER BY type DESC LIMIT 1").fetchone()
+    if not row or not row["target_time"]:
+        return None
+    p = str(row["target_time"]).split(":")
+    try:
+        return int(p[0]) * 3600 + int(p[1]) * 60 + (int(p[2]) if len(p) > 2 else 0)
+    except (ValueError, IndexError):
+        return None
+
+
+def _marathon_forecast(conn, maximal_hr=None):
+    """Bayesian forecast section for the dashboard — a template-ready dict, always
+    present (`available`/`source`), degrading to the calibrated-VDOT anchor headline when
+    the model can't run (never the retired table; design Decision 7).
+
+    `maximal_hr=None` → the goal's distance-appropriate, LTHR-relative maximal effort
+    (`maximal_effort_h`); pass an absolute HR only to override."""
+    goal_secs = _goal_seconds(conn)
+
+    def _anchor(reason):
+        from fit.fitness import anchor_race_time
+        from fit.goals import get_target_race
+        tr = get_target_race(conn)
+        d = (tr.get("distance_km") if tr else None) or 42.195
+        secs = anchor_race_time(conn, d)
+        if not secs:
+            return {"available": False, "reason": reason}
+        return {"available": True, "source": "anchor", "median": _hms(secs),
+                "interval": None, "goal_km": d, "note": reason}
+
+    try:
+        from fit.marathon.predict import (
+            forecast as run_forecast, derived_metrics, influence, _current_c, forecast_context,
+        )
+    except ImportError:
+        return _anchor("durability model extra not installed")
+
+    ctx = forecast_context(conn)        # one shared load (posterior + efforts + prior)
+    if ctx is None:
+        return _anchor("model not fit yet (run `fit sync` or `fit forecast`)")
+    idata, ds = ctx.idata, ctx.ds
+
+    try:
+        fc = run_forecast(conn, avg_hr=maximal_hr, goal_seconds=goal_secs)
+        if not fc:
+            return _anchor("forecast could not be produced")
+        ex = fc["extrapolation"]
+        c = _current_c(conn)
+        dm = derived_metrics(idata, ds, c=c, extrapolation_scale=ex["scale"], nu=ex["nu"])
+        import math
+        bd = dm["durability_beta_d"]
+        phi, kap = dm["fitness_value_phi"], dm["effort_kappa"]
+        goal_min = fc["median"] / 60.0
+        # φ: Δ per +10 chronic-load units; κ: Δ per +5 bpm vs LTHR (both Δlog-time).
+        phi_min = goal_min * (math.exp(phi["median"]) - 1)
+        phi_pct = (math.exp(phi["median"]) - 1) * 100
+        kappa_pct = (math.exp(kap["median"]) - 1) * 100
+        infl = influence(idata, ds)
+        flagged = [e for e in infl["efforts"] if e["influential"]]
+        return {
+            "available": True, "source": "model",
+            "median": _hms(fc["median"]),
+            "interval": f"{_hms(fc['lo'])} – {_hms(fc['hi'])}",
+            "p_ceiling_pct": (round(fc["p_ceiling"] * 100) if "p_ceiling" in fc else None),
+            "goal_time": (_hms(goal_secs) if goal_secs else None),
+            "goal_km": ds.goal,
+            "beta_d": f"{bd['median']:.3f}", "beta_d_ci": f"{bd['lo']:.3f}–{bd['hi']:.3f}",
+            "beta_d_dominated": bool(bd["prior_dominated"]),
+            "phi_reading": f"{phi_min:+.1f} min ({phi_pct:+.1f}%) per +10 fitness",
+            "phi_dominated": bool(phi["prior_dominated"]),
+            "kappa_reading": f"{kappa_pct:+.1f}% pace per +5 bpm",
+            "kappa_dominated": bool(kap["prior_dominated"]),
+            "extrap_reason": ex["reason"], "extrap_defaulted": bool(ex["defaulted"]),
+            "unvalidated": bool(ds.d_max < ds.goal), "d_max": round(ds.d_max, 1),
+            "dist_min": round(float(ds.efforts["distance_km"].min()), 1),  # distance-colour legend domain
+
+            "equiv": [{"label": r["label"], "time": _hms(r["median"])} for r in dm["race_equivalency"]],
+            "influential": [{"date": e["date"], "distance_km": e["distance_km"], "k": round(e["pareto_k"], 2)}
+                            for e in flagged[:3]],
+        }
+    except Exception as e:  # pragma: no cover - defensive: a bad posterior must not break the report
+        logger.warning("marathon forecast section failed: %s", e)
+        return _anchor("forecast error — anchor fallback")
+
+
+def _prediction_summary(conn):
+    """Compact race forecast for the race card header.
+
+    Single source = the calibrated VDOT anchor (anchor_race_time), NOT Garmin
+    VO2max via the retired table. Returns None when there is no usable anchor.
     """
     try:
-        from fit.analysis import _vdot_to_marathon_seconds
+        from fit.fitness import anchor_race_time
+        from fit.calibration import get_calibration_anchor
         from fit.goals import get_target_race
 
         target_race = get_target_race(conn)
         target_km = target_race["distance_km"] if target_race and target_race.get("distance_km") else 42.195
 
-        # Prefer official result_time; fall back to watch garmin_time so a race
-        # still contributes a prediction before its official time is entered
-        # (consistent with the Riegel chart; missing official times are flagged
-        # in the attention panel).
-        races = conn.execute("""
-            SELECT distance_km, COALESCE(result_time, garmin_time) AS race_time
-            FROM race_calendar
-            WHERE status = 'completed'
-              AND COALESCE(result_time, garmin_time) IS NOT NULL
-            ORDER BY date DESC LIMIT 5
-        """).fetchall()
-        vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
-
-        def _parse_time(t):
-            parts = t.split(":")
-            if len(parts) == 3:
-                return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-            elif len(parts) == 2:
-                return int(parts[0]) * 60 + int(parts[1])
-            return 0
-
-        # Riegel extrapolation to TARGET distance
-        all_secs = []
-        for r in races:
-            if r["distance_km"] and r["race_time"]:
-                d1 = r["distance_km"]
-                t1 = _parse_time(r["race_time"])
-                if d1 > 0 and t1 > 0 and d1 != target_km:
-                    t2 = t1 * (target_km / d1) ** 1.06
-                    all_secs.append(round(t2))
-
-        # VDOT prediction scaled to target distance
-        if vo2 and vo2["vo2max"] and vo2["vo2max"] > 30:
-            marathon_secs = _vdot_to_marathon_seconds(vo2["vo2max"])
-            if target_km != 42.195:
-                vdot_secs = round(marathon_secs * (target_km / 42.195) ** 1.06)
-            else:
-                vdot_secs = round(marathon_secs)
-            all_secs.append(vdot_secs)
-
-        if not all_secs:
-            return None
-
-        lo = min(all_secs)
-        hi = max(all_secs)
-
-        def _fmt(s):
-            return f"{s // 3600}:{(s % 3600) // 60:02d}"
-
-        # Simple confidence based on data count
-        level = "moderate" if len(all_secs) >= 5 else "low"
-        level_label = {"high": "", "moderate": " (moderate confidence)", "low": " (low confidence)"}
-
-        if hi - lo < 300:  # within 5 min — show single value
-            return f"Prediction: {_fmt((lo + hi) // 2)}{level_label.get(level, '')}"
+        headline = anchor_race_time(conn, target_km)
+        note = ""
+        if headline:
+            anchor = get_calibration_anchor(conn, "vdot") or {}
+            note = " (stale — re-test)" if anchor.get("stale") else ""
         else:
-            return f"Prediction: {_fmt(lo)}–{_fmt(hi)}{level_label.get(level, '')}"
+            # No calibrated anchor → conservative Riegel extrapolation from
+            # actual races. Never the retired Garmin-VO2max table.
+            from fit.analysis import riegel_fallback_secs
+            headline = riegel_fallback_secs(conn, target_km)
+            note = " (race estimate)" if headline else ""
+        if not headline:
+            return None
+        return f"Prediction: {headline // 3600}:{(headline % 3600) // 60:02d}{note}"
     except Exception:
         return None
 
@@ -118,13 +170,14 @@ def _race_prediction(conn):
     target_secs = _parse_time_to_seconds(target_str)
 
     # Riegel predictions extrapolated to TARGET distance (not always 42.195)
+    from fit.analysis import RIEGEL_EXPONENT
     race_data = []
     for r in races:
         if r["distance_km"] and r["result_time"]:
             d1 = r["distance_km"]
             t1 = _parse_time_to_seconds(r["result_time"])
             if d1 > 0 and t1 > 0 and d1 != target_km:
-                t2 = t1 * (target_km / d1) ** 1.06
+                t2 = t1 * (target_km / d1) ** RIEGEL_EXPONENT
                 original_pace = t1 / d1
                 race_data.append({
                     "from_race": r["name"], "from_date": r["date"],
@@ -132,14 +185,15 @@ def _race_prediction(conn):
                     "original_pace": f"{int(original_pace // 60)}:{int(original_pace % 60):02d}/km",
                 })
 
-    # VDOT prediction
-    from fit.analysis import _vdot_to_marathon_seconds
+    # Daniels race-time estimate from the calibrated VDOT anchor (NOT Garmin
+    # VO2max via the retired table — Garmin VO2max runs above race-implied VDOT).
+    from fit.fitness import anchor_race_time
+    from fit.calibration import get_calibration_anchor
     vdot_pred = None
-    if vo2 and vo2["vo2max"] and vo2["vo2max"] > 30:
-        marathon_secs = _vdot_to_marathon_seconds(vo2["vo2max"])
-        # Scale from marathon to target distance
-        vdot_secs = round(marathon_secs * (target_km / 42.195) ** 1.06) if target_km != 42.195 else round(marathon_secs)
-        vdot_pred = {"vo2max": vo2["vo2max"], "predicted_seconds": vdot_secs}
+    _anchor_secs = anchor_race_time(conn, target_km)
+    if _anchor_secs:
+        _anchor = get_calibration_anchor(conn, "vdot") or {}
+        vdot_pred = {"vdot": _anchor.get("value"), "predicted_seconds": _anchor_secs}
 
     def _fmt_time(secs):
         h = secs // 3600
@@ -179,13 +233,13 @@ def _race_prediction(conn):
     def _section_header(title):
         return (f"<tr><td colspan='4' style='padding:8px 4px 4px;font-size:9px;font-weight:700;"
                 f"color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;"
-                f"border-bottom:1px solid rgba(255,255,255,0.04)'>{title}</td></tr>")
+                f"border-bottom:1px solid var(--hairline-soft)'>{title}</td></tr>")
 
     # VO2max prediction (separate section)
     rows = []
     if vdot_pred:
-        rows.append(_section_header("VO2max Estimate (Daniels)"))
-        rows.append(_row_html("VO2max", str(vdot_pred["vo2max"]), vdot_pred["predicted_seconds"]))
+        rows.append(_section_header("VDOT Anchor (Daniels)"))
+        rows.append(_row_html("VDOT", str(vdot_pred["vdot"]), vdot_pred["predicted_seconds"]))
 
     # Group races by distance category
     distance_groups = {}
@@ -214,7 +268,7 @@ def _race_prediction(conn):
 
     if rows:
         parts.append("<table style='width:100%;border-collapse:collapse;margin:8px 0'>"
-                     "<thead><tr style='border-bottom:1px solid rgba(255,255,255,0.06)'>"
+                     "<thead><tr style='border-bottom:1px solid var(--hairline)'>"
                      "<th style='text-align:left;font-size:9px;color:var(--text-dim);padding:4px'>Source</th>"
                      "<th style='text-align:left;font-size:9px;color:var(--text-dim);padding:4px'>Time</th>"
                      "<th style='text-align:left;font-size:9px;color:var(--text-dim);padding:4px'>Pace (extrap / ran)</th>"

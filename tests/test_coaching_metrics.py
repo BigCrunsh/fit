@@ -4,7 +4,6 @@
 import pytest
 
 from fit.analysis import (
-    _vdot_to_marathon_seconds,
     classify_run_type,
     compute_srpe,
     compute_weekly_agg,
@@ -14,65 +13,18 @@ from fit.analysis import (
 
 
 # ════════════════════════════════════════════════════════════════
-# 4.1 Daniels VDOT Lookup Table
+# 4.1 Race prediction — VDOT leg is anchored, not table-fed
 # ════════════════════════════════════════════════════════════════
 
 
-class TestDanielsVDOT:
-    """Verify Daniels table accuracy at key VO2max points."""
+class TestRacePredictionVdotLeg:
+    """The Daniels VDOT→time table is retired (D1 Phase 2). predict_race_time's vdot
+    leg is sourced from the calibrated VDOT anchor (conn-based), never Garmin VO2max via
+    the table; without a conn the param is ignored. Anchor coverage: test_forecast_anchor."""
 
-    def test_vo2max_42_approx_4h28(self):
-        """VO2max 42 should predict ~4:28:00 (16080s)."""
-        result = _vdot_to_marathon_seconds(42)
-        assert result == pytest.approx(16080, abs=60)
-
-    def test_vo2max_50_approx_3h38(self):
-        """VO2max 50 should predict ~3:38:00 (13080s)."""
-        result = _vdot_to_marathon_seconds(50)
-        assert result == pytest.approx(13080, abs=60)
-
-    def test_vo2max_35_boundary(self):
-        """VO2max 35 should predict ~5:30:00 (19800s)."""
-        result = _vdot_to_marathon_seconds(35)
-        assert result == pytest.approx(19800, abs=60)
-
-    def test_vo2max_60_boundary(self):
-        """VO2max 60 should predict ~2:55:00 (10500s)."""
-        result = _vdot_to_marathon_seconds(60)
-        assert result == pytest.approx(10500, abs=60)
-
-    def test_vo2max_45_interpolation(self):
-        """VO2max 45 should predict ~4:05:00 (14700s)."""
-        result = _vdot_to_marathon_seconds(45)
-        assert result == pytest.approx(14700, abs=60)
-
-    def test_vo2max_below_table(self):
-        """VO2max below 35 clamps to table boundary."""
-        result = _vdot_to_marathon_seconds(30)
-        assert result == 19800.0
-
-    def test_vo2max_above_table(self):
-        """VO2max above 60 clamps to table boundary."""
-        result = _vdot_to_marathon_seconds(65)
-        assert result == 10500.0
-
-    def test_predict_marathon_uses_daniels(self):
-        """predict_race_time should use Daniels table, not linear approx."""
-        preds = predict_race_time(races=[], vo2max=42)
-        assert preds["vdot"] is not None
-        # Should be ~16080s, not the old linear approx
-        assert abs(preds["vdot"]["predicted_seconds"] - 16080) < 60
-
-    def test_predict_marathon_vo2max_55(self):
-        """VO2max 55 prediction accuracy."""
-        preds = predict_race_time(races=[], vo2max=55)
-        assert abs(preds["vdot"]["predicted_seconds"] - 11700) < 60
-
-    def test_interpolation_between_points(self):
-        """VO2max 49 (between 48 and 50) should interpolate correctly."""
-        result = _vdot_to_marathon_seconds(49)
-        # Between 13680 (48) and 13080 (50): midpoint = 13380
-        assert result == pytest.approx(13380, abs=10)
+    def test_vdot_leg_none_without_conn(self):
+        assert predict_race_time(races=[], vo2max=42)["vdot"] is None
+        assert predict_race_time(races=[], vo2max=55)["vdot"] is None
 
 
 # ════════════════════════════════════════════════════════════════

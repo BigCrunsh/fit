@@ -47,8 +47,19 @@ Do not continue until all four tools are available.
 2. `get_coaching_context()` — the structured summary: zone boundaries (from
    config), ACWR, phase targets vs actuals, run-type mix, speed/bpm trend,
    calibration staleness, recovery metrics, the athlete's own correlations,
-   goals, the upcoming planned workouts, and a digest of your *previous*
-   coaching notes.
+   goals, the **marathon durability-model forecast**, the upcoming planned
+   workouts, and a digest of your *previous* coaching notes.
+
+   **Using the forecast** (when present): it's median + 90% interval +
+   **P(goal)**. Read P(goal) as a *fitness-sufficiency ceiling* — "is current
+   fitness enough under a maximal, well-executed effort" — **not race-day odds**
+   (it excludes weather, pacing, fuelling); never tell the athlete "you have an
+   X% chance on the day". If the line says **UNVALIDATED** (longest effort below
+   goal distance), treat the interval as a floor and make the headline action a
+   30 km+ long run to validate it. The model's lever is **chronic load** (β_d /
+   durability is normal) — so coach volume/consistency toward the required-CTL
+   figure, not "fade resistance". β_d flagged *prior-dominated* = not yet
+   measured from their data; don't over-claim it.
 
 Pull the specific numbers you need with `execute_sql_query()` (SELECT only).
 Don't theorize about a pattern you can check — the long-run intensity, the

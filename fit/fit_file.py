@@ -217,18 +217,54 @@ def _compute_split(split_num, points, z2_ceiling_hr, start_distance_m, end_dista
     }
 
 
+# Grade-adjusted pace — a linearised Minetti cost-of-grade: a climb costs ~12 s/km per +1%
+# grade, a descent saves ~6 s/km per 1% (asymmetric: downhill helps less than uphill hurts).
+# Per split we only have aggregate gain/loss, so we treat them as the km's average up/down
+# grade. Approximate + calibratable. Used so terrain (Anstieg) can't fake cardiac drift or
+# pace variability — a steady effort over hills must read as steady, not as decoupling.
+_GRADE_UP_SEC_PER_PCT = 12.0
+_GRADE_DOWN_SEC_PER_PCT = 6.0
+
+
+def grade_adjusted_pace_sec(pace_sec, gain_m, loss_m, dist_km):
+    """Flat-equivalent pace (sec/km) for a split, removing the energetic cost of its grade.
+    Returns the raw pace unchanged when distance/elevation are missing (graceful fallback)."""
+    if not pace_sec or not dist_km or dist_km <= 0:
+        return pace_sec
+    dist_m = dist_km * 1000.0
+    up_pct = 100.0 * (gain_m or 0.0) / dist_m
+    down_pct = 100.0 * (loss_m or 0.0) / dist_m
+    penalty = _GRADE_UP_SEC_PER_PCT * up_pct - _GRADE_DOWN_SEC_PER_PCT * down_pct
+    return max(1.0, pace_sec - penalty)   # flat-equivalent: subtract the terrain cost
+
+
+def grade_adjusted_duration_min(splits):
+    """Flat-equivalent total duration (minutes) from per-split grade-adjusted pace — the time
+    the run would have taken on flat ground at the same effort. None if no usable splits.
+    Used to grade-adjust speed-per-bpm (economy/threshold) and the durability model's time."""
+    total_sec, used = 0.0, False
+    for s in splits:
+        pace, dist = s.get("pace_sec_per_km"), s.get("distance_km")
+        if pace and dist and dist > 0:
+            total_sec += grade_adjusted_pace_sec(
+                pace, s.get("elevation_gain_m"), s.get("elevation_loss_m"), dist) * dist
+            used = True
+    return (total_sec / 60.0) if used else None
+
+
 def compute_cardiac_drift(splits):
     """Compute rolling 1km cardiac drift. Returns drift info dict.
 
-    Cardiac drift = increase in HR:pace ratio over the course of a run,
-    indicating aerobic decoupling. Detected by comparing the first-half
-    average ratio against a sliding 1km window.
+    Cardiac drift = increase in the HR:pace ratio over a run (aerobic decoupling), comparing
+    the first-half average against later splits. Pace is **grade-adjusted** (flat-equivalent)
+    so climbs/descents can't fake decoupling, and the variability gate uses the grade-adjusted
+    pace too, so a steady effort over hills isn't dismissed as variable-pace.
 
     Returns dict with:
         drift_pct: overall drift percentage (first half vs second half)
-        drift_onset_km: km where HR:pace ratio first exceeds 5% of baseline
+        drift_onset_km: km where the HR:GAP ratio first exceeds 5% of baseline
         status: 'detected', 'none', or 'inconclusive_variable_pace'
-        pace_cv_pct: coefficient of variation of pace across splits
+        pace_cv_pct: coefficient of variation of grade-adjusted pace across splits
     """
     if not splits or len(splits) < 4:
         return {"drift_pct": None, "drift_onset_km": None,
@@ -241,17 +277,20 @@ def compute_cardiac_drift(splits):
         return {"drift_pct": None, "drift_onset_km": None,
                 "status": "insufficient_data", "pace_cv_pct": None}
 
-    # Check pace variability — if CV > 15%, flag as inconclusive
-    pace_cv = compute_pace_variability(valid)
+    # Grade-adjust each split's pace to flat-equivalent (Anstieg removed), so terrain can't
+    # fake decoupling or pace variability. Falls back to raw pace when elevation is absent.
+    gaps = [grade_adjusted_pace_sec(s["pace_sec_per_km"], s.get("elevation_gain_m"),
+                                    s.get("elevation_loss_m"), s.get("distance_km") or 1.0)
+            for s in valid]
+
+    # Check pace variability on the grade-adjusted pace — if CV > 15%, flag as inconclusive
+    pace_cv = compute_pace_variability([{"pace_sec_per_km": g} for g in gaps])
     if pace_cv is not None and pace_cv > 15.0:
         return {"drift_pct": None, "drift_onset_km": None,
                 "status": "inconclusive_variable_pace", "pace_cv_pct": round(pace_cv, 1)}
 
-    # Compute HR:pace ratio for each split (higher ratio = more cardiac cost per km)
-    ratios = []
-    for s in valid:
-        ratio = s["avg_hr"] / s["pace_sec_per_km"]
-        ratios.append(ratio)
+    # HR : grade-adjusted-pace ratio per split (higher = more cardiac cost per flat-equiv km)
+    ratios = [s["avg_hr"] / g for s, g in zip(valid, gaps)]
 
     # First half baseline
     half = len(ratios) // 2

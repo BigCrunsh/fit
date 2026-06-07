@@ -7,6 +7,7 @@ from fit.calibration import (
     add_calibration,
     derive_confidence,
     derive_flags,
+    extract_aet_from_steady_run,
     extract_lthr_from_race,
     extract_max_hr_from_activity,
     get_active_calibration,
@@ -31,7 +32,7 @@ class TestActiveCalibration:
 
     def test_different_metrics_independent(self, db):
         add_calibration(db, "max_hr", 192, "manual", "high", date.today())
-        add_calibration(db, "lthr", 172, "race_extract", "medium", date.today())
+        add_calibration(db, "lthr", 172, "race_candidate", "medium", date.today())
         assert get_active_calibration(db, "max_hr")["value"] == 192
         assert get_active_calibration(db, "lthr")["value"] == 172
 
@@ -49,7 +50,7 @@ class TestActiveCalibration:
         assert old == 1
 
     def test_source_activity_id_stored(self, db):
-        add_calibration(db, "lthr", 172, "race_extract", "high", date.today(),
+        add_calibration(db, "lthr", 172, "race_candidate", "high", date.today(),
                         source_activity_id="act-123")
         cal = get_active_calibration(db, "lthr")
         assert cal["source_activity_id"] == "act-123"
@@ -105,7 +106,7 @@ class TestStaleness:
         assert is_stale(db, "weight") is False
 
     def test_vo2max_fresh(self, db):
-        add_calibration(db, "vo2max", 49, "garmin_estimate", "medium", date.today())
+        add_calibration(db, "vo2max", 49, "device_vo2max", "medium", date.today())
         assert is_stale(db, "vo2max") is False
 
     # Unhappy
@@ -173,7 +174,7 @@ class TestCalibrationStatus:
         add_calibration(db, "lthr", 172, "time_trial", "high", today)
         add_calibration(db, "aet", 145, "drift_test", "medium", today)
         add_calibration(db, "weight", 78, "scale", "high", today)
-        add_calibration(db, "vo2max", 49, "garmin_estimate", "medium", today)
+        add_calibration(db, "vo2max", 49, "device_vo2max", "medium", today)
         status = get_calibration_status(db)
         assert len(status) == 5  # max_hr, lthr, aet, weight, vo2max
         assert all(not s["stale"] for s in status)
@@ -449,43 +450,43 @@ class TestMaxHRExtraction:
 class TestDeriveFlags:
     def test_implausible_max_hr(self):
         # 220 > 215 upper envelope
-        flags = derive_flags("max_hr", 220, "race_extract", None)
+        flags = derive_flags("max_hr", 220, "race_candidate", None)
         assert "implausible_value" in flags
 
     def test_implausible_lthr(self):
         # 120 < 130 lower envelope
-        flags = derive_flags("lthr", 120, "race_extract", None)
+        flags = derive_flags("lthr", 120, "race_candidate", None)
         assert "implausible_value" in flags
 
     def test_plausible_no_flag(self):
-        flags = derive_flags("max_hr", 195, "race_extract", None)
+        flags = derive_flags("max_hr", 195, "race_candidate", None)
         assert flags == []
 
     def test_agrees_with_prior_within_tolerance(self):
         prior = {"value": 172, "date": (date.today() - timedelta(days=30)).isoformat()}
-        flags = derive_flags("lthr", 171, "race_extract", prior)
+        flags = derive_flags("lthr", 171, "race_candidate", prior)
         assert "agrees_with_prior" in flags
 
     def test_outside_tolerance_no_agreement(self):
         prior = {"value": 172, "date": (date.today() - timedelta(days=30)).isoformat()}
-        flags = derive_flags("lthr", 180, "race_extract", prior)
+        flags = derive_flags("lthr", 180, "race_candidate", prior)
         assert "agrees_with_prior" not in flags
 
     def test_unexpected_drop_within_12_weeks(self):
         # max_hr: drop >2 in <12 weeks
         prior = {"value": 195, "date": (date.today() - timedelta(days=30)).isoformat()}
-        flags = derive_flags("max_hr", 188, "race_extract", prior)
+        flags = derive_flags("max_hr", 188, "race_candidate", prior)
         assert "unexpected_direction" in flags
 
     def test_old_drop_not_flagged(self):
         # Same drop but >12 weeks → real age-related decline, not anomaly
         prior = {"value": 195, "date": (date.today() - timedelta(days=200)).isoformat()}
-        flags = derive_flags("max_hr", 188, "race_extract", prior)
+        flags = derive_flags("max_hr", 188, "race_candidate", prior)
         assert "unexpected_direction" not in flags
 
     def test_new_peak_max_hr_upward(self):
         prior = {"value": 192, "date": (date.today() - timedelta(days=200)).isoformat()}
-        flags = derive_flags("max_hr", 200, "race_extract", prior)
+        flags = derive_flags("max_hr", 200, "race_candidate", prior)
         assert "new_peak" in flags
 
     def test_no_new_peak_for_activity_max(self):
@@ -511,20 +512,20 @@ class TestDeriveConfidence:
         assert derive_confidence("activity_max", ["weak_context"]) == "low"
 
     def test_unexpected_direction_is_low(self):
-        assert derive_confidence("race_extract", ["unexpected_direction"]) == "low"
+        assert derive_confidence("race_candidate", ["unexpected_direction"]) == "low"
 
     def test_agreement_is_high(self):
-        assert derive_confidence("race_extract", ["agrees_with_prior"]) == "high"
+        assert derive_confidence("race_candidate", ["agrees_with_prior"]) == "high"
 
     def test_new_peak_is_high(self):
-        assert derive_confidence("race_extract", ["new_peak"]) == "high"
+        assert derive_confidence("race_candidate", ["new_peak"]) == "high"
 
-    def test_default_race_extract_is_medium(self):
-        assert derive_confidence("race_extract", []) == "medium"
+    def test_default_race_candidate_is_medium(self):
+        assert derive_confidence("race_candidate", []) == "medium"
 
     def test_blocker_beats_agreement(self):
         """An implausible reading can't be rescued by also agreeing."""
-        assert derive_confidence("race_extract", ["agrees_with_prior", "implausible_value"]) == "low"
+        assert derive_confidence("race_candidate", ["agrees_with_prior", "implausible_value"]) == "low"
 
 
 class TestGetActiveCalibrationConfidenceAware:
@@ -538,7 +539,7 @@ class TestGetActiveCalibrationConfidenceAware:
         )
         db.execute(
             "INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
-            "VALUES ('max_hr', 220, 'race_extract', 'low', date('now', '-10 days'), 1, '[\"implausible_value\"]')"
+            "VALUES ('max_hr', 220, 'race_candidate', 'low', date('now', '-10 days'), 1, '[\"implausible_value\"]')"
         )
         db.commit()
         active = get_active_calibration(db, "max_hr")
@@ -566,7 +567,7 @@ class TestGetActiveCalibrationConfidenceAware:
         )
         db.execute(
             "INSERT INTO calibration (metric, value, method, confidence, date, active) "
-            "VALUES ('lthr', 175, 'race_extract', 'medium', date('now', '-10 days'), 1)"
+            "VALUES ('lthr', 175, 'race_candidate', 'medium', date('now', '-10 days'), 1)"
         )
         db.commit()
         active = get_active_calibration(db, "lthr")
@@ -582,7 +583,7 @@ class TestGetCalibrationHistory:
         )
         db.execute(
             "INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
-            "VALUES ('max_hr', 195, 'race_extract', 'high', '2026-04-15', 1, '[\"new_peak\"]')"
+            "VALUES ('max_hr', 195, 'race_candidate', 'high', '2026-04-15', 1, '[\"new_peak\"]')"
         )
         db.commit()
         rows = get_calibration_history(db, "max_hr")
@@ -600,9 +601,6 @@ class TestGetCalibrationHistory:
 # ════════════════════════════════════════════════════════════════
 # AeT extraction from steady-pace long runs
 # ════════════════════════════════════════════════════════════════
-
-
-from fit.calibration import extract_aet_from_steady_run
 
 
 class TestExtractAetFromSteadyRun:
@@ -684,7 +682,7 @@ class TestExtractAetFromSteadyRun:
 
 
 # ════════════════════════════════════════════════════════════════
-# Informational methods (race_estimate) + LTHR history backfill
+# Informational methods (race_observation) + LTHR history backfill
 # ════════════════════════════════════════════════════════════════
 
 
@@ -704,46 +702,46 @@ def _add_race(db, activity_id, d, name, distance_km, avg_hr, status="completed")
 
 
 class TestInformationalMethods:
-    def test_race_estimate_never_active(self, db):
-        """A recent race_estimate row must not displace an older authoritative one."""
-        add_calibration(db, "lthr", 172, "race_extract", "medium", date(2025, 10, 19))
+    def test_race_observation_never_active(self, db):
+        """A recent race_observation row must not displace an older authoritative one."""
+        add_calibration(db, "lthr", 172, "race_candidate", "medium", date(2025, 10, 19))
         db.execute(
             "INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
-            "VALUES ('lthr', 164, 'race_estimate', 'medium', ?, 0, '[]')",
+            "VALUES ('lthr', 164, 'race_observation', 'medium', ?, 0, '[]')",
             (date.today().isoformat(),),  # more recent — would win if eligible
         )
         db.commit()
         active = get_active_calibration(db, "lthr")
         assert active["value"] == 172
-        assert active["method"] == "race_extract"
+        assert active["method"] == "race_candidate"
 
     def test_all_informational_returns_none(self, db):
-        """If only race_estimate rows exist, there's no active calibration."""
+        """If only race_observation rows exist, there's no active calibration."""
         db.execute(
             "INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
-            "VALUES ('lthr', 175, 'race_estimate', 'medium', ?, 0, '[]')",
+            "VALUES ('lthr', 175, 'race_observation', 'medium', ?, 0, '[]')",
             (date.today().isoformat(),),
         )
         db.commit()
         assert get_active_calibration(db, "lthr") is None
 
-    def test_history_still_includes_race_estimate(self, db):
+    def test_history_still_includes_race_observation(self, db):
         """The chart history shows informational rows even though they're not active."""
-        add_calibration(db, "lthr", 172, "race_extract", "medium", date(2025, 10, 19))
+        add_calibration(db, "lthr", 172, "race_candidate", "medium", date(2025, 10, 19))
         db.execute(
             "INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
-            "VALUES ('lthr', 175, 'race_estimate', 'medium', '2026-03-22', 0, '[]')",
+            "VALUES ('lthr', 175, 'race_observation', 'medium', '2026-03-22', 0, '[]')",
         )
         db.commit()
         hist = get_calibration_history(db, "lthr")
         methods = {h["method"] for h in hist}
-        assert "race_estimate" in methods and "race_extract" in methods
+        assert "race_observation" in methods and "race_candidate" in methods
 
 
 class TestBackfillRaceLthr:
     def test_builds_history_without_changing_active(self, db):
         from fit.calibration import backfill_race_lthr
-        add_calibration(db, "lthr", 172, "race_extract", "medium", date(2025, 10, 19))
+        add_calibration(db, "lthr", 172, "race_candidate", "medium", date(2025, 10, 19))
         _add_race(db, "r1", "2026-03-22", "Müggelturm HM", 21.15, 173)  # → 175
         _add_race(db, "r2", "2025-07-26", "10k Race", 10.1, 175)        # → 173
         added = backfill_race_lthr(db)
@@ -751,7 +749,7 @@ class TestBackfillRaceLthr:
         # Active is unchanged — still the authoritative 172.
         assert get_active_calibration(db, "lthr")["value"] == 172
         # But history now carries the race estimates.
-        ests = [h for h in get_calibration_history(db, "lthr") if h["method"] == "race_estimate"]
+        ests = [h for h in get_calibration_history(db, "lthr") if h["method"] == "race_observation"]
         assert sorted(e["value"] for e in ests) == [173, 175]
 
     def test_idempotent(self, db):

@@ -85,6 +85,126 @@ def sync(days: int, full: bool, splits: bool):
         conn.close()
 
 
+def _fmt_hms(secs):
+    secs = int(round(secs))
+    return f"{secs // 3600}:{(secs % 3600) // 60:02d}:{secs % 60:02d}"
+
+
+def _goal_seconds(conn):
+    """Active goal's target time in seconds (e.g. sub-4:00 → 14400), or None."""
+    row = conn.execute(
+        "SELECT target_time FROM goals WHERE active = 1 AND target_time IS NOT NULL "
+        "ORDER BY type DESC LIMIT 1").fetchone()
+    if not row or not row["target_time"]:
+        return None
+    p = str(row["target_time"]).split(":")
+    try:
+        return int(p[0]) * 3600 + int(p[1]) * 60 + (int(p[2]) if len(p) > 2 else 0)
+    except (ValueError, IndexError):
+        return None
+
+
+@main.command()
+@click.option("--refit", is_flag=True, help="Refit the model now instead of using the cached posterior.")
+@click.option("--hr", type=int, default=None, help="Override the maximal goal-effort avg HR (default: the goal's distance-appropriate, LTHR-relative effort; ±2 bpm ≈ ±3 min).")
+def forecast(refit, hr):
+    """Bayesian marathon forecast — median + 90% interval + P(goal-ceiling).
+
+    Degrades to the calibrated-VDOT estimate when the forecast extra or a fittable
+    history is absent — never the retired table.
+    """
+    from fit.config import get_config
+    from fit.db import get_db
+
+    config = get_config()
+    conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+    goal_secs = _goal_seconds(conn)
+
+    def _degrade(reason):
+        from fit.fitness import anchor_race_time
+        from fit.goals import get_target_race
+        tr = get_target_race(conn)
+        d = (tr.get("distance_km") if tr else None) or 42.195
+        secs = anchor_race_time(conn, d)
+        console.print(f"[yellow]Durability model not available[/yellow] ({reason}).")
+        if secs:
+            console.print(f"  Calibrated-VDOT estimate: [bold]{_fmt_hms(secs)}[/bold] "
+                          f"[dim](no interval — anchor fallback)[/dim]")
+        else:
+            console.print("  No calibrated VDOT anchor yet either — run a race to enable forecasting.")
+
+    try:
+        from fit.marathon import model as M
+        from fit.marathon.predict import (
+            forecast as run_forecast, derived_metrics, influence, required_chronic_for_goal,
+            _current_c,
+        )
+        from fit.marathon.features import extract_efforts
+    except ImportError:
+        return _degrade("install the extra: pip install -e '.[forecast]'")
+
+    try:
+        ds = extract_efforts(conn)
+    except ValueError as e:
+        return _degrade(str(e))
+
+    idata = None if refit else M.load_posterior()
+    if idata is None:
+        console.print("[dim]Fitting the model (≈40s, nutpie)…[/dim]")
+        try:
+            idata = M.fit(ds)
+        except Exception as e:
+            return _degrade(f"fit failed: {e}")
+
+    fc = run_forecast(conn, avg_hr=hr, goal_seconds=goal_secs, posterior=idata)
+    if not fc:
+        return _degrade("forecast could not be produced")
+
+    ex = fc["extrapolation"]
+    c = _current_c(conn)
+    dm = derived_metrics(idata, ds, c=c, extrapolation_scale=ex["scale"], nu=ex["nu"])
+
+    from fit.marathon.predict import effort_h_for_distance
+    from fit.marathon.features import H_DIV
+    eff_hr = hr if hr is not None else round(
+        ds.lthr + effort_h_for_distance(idata, ds, ds.goal, c=c,
+                                        extrapolation_scale=ex["scale"], nu=ex["nu"]) * H_DIV)
+    console.print(f"\n[bold]Marathon forecast[/bold] (goal {ds.goal:g} km, maximal effort HR {eff_hr}, LTHR {ds.lthr:g})")
+    console.print(f"  [bold cyan]{_fmt_hms(fc['median'])}[/bold cyan]  "
+                  f"90% [{_fmt_hms(fc['lo'])} … {_fmt_hms(fc['hi'])}]")
+    if goal_secs and "p_ceiling" in fc:
+        console.print(f"  P({_fmt_hms(goal_secs)} fitness-ceiling) = [bold]{fc['p_ceiling']:.0%}[/bold] "
+                      f"[dim](sufficiency under a maximal, well-executed effort — not race-day odds)[/dim]")
+
+    bd = dm["durability_beta_d"]
+    dom = " [dim](prior-dominated — not yet measured from your data)[/dim]" if bd["prior_dominated"] else ""
+    console.print(f"\n  Durability β_d: {bd['median']:.3f} [90% {bd['lo']:.3f}–{bd['hi']:.3f}]{dom}")
+    console.print(f"  Extrapolation: scale {ex['scale']:.3f} (shrink {ex['shrink']:.2f}"
+                  f"{', DEFAULTED' if ex['defaulted'] else ''}) — {ex['reason']}")
+    if ds.d_max < ds.goal:
+        console.print(f"  [dim]⚠ unvalidated: longest effort {ds.d_max:g} km vs {ds.goal:g} km goal[/dim]")
+
+    console.print("\n  Race-equivalency (today's fitness):")
+    for r in dm["race_equivalency"]:
+        console.print(f"    {r['label']:>3}  {_fmt_hms(r['median'])}")
+
+    if goal_secs:
+        req = required_chronic_for_goal(idata, ds, goal_seconds=goal_secs,
+                                        extrapolation_scale=ex["scale"], nu=ex["nu"])
+        if req:
+            console.print(f"\n  For P(goal) ≥ 80%: chronic load ≈ {req['chronic_load']:.0f} "
+                          f"[dim](you're at {c * 10 + 50:.0f})[/dim]")
+
+    infl = influence(idata, ds)
+    flagged = [e for e in infl["efforts"] if e["influential"]]
+    if flagged:
+        console.print(f"\n  [yellow]Influential efforts[/yellow] (k > {infl['good_k']:.2f} — the headline leans on these):")
+        for e in flagged[:5]:
+            console.print(f"    {e['date']}  {e['distance_km']:.1f} km  (k={e['pareto_k']:.2f})")
+
+    conn.close()
+
+
 @main.group(invoke_without_command=True)
 @click.pass_context
 def auth(ctx):
@@ -434,7 +554,7 @@ def backfill_rpe(refresh: bool):
 def backfill_vdot():
     """Backfill VDOT observations from past races (calibration history + anchor).
 
-    Writes an informational `race_estimate` VDOT row per completed 5–25 km race
+    Writes an informational `race_observation` VDOT row per completed 5–25 km race
     (Daniels, from the official time). These feed the VDOT anchor's windowed max
     and the calibration-history chart; they never become the active value —
     confirm that with `fit calibrate vdot <value>` or the sync prompt.

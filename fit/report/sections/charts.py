@@ -11,6 +11,15 @@ from fit.report.sections import SAFE, CAUTION, DANGER, Z1, Z2, Z3, Z4, Z5, ACCEN
 logger = logging.getLogger(__name__)
 
 
+def _distance_color(d, dmin, dmax):
+    """Blue (short) → yellow (mid) → red (long) — RdYlBu_r, matching marathon_v2's
+    distance colouring. Returns a hex string."""
+    lo, mid, hi = (0x45, 0x75, 0xb4), (0xfe, 0xe0, 0x90), (0xd7, 0x30, 0x27)
+    t = 0.0 if dmax <= dmin else max(0.0, min(1.0, (d - dmin) / (dmax - dmin)))
+    a, b, f = (lo, mid, t * 2) if t < 0.5 else (mid, hi, (t - 0.5) * 2)
+    return "#%02x%02x%02x" % tuple(round(a[i] + (b[i] - a[i]) * f) for i in range(3))
+
+
 def _week_to_iso_date(week_str):
     """Convert ISO week string (e.g., '2026-W14') to ISO date of that Sunday."""
     from datetime import datetime
@@ -619,21 +628,20 @@ def _all_charts(conn):
                              "borderColor": DANGER + "b3", "borderWidth": 2.5, "pointRadius": 2,
                              "tension": 0.3, "yAxisID": "y1", "fill": False})
 
-            # Drift onset on the average
-            drift_onset = None
-            valid_first_half = [h for h in avg_hr[:max_splits // 2] if h is not None]
-            if valid_first_half:
-                first_half_avg = sum(valid_first_half) / len(valid_first_half)
-                for i in range(max_splits // 2, max_splits):
-                    if avg_hr[i] and avg_hr[i] > first_half_avg + 5:
-                        drift_onset = i
-                        break
+            # Drift-onset marker = the canonical Resilience value (max per-run onset via
+            # compute_cardiac_drift) — the SAME number as the dimension / Distance Ceiling /
+            # trend chart, marked on the average curve as the best recent demonstrated onset.
             drift_annots = {}
-            if drift_onset is not None:
+            try:
+                from fit.fitness import get_fitness_profile as _gfp
+                _onset = (_gfp(conn).get("resilience") or {}).get("current_value")
+            except Exception:
+                _onset = None
+            if _onset and 1 <= _onset <= max_splits:
                 drift_annots["drift"] = {
-                    "type": "line", "xMin": drift_onset, "xMax": drift_onset,
+                    "type": "line", "xMin": _onset - 1, "xMax": _onset - 1,
                     "borderColor": CAUTION + "80", "borderDash": [4, 3], "borderWidth": 1,
-                    "label": {"display": True, "content": "Drift onset", "position": "start",
+                    "label": {"display": True, "content": "best onset %g km" % _onset, "position": "start",
                               "color": CAUTION, "font": {"size": 9}, "backgroundColor": "transparent",
                               "yAdjust": -10},
                 }
@@ -649,7 +657,7 @@ def _all_charts(conn):
                                         "annotation": {"annotations": drift_annots}},
                             "scales": {
                                 "y": {"position": "left", "reverse": True,
-                                      "title": {"display": True, "text": "Pace", "color": "#64748b", "font": {"size": 10}},
+                                      "title": {"display": True, "text": "Pace (min/km)", "color": "#64748b", "font": {"size": 10}},
                                       "grid": {"color": "rgba(255,255,255,0.03)"}},
                                 "y1": {"position": "right",
                                        "title": {"display": True, "text": "HR", "color": "#64748b", "font": {"size": 10}},
@@ -660,51 +668,69 @@ def _all_charts(conn):
                 "n_runs": n_runs})
 
     # Cardiac Drift Over Time — drift onset km per run as time series
-    # Compute drift onset for each run with splits (re-query all history for full timeline)
-    def _compute_drift_onset(hr_vals):
-        """Return km index where drift onset occurs (first split in second half where HR > first-half avg + 5), or None."""
-        n = len(hr_vals)
-        if n < 6:
-            return None
-        mid = n // 2
-        first_half = [h for h in hr_vals[:mid] if h is not None]
-        if not first_half:
-            return None
-        first_avg = sum(first_half) / len(first_half)
-        for i in range(mid, n):
-            if hr_vals[i] is not None and hr_vals[i] > first_avg + 5:
-                return i + 1  # 1-indexed km
-        return n + 1  # No drift detected — onset beyond run distance (good)
-
+    # Per-run drift onset over all history — via the canonical compute_cardiac_drift (the SAME
+    # grade-adjusted function the Resilience dimension aggregates). Single source of truth, so
+    # the trend, the dimension/Distance-Ceiling, and the top-chart marker all agree.
+    from fit.fit_file import compute_cardiac_drift
+    from fit.fit_file import grade_adjusted_duration_min
     drift_onset_data = []
+    grade_impact = []   # per-run raw-vs-grade-adjusted speed_per_bpm + onset (for the impact chart)
     all_drift_runs = conn.execute("""
-        SELECT a.id, a.date, a.distance_km FROM activities a
+        SELECT a.id, a.date, a.distance_km, a.duration_min, a.avg_hr FROM activities a
         JOIN activity_splits s ON s.activity_id = a.id
         WHERE a.type IN ('running','track_running','trail_running')
         GROUP BY a.id HAVING COUNT(s.split_num) >= 6
         ORDER BY a.date
     """).fetchall()
+
+    def _onset_from(splits_dicts, dist_km):
+        """drift onset (grade-adj if elevation present): onset km, full distance if no drift, else None."""
+        dd = compute_cardiac_drift(splits_dicts)
+        if dd.get("status") == "detected" and dd.get("drift_onset_km"):
+            return dd["drift_onset_km"]
+        if dd.get("status") == "none":
+            return round(dist_km or 0, 1)
+        return None
+
     for run in all_drift_runs:
-        hr_vals = [s["avg_hr"] for s in conn.execute(
-            "SELECT avg_hr FROM activity_splits WHERE activity_id = ? ORDER BY split_num",
-            (run["id"],)
-        ).fetchall()]
-        onset = _compute_drift_onset(hr_vals)
-        if onset is not None:
-            drift_onset_data.append({"date": run["date"], "onset_km": onset,
-                                     "dist": round(run["distance_km"] or 0, 1)})
+        sp = conn.execute(
+            "SELECT split_num, avg_hr, pace_sec_per_km, distance_km, elevation_gain_m, "
+            "elevation_loss_m FROM activity_splits WHERE activity_id = ? ORDER BY split_num",
+            (run["id"],)).fetchall()
+        sd = [dict(s) for s in sp]
+        flat = [{**s, "elevation_gain_m": 0, "elevation_loss_m": 0} for s in sd]  # terrain stripped
+        ga_onset = _onset_from(sd, run["distance_km"])
+        if ga_onset is None:
+            continue
+        raw_onset = _onset_from(flat, run["distance_km"])
+        drift_onset_data.append({"date": run["date"], "onset_km": ga_onset, "raw_km": raw_onset,
+                                 "dist": round(run["distance_km"] or 0, 1)})
+        # raw vs grade-adjusted speed_per_bpm (efficiency): raw uses actual duration, GA uses
+        # the flat-equivalent duration from the splits.
+        dist, dur, hr = run["distance_km"], run["duration_min"], run["avg_hr"]
+        ga_dur = grade_adjusted_duration_min(sd)
+        if dist and dur and dur > 0 and hr and hr > 0 and ga_dur:
+            grade_impact.append({
+                "date": run["date"],
+                "raw_spb": round((dist * 1000 / dur) / hr, 4),
+                "ga_spb": round((dist * 1000 / ga_dur) / hr, 4),
+            })
     if drift_onset_data:
         max_onset = max(d["onset_km"] for d in drift_onset_data)
         charts.append({"id": "chart-drift-trend", "config": json.dumps({
             "type": "scatter",
-            "data": {"datasets": [{
-                "label": "Drift Onset (km)",
-                "data": [{"x": d["date"], "y": d["onset_km"]} for d in drift_onset_data],
-                "borderColor": DANGER + "b3", "backgroundColor": DANGER + "60",
-                "pointRadius": 5, "showLine": True, "borderWidth": 2, "tension": 0.3,
-            }]},
+            "data": {"datasets": [
+                {"label": "drift onset (grade-adjusted)",
+                 "data": [{"x": d["date"], "y": d["onset_km"]} for d in drift_onset_data],
+                 "borderColor": DANGER + "b3", "backgroundColor": DANGER + "60",
+                 "pointRadius": 5, "showLine": True, "borderWidth": 2, "tension": 0.3},
+                {"label": "raw (no grade adj)",
+                 "data": [{"x": d["date"], "y": d["raw_km"]} for d in drift_onset_data if d.get("raw_km") is not None],
+                 "borderColor": "rgba(148,163,184,0.55)", "backgroundColor": "rgba(148,163,184,0.0)",
+                 "pointRadius": 3, "showLine": True, "borderWidth": 1, "borderDash": [4, 3], "tension": 0.3},
+            ]},
             "options": {"responsive": True,
-                        "plugins": {"legend": {"display": False},
+                        "plugins": {"legend": {"display": True, "labels": {"boxWidth": 10, "font": {"size": 9}}},
                                     "tooltip": {"callbacks": {"__DRIFT_ONSET_TT__": True}},
                                     "annotation": {"annotations": {
                                         "good": {"type": "box", "yMin": 15, "yMax": max(max_onset + 2, 20),
@@ -722,6 +748,27 @@ def _all_charts(conn):
                                        *_profile_x_range(conn))}}
         }).replace('"__DRIFT_ONSET_TT__": true',
                    '"label": function(ctx){return "Drift onset: km "+ctx.parsed.y}')})
+
+    # Grade-adjustment impact (Profile) — raw vs grade-adjusted speed-per-bpm per run, so the
+    # effect of correcting for terrain (Anstieg) is visible: near-overlapping lines mean hills
+    # aren't distorting your efficiency; a gap means hilly runs were understating it.
+    if len(grade_impact) >= 3:
+        charts.append({"id": "chart-grade-spb", "config": json.dumps({
+            "type": "line",
+            "data": {"datasets": [
+                {"label": "raw speed/bpm", "data": [{"x": g["date"], "y": g["raw_spb"]} for g in grade_impact],
+                 "borderColor": "rgba(148,163,184,0.55)", "borderWidth": 1, "borderDash": [4, 3],
+                 "pointRadius": 2, "tension": 0.3, "fill": False},
+                {"label": "grade-adjusted speed/bpm", "data": [{"x": g["date"], "y": g["ga_spb"]} for g in grade_impact],
+                 "borderColor": ACCENT, "borderWidth": 2, "pointRadius": 2, "tension": 0.3, "fill": False},
+            ]},
+            "options": {"responsive": True,
+                        "plugins": {"legend": {"display": True, "position": "bottom", "labels": {"boxWidth": 10, "font": {"size": 9}}}},
+                        "scales": {"x": _time_x_scale(_unit_for_span([g["date"] for g in grade_impact]), *_profile_x_range(conn)),
+                                   "y": {"title": {"display": True, "text": "speed / bpm (higher = more efficient)",
+                                                   "color": "#64748b", "font": {"size": 10}},
+                                         "grid": {"color": "rgba(255,255,255,0.03)"}}}}
+        })})
 
     # Pace Consistency (CV%) — line chart with purple fill (Profile tab)
     pace_cv = conn.execute(f"""
@@ -895,10 +942,8 @@ def _all_charts(conn):
     try:
         from fit.goals import get_target_race as _gtr
         _target = _gtr(conn)
-        target_km = _target["distance_km"] if _target and _target.get("distance_km") else 42.195
         target_time_str = _target.get("target_time") if _target else None
     except Exception:
-        target_km = 42.195
         target_time_str = None
 
     # Parse target time for annotation
@@ -910,96 +955,169 @@ def _all_charts(conn):
         elif len(_tp) == 2:
             target_min = int(_tp[0]) + int(_tp[1]) / 60
 
-    vo2_monthly = conn.execute("""
-        SELECT substr(date, 1, 7) as month, ROUND(AVG(vo2max), 1) as avg_vo2
-        FROM activities WHERE vo2max IS NOT NULL
-        GROUP BY month ORDER BY month
-    """).fetchall()
-
-    # Riegel predictions from actual races (scatter points). Prefer the
-    # official result_time; fall back to the watch-recorded garmin_time so a
-    # race still plots even before its official time is entered. (The dashboard
-    # flags missing official times separately in the attention panel.)
-    race_points = conn.execute("""
-        SELECT date, name, distance_km,
-               COALESCE(result_time, garmin_time) AS race_time
-        FROM race_calendar
-        WHERE status = 'completed' AND distance_km IS NOT NULL
-          AND COALESCE(result_time, garmin_time) IS NOT NULL
-        ORDER BY date
-    """).fetchall()
-
-    def _parse_t(t):
-        p = t.split(":")
-        if len(p) == 3:
-            return int(p[0]) * 3600 + int(p[1]) * 60 + int(p[2])
-        return int(p[0]) * 60 + int(p[1]) if len(p) == 2 else 0
-
+    # Panel B (marathon_v2) — "marathon-equivalent tracks training". The durability model's
+    # median goal-time tracking chronic load over the whole history, its 90% credible band,
+    # every qualifying effort projected to the goal distance (a dot coloured by its OWN
+    # distance, blue→red), and a today error-bar marker. Model-only (D1 Phase 2): no fit →
+    # no Panel B (the forecast section degrades to the anchor elsewhere). Y stays minutes so
+    # the template's H:MM tick formatter applies; lower = faster (reversed axis).
+    TEXT = "#e2e8f0"   # design-system --text (Chart.js can't read the CSS var)
     datasets = []
-    all_labels = set()
+    prof_min, prof_max = _profile_x_range(conn)
+    from datetime import date as _date, timedelta as _timedelta
+    from fit.report.sections.cards import _model_week_trend
+    from fit.marathon.predict import (
+        forecast_context as _fctx, forecast as _run_forecast, marathon_equiv_points,
+    )
+    # Panel B spans the FULL effort history (not the narrow profile-phase window the other
+    # profile charts use): the long-term trend through detraining gaps IS the story here, and
+    # the effort dots reach back to the first race. x = [first effort, race/today].
+    _ctx = _fctx(conn)
+    _bx_min, _bx_max = prof_min, prof_max
+    if _ctx is not None:
+        # Dense biweekly grid from the first effort → today (the line tracks fitness and stops
+        # at today; there is no future data). Reuse the cached per-week trend (median, lo, hi).
+        _today = _date.today()
+        try:
+            _start = _ctx.ds.efforts["date"].min().date()
+        except Exception:
+            _start = _today - _timedelta(days=420)
+        _bx_min = _start.isoformat()
+        _bx_max = max(str(prof_max)[:10], _today.isoformat()) if prof_max else _today.isoformat()
+        grid, _d = [], _start
+        while _d <= _today:
+            grid.append(_d.isoformat())
+            _d += _timedelta(days=14)
+        if grid and grid[-1] != _today.isoformat():
+            grid.append(_today.isoformat())
 
-    # Build datasets as {x: ISO-date, y: minutes} point objects — Chart.js's
-    # time scale parses x natively and lays each point at the correct date.
-    # This replaces the prior approach of sharing a category label axis with
-    # YYYY-MM strings, which gave even spacing instead of true date spacing.
+        ml = _model_week_trend(conn, grid)
+        if ml:
+            gd = [g for g in grid if g in ml]
+            hi = [{"x": g, "y": round(ml[g][2], 1)} for g in gd]
+            lo = [{"x": g, "y": round(ml[g][1], 1)} for g in gd]
+            med = [{"x": g, "y": round(ml[g][0], 1)} for g in gd]
+            # 90% band: the "hi" line fills DOWN to the next dataset ("lo").
+            datasets.append({"label": "90% band", "data": hi, "fill": "+1",
+                             "backgroundColor": ACCENT + "22", "borderColor": "rgba(0,0,0,0)",
+                             "pointRadius": 0, "order": 5})
+            datasets.append({"label": "_loband", "data": lo, "fill": False,
+                             "borderColor": "rgba(0,0,0,0)", "pointRadius": 0, "order": 5})
+            datasets.append({"label": "marathon @ max effort (median)", "data": med,
+                             "borderColor": ACCENT, "backgroundColor": ACCENT + "15",
+                             "fill": False, "borderWidth": 2, "pointRadius": 0,
+                             "tension": 0.25, "spanGaps": True, "order": 2})
 
-    # Dataset 1: VDOT line (monthly VO2max → predicted time). Mid-month
-    # (YYYY-MM-15) keeps each point visually centered within its month.
-    if len(vo2_monthly) >= 3:
-        from fit.analysis import _vdot_to_marathon_seconds
-        vdot_points = []
-        for v in vo2_monthly:
-            secs = _vdot_to_marathon_seconds(v["avg_vo2"])
-            if target_km != 42.195:
-                secs = secs * (target_km / 42.195) ** 1.06
-            vdot_points.append({"x": v["month"] + "-15", "y": round(secs / 60, 1)})
-        datasets.append({
-            "label": "VDOT (from VO2max)", "data": vdot_points,
-            "borderColor": ACCENT, "backgroundColor": ACCENT + "15", "fill": True,
-            "borderWidth": 2, "pointRadius": 2,
-            "spanGaps": True,
-        })
+        # Coloured effort dots — each qualifying effort projected to the goal distance,
+        # coloured by its own distance (RdYlBu_r, same scale as Panel A); carries `d` (km)
+        # for the tooltip.
+        eqp = marathon_equiv_points(_ctx.idata, _ctx.ds)
+        if eqp:
+            dmin = min(p["distance_km"] for p in eqp)
+            dots = [{"x": p["date"], "y": round(p["minutes"], 1), "d": round(p["distance_km"], 1)}
+                    for p in eqp]
+            # Colour domain runs to the GOAL (not just the longest run), so the red end is the
+            # unrun target — the empty red zone past your dots is "what's missing" (durability gap).
+            colors = [_distance_color(p["distance_km"], dmin, _ctx.ds.goal) for p in eqp]
+            datasets.append({"label": "efforts (→ goal-equivalent)", "data": dots,
+                             "showLine": False, "pointBackgroundColor": colors,
+                             "pointBorderColor": "#0008", "pointBorderWidth": 1,
+                             "pointRadius": 5, "order": 1})
 
-    # Dataset 2: Riegel scatter (actual race → extrapolated to target distance).
-    if race_points:
-        riegel_points = []
-        for r in race_points:
-            d1 = r["distance_km"]
-            t1 = _parse_t(r["race_time"])
-            if d1 > 0 and t1 > 0 and d1 != target_km:
-                t2 = t1 * (target_km / d1) ** 1.06
-                riegel_points.append({"x": r["date"], "y": round(t2 / 60, 1)})
-        if riegel_points:
-            datasets.append({
-                "label": "Riegel (from races)", "data": riegel_points,
-                "borderColor": Z3, "borderWidth": 0,
-                "pointRadius": 5, "pointBackgroundColor": Z3,
-                "pointBorderColor": Z3 + "80", "pointBorderWidth": 2,
-                "showLine": False, "fill": False,
-            })
+        # Today: median diamond + a 90% whisker (the live forecast at current fitness).
+        try:
+            _tf = _run_forecast(conn)
+        except Exception:
+            _tf = None
+        if _tf:
+            t_iso = _today.isoformat()
+            datasets.append({"label": "_todaywhisker",
+                             "data": [{"x": t_iso, "y": round(_tf["lo"] / 60, 1)},
+                                      {"x": t_iso, "y": round(_tf["hi"] / 60, 1)}],
+                             "borderColor": TEXT, "borderWidth": 1.5, "pointRadius": 0,
+                             "showLine": True, "fill": False, "order": 0})
+            datasets.append({"label": "today", "data": [{"x": t_iso, "y": round(_tf["median"] / 60, 1)}],
+                             "showLine": False, "pointStyle": "rectRot", "pointRadius": 8,
+                             "pointBackgroundColor": TEXT, "pointBorderColor": "#000",
+                             "pointBorderWidth": 1, "order": 0})
 
     if datasets:
-        # Target annotation
         pred_annots = {}
         if target_min:
             pred_annots["target"] = {
                 "type": "line", "yMin": target_min, "yMax": target_min,
-                "borderColor": SAFE + "60", "borderDash": [6, 3],
-                "label": {"content": f"Target {target_time_str}", "display": True,
-                           "position": "end", "font": {"size": 8}},
-            }
+                "borderColor": SAFE + "90", "borderWidth": 1.5, "borderDash": [6, 3],
+                "label": {"content": f"goal {target_time_str}", "display": True,
+                          "position": "start", "font": {"size": 8}, "color": SAFE,
+                          "backgroundColor": "rgba(0,0,0,0)"}}
 
-        prof_min, prof_max = _profile_x_range(conn)
         charts.append({"id": "chart-marathon-pred", "config": json.dumps({
             "type": "line",
             "data": {"datasets": datasets},
             "options": {"responsive": True,
                         "plugins": {"legend": {"display": True, "position": "bottom", "labels": {"boxWidth": 12}},
                                     "annotation": {"annotations": pred_annots}},
-                        "scales": {"x": _time_x_scale("month", prof_min, prof_max),
+                        "scales": {"x": _time_x_scale("month", _bx_min, _bx_max),
                                    "y": {"reverse": True, "grid": {"color": "rgba(255,255,255,0.03)"},
-                                         "title": {"display": True, "text": "time (lower = faster)"}}}}
-        })})
+                                         "title": {"display": True, "text": "marathon-equivalent (h:mm, lower = faster)"}}}}
+        }, ensure_ascii=False)})
+
+    # Panel A — durability collapse (marathon_v2). Distance×time on log-log; every effort
+    # normalised to today's fitness + maximal effort collapses onto one β_d power law,
+    # with the grey band fanning out past d_max (the honest extrapolation).
+    try:
+        from fit.marathon.predict import durability_panel, _current_c, forecast_context
+        _ctx = forecast_context(conn)       # shared load (posterior + efforts + prior)
+        if _ctx is not None:
+            _post, _ds, _pr = _ctx.idata, _ctx.ds, _ctx.prior
+            dp = durability_panel(_post, _ds, c_ref=_current_c(conn),
+                                  extrapolation_scale=_pr["scale"], nu=_pr["nu"])
+            dmin = min(p["distance_km"] for p in dp["points"])
+            pts = [{"x": round(p["distance_km"], 2), "y": round(p["minutes"], 1)} for p in dp["points"]]
+            pt_colors = [_distance_color(p["distance_km"], dmin, dp["goal"]) for p in dp["points"]]
+            curve = [{"x": round(c["distance_km"], 2), "y": round(c["median"], 1)} for c in dp["curve"]]
+            hi = [{"x": round(c["distance_km"], 2), "y": round(c["hi"], 1)} for c in dp["curve"]]
+            lo = [{"x": round(c["distance_km"], 2), "y": round(c["lo"], 1)} for c in dp["curve"]]
+            charts.append({"id": "chart-durability", "config": json.dumps({
+                "type": "scatter",
+                "data": {"datasets": [
+                    {"label": "90% band", "data": hi, "showLine": True, "fill": "+1",
+                     "backgroundColor": ACCENT + "3a", "borderColor": ACCENT + "66",
+                     "borderWidth": 1, "borderDash": [3, 3], "pointRadius": 0, "order": 3},
+                    {"label": "_lo", "data": lo, "showLine": True, "fill": False,
+                     "borderColor": ACCENT + "66", "borderWidth": 1, "borderDash": [3, 3],
+                     "pointRadius": 0, "order": 3},
+                    {"label": "durability curve (β_d=%.3f)" % dp["beta_d"], "data": curve,
+                     "showLine": True, "borderColor": ACCENT, "borderWidth": 2,
+                     "pointRadius": 0, "tension": 0.1, "order": 2},
+                    {"label": "efforts (normalised)", "data": pts, "showLine": False,
+                     "pointBackgroundColor": pt_colors, "pointBorderColor": "#0008",
+                     "pointBorderWidth": 1, "pointRadius": 5, "order": 1},
+                ]},
+                "options": {"responsive": True, "maintainAspectRatio": False,
+                    "plugins": {
+                        "legend": {"display": True, "position": "bottom",
+                                   "labels": {"boxWidth": 12}},
+                        "annotation": {"annotations": {
+                            "dmax": {"type": "line", "xMin": round(dp["d_max"], 2), "xMax": round(dp["d_max"], 2),
+                                     "borderColor": CAUTION + "70", "borderWidth": 1, "borderDash": [4, 3],
+                                     "label": {"content": "longest run", "display": True, "position": "start",
+                                               "rotation": 90, "font": {"size": 8}, "color": CAUTION,
+                                               "backgroundColor": "rgba(0,0,0,0)"}},
+                            "goal": {"type": "line", "xMin": round(dp["goal"], 2), "xMax": round(dp["goal"], 2),
+                                     "borderColor": ACCENT + "90", "borderWidth": 1,
+                                     "label": {"content": "goal", "display": True, "position": "end",
+                                               "font": {"size": 8}, "color": ACCENT,
+                                               "backgroundColor": "rgba(0,0,0,0)"}}}}},
+                    "scales": {
+                        "x": {"type": "logarithmic", "title": {"display": True, "text": "distance (km)"},
+                              "min": dmin * 0.9, "max": dp["goal"] * 1.08,
+                              "grid": {"color": "rgba(255,255,255,0.04)"}},
+                        "y": {"type": "logarithmic", "title": {"display": True, "text": "time @ today's fitness, max effort"},
+                              "grid": {"color": "rgba(255,255,255,0.04)"}}}}
+            }, ensure_ascii=False)})
+    except Exception as e:  # never break the report on the forecast chart
+        logger.debug("durability chart skipped: %s", e)
 
     # Plan adherence mirrored bar chart (Training tab)
     try:
@@ -1137,10 +1255,10 @@ def _all_charts(conn):
         })})
 
     # Calibration history scatter — one chart per dense metric. Marker
-    # shape encodes drift-test classification (triangle-up = upper bound:
-    # AeT < value; triangle-down = lower bound: AeT > value; circle =
-    # direct estimate). Marker fill encodes confidence (filled = high,
-    # hollow = medium, red ring = low). Active row gets a larger radius.
+    # shape encodes source/classification (square = device-measured Garmin LT;
+    # triangle-up = drift upper bound: AeT < value; diamond = lower bound:
+    # AeT > value; circle = direct estimate). Marker fill encodes confidence
+    # (filled = high, hollow = medium, red ring = low). Active row = larger radius.
     from fit.report.sections.cards import _calibration_history as _ch_builder
     cal_metrics = _ch_builder(conn)
     for m in cal_metrics:
@@ -1151,10 +1269,13 @@ def _all_charts(conn):
         styles, fills, borders, radii = [], [], [], []
         for r in m["rows"]:
             points.append({"x": r["date"], "y": r["value"]})
-            # Marker shape by classification — drift_test rows have one;
-            # everything else gets a plain circle.
+            # Marker shape: device-measured rows (Garmin auto-detected LT) are a
+            # square so the watch threshold stands out from race-derived estimates;
+            # drift_test rows encode their classification; everything else a circle.
             cls = r.get("classification")
-            if cls == "upper_bound":
+            if r.get("method") == "device_lt":
+                styles.append("rect")               # ■ watch-detected (device measurement)
+            elif cls == "upper_bound":
                 styles.append("triangle")          # ▲ AeT < this value
             elif cls == "lower_bound":
                 styles.append("rectRot")            # ◆ AeT > this value (diamond placeholder for Chart.js)

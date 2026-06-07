@@ -7,6 +7,7 @@
 <style>
 {% include 'design_system.css' %}
 </style>
+<script>/* set theme before first paint to avoid a flash */(function(){try{if(localStorage.getItem('fit-theme')==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}})();</script>
 </head>
 <body>
 
@@ -15,10 +16,13 @@
     <h1>{{ title }}</h1>
     <div style="font-size:10px;color:var(--text-faint);font-family:var(--mono);margin-top:3px">{{ subtitle }}</div>
   </div>
-  <div class="tabs">
-    {% for tab in tabs %}
-    <button class="tab-btn{% if loop.first %} active{% endif %}" onclick="showTab('{{ tab.id }}',this)">{{ tab.label }}</button>
-    {% endfor %}
+  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+    <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()" title="Toggle dark / light">☀ Light</button>
+    <div class="tabs">
+      {% for tab in tabs %}
+      <button class="tab-btn{% if loop.first %} active{% endif %}" onclick="showTab('{{ tab.id }}',this)">{{ tab.label }}</button>
+      {% endfor %}
+    </div>
   </div>
 </div>
 
@@ -69,6 +73,7 @@
         <div class="anchor-value">{{ a.value | round(0) | int if a.unit == 'bpm' else a.value }}<span class="anchor-unit">{% if a.unit %} {{ a.unit }}{% endif %}</span></div>
         <div class="anchor-desc">{{ a.description }}</div>
         {% if a.trend %}<div class="anchor-trend">{{ a.trend }}{% if a.days_ago is not none %} · {{ a.days_ago }}d ago{% endif %}</div>{% endif %}
+        {% if a.reference %}<div class="anchor-trend"{% if a.reference_title %} title="{{ a.reference_title }}"{% endif %}>{{ a.reference }} ⓘ</div>{% endif %}
         {% else %}
         <div class="anchor-value" style="color:var(--text-dim)">—</div>
         <div class="anchor-desc">{{ a.description }}</div>
@@ -116,6 +121,36 @@
         {% endif %}
       </div>
     </div>
+
+    {% if marathon_forecast and marathon_forecast.available %}
+    <!-- Durability-model forecast — the at-a-glance line; β_d / race-equivalents /
+         extrapolation detail live on the Profile tab (one place, not duplicated here). -->
+    <div class="race-hero-divider">
+      {% if marathon_forecast.source == 'model' %}
+      <div class="race-hero-subtitle" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:12px">
+        <span>90% credible <strong style="color:var(--text)">{{ marathon_forecast.interval }}</strong></span>
+        {% if marathon_forecast.p_ceiling_pct is not none %}
+        <span title="Fitness-sufficiency under a well-executed effort — not race-day odds (weather, pacing and fuelling are extra).">sub-{{ marathon_forecast.goal_time }} odds <strong style="color:{% if marathon_forecast.p_ceiling_pct >= 60 %}var(--safe){% elif marathon_forecast.p_ceiling_pct >= 35 %}var(--caution){% else %}var(--danger){% endif %}">{{ marathon_forecast.p_ceiling_pct }}%</strong> <span style="color:var(--text-dim)">ⓘ</span></span>
+        {% endif %}
+        {% if race_readiness and race_readiness.verdict and race_readiness.verdict not in ['no_target', 'insufficient_data'] %}
+        <span>·
+          {% if race_readiness.verdict == 'ready' %}<strong style="color:var(--safe)">ready</strong>
+          {% elif race_readiness.verdict == 'almost' %}<strong style="color:var(--safe)">almost there</strong>
+          {% elif race_readiness.verdict == 'on_track' %}<strong style="color:var(--accent)">on track{% if race_readiness.predicted_time %} for {{ race_readiness.predicted_time }}{% endif %}</strong>
+          {% elif race_readiness.verdict == 'tight' %}<strong style="color:var(--caution)">tight</strong>
+          {% elif race_readiness.verdict == 'at_risk' %}<strong style="color:var(--danger)">at risk</strong>{% endif %}
+        </span>
+        {% endif %}
+        {% if marathon_forecast.unvalidated %}<span class="badge badge-yellow" title="longest effort {{ marathon_forecast.d_max }} km vs {{ marathon_forecast.goal_km }} km goal">⚠ unvalidated past {{ marathon_forecast.d_max }} km</span>{% endif %}
+      </div>
+      <div class="race-hero-subtitle" style="margin-top:5px;color:var(--text-dim)">Durability β<sub>d</sub>, race-equivalents and the long-run extrapolation → <strong>Profile</strong> tab.</div>
+      {% else %}
+      <span class="kicker">Forecast</span>
+      <div class="stat-value-lg" style="color:var(--accent)">{{ marathon_forecast.median }}</div>
+      <div class="race-hero-subtitle">{{ marathon_forecast.note }} — calibrated-VDOT estimate (no interval)</div>
+      {% endif %}
+    </div>
+    {% endif %}
 
     <!-- Prediction trend chart (full width) -->
     <div class="race-hero-divider">
@@ -206,7 +241,7 @@
           <div class="summary-card summary-card-shrink">
             <div class="card-label">Aerobic</div>
             <div class="card-value card-value-md" style="color:var(--z2)">{{ fitness_profile.aerobic.current_value if fitness_profile.aerobic.current_value is not none else '—' }}</div>
-            <div class="card-sub">VO2max{% if fitness_profile.aerobic.rate_per_month %} · <span style="color:{% if fitness_profile.aerobic.trend == 'improving' %}var(--safe){% elif fitness_profile.aerobic.trend == 'declining' %}var(--danger){% else %}var(--text-muted){% endif %}">{{ '%+.1f' % fitness_profile.aerobic.rate_per_month }}/mo</span>{% endif %}</div>
+            <div class="card-sub">VDOT{% if fitness_profile.aerobic.rate_per_month %} · <span style="color:{% if fitness_profile.aerobic.trend == 'improving' %}var(--safe){% elif fitness_profile.aerobic.trend == 'declining' %}var(--danger){% else %}var(--text-muted){% endif %}">{{ '%+.1f' % fitness_profile.aerobic.rate_per_month }}/mo</span>{% endif %}</div>
             <canvas id="spark-fp-aerobic"></canvas>
           </div>
           <div class="summary-card summary-card-shrink">
@@ -360,63 +395,9 @@
 <!-- PROFILE — "Am I fit enough? What can I run today?" -->
 <div id="tab-profile" class="tab-content">
 
-  <!-- 1. RACE READINESS HERO -->
-  {% if race_readiness %}
-  {% set rr = race_readiness %}
-  {% set rr_bg = 'rgba(52,211,153,0.05)' if rr.verdict == 'ready' else 'rgba(129,140,248,0.05)' if rr.verdict in ['on_track', 'almost'] else 'rgba(251,191,36,0.05)' if rr.verdict == 'tight' else 'rgba(248,113,113,0.05)' if rr.verdict == 'at_risk' else 'var(--surface)' %}
-  {% set rr_border = 'rgba(52,211,153,0.12)' if rr.verdict == 'ready' else 'rgba(129,140,248,0.12)' if rr.verdict in ['on_track', 'almost'] else 'rgba(251,191,36,0.12)' if rr.verdict == 'tight' else 'rgba(248,113,113,0.12)' if rr.verdict == 'at_risk' else 'var(--border)' %}
-  <div style="background:{{ rr_bg }};border:1px solid {{ rr_border }};border-radius:14px;padding:18px 22px;margin:14px 0">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
-      <div>
-        <div style="font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px">Race Readiness</div>
-        <div style="display:flex;align-items:baseline;gap:12px">
-          <span style="font-size:32px;font-weight:700;font-family:var(--mono);color:var(--accent)">{{ rr.effective_vdot or '—' }}</span>
-          <span style="font-size:12px;color:var(--text-dim)">effective VDOT</span>
-          {% if rr.vdot_gap is not none %}
-          <span class="badge {% if rr.vdot_gap <= 0 %}badge-green{% elif rr.vdot_gap <= 2 %}badge-yellow{% else %}badge-red{% endif %}">
-            {{ '%+.1f' | format(-rr.vdot_gap) }}
-          </span>
-          {% endif %}
-        </div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
-          {% if rr.race_vdot %}Race VDOT: {{ rr.race_vdot }} ({{ rr.race_vdot_date }}){% endif %}
-          {% if rr.garmin_vo2max %}{% if rr.race_vdot %} · {% endif %}Garmin VO2max: {{ rr.garmin_vo2max }}{% endif %}
-          {% if rr.required_vdot %}{% if rr.race_vdot or rr.garmin_vo2max %} · {% endif %}Target VDOT: {{ rr.required_vdot }}{% if rr.target_time %} (for {{ rr.target_time }}){% endif %}{% endif %}
-        </div>
-      </div>
-      <div style="text-align:right">
-        {% if rr.predicted_time %}
-        <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:700">Predicts</div>
-        <div style="font-size:22px;font-weight:700;font-family:var(--mono);color:var(--accent);line-height:1.2">{{ rr.predicted_time }}</div>
-        {% endif %}
-        {% if rr.target_time and rr.gap_minutes is not none %}
-        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">target {{ rr.target_time }} · <span style="color:{% if rr.gap_minutes <= 0 %}var(--safe){% elif rr.gap_minutes <= 5 %}var(--caution){% else %}var(--danger){% endif %}">{{ '%+d' | format(rr.gap_minutes) }} min</span></div>
-        {% endif %}
-        {% if rr.verdict == 'ready' %}
-        <div class="badge badge-green" style="margin-top:4px">Ready</div>
-        {% elif rr.verdict == 'almost' %}
-        <div class="badge badge-green" style="margin-top:4px">Almost there</div>
-        {% elif rr.verdict == 'on_track' %}
-        <div class="badge badge-blue" style="margin-top:4px">On track</div>
-        {% elif rr.verdict == 'tight' %}
-        <div class="badge badge-yellow" style="margin-top:4px">Tight</div>
-        {% elif rr.verdict == 'at_risk' %}
-        <div class="badge badge-red" style="margin-top:4px">At risk</div>
-        {% elif rr.verdict == 'no_target' %}
-        <div style="font-size:10px;color:var(--text-dim);margin-top:4px">Set a target: <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit target set</code></div>
-        {% endif %}
-      </div>
-    </div>
-    {% if rr.rate_per_month %}
-    <div style="font-size:11px;color:var(--text-muted);margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.05)">
-      Trend: {{ '%+.1f' | format(rr.rate_per_month) }} VO2max/month
-      {% if rr.vdot_gap and rr.vdot_gap > 0 and rr.rate_per_month > 0 %}
-      · ~{{ (rr.vdot_gap / rr.rate_per_month)|round(0)|int }} months to close gap
-      {% endif %}
-    </div>
-    {% endif %}
-  </div>
-  {% endif %}
+  <!-- Race Readiness hero merged into the race card above (one forecast card; the VDOT
+       anchor detail lives on the Profile tab). race_readiness is still computed and read
+       by the race card for the verdict + sub-goal odds. -->
 
   <!-- In-tab anchor nav: jump between chart sections without scrolling 10 screens -->
   <nav class="anchor-nav" aria-label="Profile sections">
@@ -499,6 +480,7 @@
         {% endif %}
       </div>
       {% if dim.sowhat %}<div class="dim-sowhat">{{ dim.sowhat }}</div>{% endif %}
+      {% if dim.caveat %}<div class="dim-sowhat" style="color:var(--caution)">⚠ {{ dim.caveat }}</div>{% endif %}
     </div>
     {% endfor %}
   </div>
@@ -511,9 +493,34 @@
        ════════════════════════════════════════════════════════════════ -->
 
   <!-- Marathon Prediction — the forecast, up front -->
-  <div id="prof-prediction" class="sec"><h2>Marathon Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Race-day forecast over time. Y-axis is reverse-scaled — lower = faster. <strong>Model: Riegel power law</strong> — your race time scaled to the marathon by a fatigue exponent. <strong>Assumes:</strong> default exponent 1.06 = population-average endurance fade; fitting it to your own multi-distance races gives your personal fade (higher = you slow more over distance → slower marathon). The gap between your short-race and long-race projections <em>is</em> your durability. A terrain- or heat-distorted long race overstates fade. This is a <em>race-day</em> estimate (how you fade), distinct from the Daniels VDOT/pace zones (how sharp your engine is now).</div><div class="line"></div></div>
-  <div class="sec-sub">What time would my current fitness deliver? Lower line = faster prediction. Race dots are anchors; the line is Garmin VO2max-derived.</div>
+  <div id="prof-prediction" class="sec"><h2>Marathon Prediction Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">Forecast over time at a maximal effort, tracking your fitness. Y-axis is reverse-scaled — lower = faster. <strong>Model: Bayesian durability model</strong> — log-time regressed on distance (durability β<sub>d</sub>), fitness (chronic load) and effort (HR); the marathon is an extrapolation past your longest race, so a drift-informed wall penalty widens the band. <strong>Read it as:</strong> a <em>fitness-sufficiency</em> trajectory under a well-executed effort — not race-day odds (weather/pacing/fuelling are extra). Distinct from the Daniels VDOT/pace zones (how sharp your engine is now). The durability-collapse plot below shows the same model on distance.</div><div class="line"></div></div>
+  <div class="sec-sub">What time would my current fitness deliver, over time? Lower = faster. The line is the durability model's median tracking your chronic load; the shaded band is its 90% credible interval. Dots are your efforts projected to the goal distance, coloured by their own distance (blue = short → red = long); the diamond is today's forecast with its 90% whisker.</div>
   <div class="chart-box chart-canvas-lg"><canvas id="chart-marathon-pred"></canvas></div>
+  {% if marathon_forecast and marathon_forecast.goal_km %}<div class="dist-legend">point colour = effort distance:<span>{{ marathon_forecast.dist_min }} km</span><span class="dist-legend-bar">{% if marathon_forecast.d_max and marathon_forecast.goal_km > marathon_forecast.dist_min %}<span class="dist-legend-mark" style="left:{{ ((marathon_forecast.d_max - marathon_forecast.dist_min) / (marathon_forecast.goal_km - marathon_forecast.dist_min) * 100) | round(0) | int }}%" title="longest run {{ marathon_forecast.d_max }} km"></span>{% endif %}</span><span>{{ marathon_forecast.goal_km | round(1) }} km</span><span class="dist-legend-note">— scale runs to the {{ marathon_forecast.goal_km | round(0) | int }} km goal; tick = your longest run ({{ marathon_forecast.d_max }} km), so the red end is distance you've never raced (the durability gap). Same scale in the durability collapse below.</span></div>{% endif %}
+  {% if charts | selectattr('id', 'equalto', 'chart-durability') | first %}
+  <div class="sec-sub" style="margin-top:16px"><strong>Durability collapse.</strong> Every effort normalised to today's fitness &amp; a maximal effort — if your durability is consistent they fall onto one power law (slope = β<sub>d</sub>). The band past your longest run is the honest extrapolation to the goal; points run blue (short) → red (long).</div>
+  <div class="chart-box chart-canvas-lg"><canvas id="chart-durability"></canvas></div>
+  {% endif %}
+  {% if marathon_forecast and marathon_forecast.source == 'model' %}
+  <div class="sec-sub" style="margin-top:12px"><strong>Durability-model params</strong> — what the model unlocks beyond the headline (pair these with the Fitness Dimensions above: β<sub>d</sub> is your <em>performance</em> durability, while the Resilience dimension is the <em>measured</em> drift-onset one).</div>
+  <div style="display:flex;gap:32px;flex-wrap:wrap;margin:8px 0 4px">
+    <div>
+      <div class="kicker">Durability β<sub>d</sub></div>
+      <div class="stat-value-lg">{{ marathon_forecast.beta_d }}</div>
+      <div class="race-hero-subtitle">{{ marathon_forecast.beta_d_ci }}{% if marathon_forecast.beta_d_dominated %} · prior-dominated{% endif %}</div>
+    </div>
+    <div>
+      <div class="kicker">Fitness value (φ)</div>
+      <div style="font-size:15px;font-weight:600;font-family:var(--mono)">{{ marathon_forecast.phi_reading }}</div>
+      {% if marathon_forecast.phi_dominated %}<div class="race-hero-subtitle">prior-dominated</div>{% endif %}
+    </div>
+    <div>
+      <div class="kicker">HR↔pace (κ)</div>
+      <div style="font-size:15px;font-weight:600;font-family:var(--mono)">{{ marathon_forecast.kappa_reading }}</div>
+      {% if marathon_forecast.kappa_dominated %}<div class="race-hero-subtitle">prior-dominated</div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
   {% if profile_takeaways.prediction %}
   <div class="sec-takeaway">{{ profile_takeaways.prediction }}{% if prediction_confidence %} <span class="sec-takeaway-meta">· confidence {{ prediction_confidence.level }}{% if prediction_confidence.reason %} ({{ prediction_confidence.reason }}){% endif %}</span>{% endif %}</div>
   {% elif race_countdown and race_countdown.prediction_mid and race_countdown.target_time %}
@@ -582,7 +589,13 @@
   <div class="sec-method">Averaged over {{ drift_chart.n_runs }} run{{ 's' if drift_chart.n_runs != 1 else '' }} from last 4 weeks. Individual runs shown as thin lines.{% if split_data and split_data.drift and split_data.drift.drift_onset_km %} Drift onset at km {{ split_data.drift.drift_onset_km }}.{% endif %}</div>
   {% endif %}
   <div class="chart-box chart-canvas-md"><canvas id="chart-drift-trend"></canvas></div>
-  <div class="sec-method">Drift onset = first km where HR exceeds first-half average + 5 bpm. Higher = better aerobic endurance. Green band = onset after km 15 (good base).</div>
+  <div class="sec-method">Drift onset via the HR : grade-adjusted-pace ratio (canonical, terrain-corrected). The dashed "raw" line is the same onset without the grade correction — the gap is how much terrain was distorting it. Higher = better aerobic endurance; green band = onset after km 15.</div>
+
+  {% if charts | selectattr('id', 'equalto', 'chart-grade-spb') | first %}
+  <div id="prof-grade" class="sec"><h2>Grade-Adjustment Impact</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">How much correcting for terrain (Anstieg) changes your efficiency numbers. A climb's slow pace is converted to its flat-equivalent before computing speed-per-heartbeat and drift, so hills don't make you look less efficient or fake aerobic decoupling. <strong>Near-overlapping lines = your terrain is flat enough that it barely matters; a visible gap = hilly runs were understating you.</strong></div><div class="line"></div></div>
+  <div class="sec-sub">Raw (dashed) vs grade-adjusted (solid) speed-per-heartbeat per run. Higher = more efficient.</div>
+  <div class="chart-box chart-canvas-md"><canvas id="chart-grade-spb"></canvas></div>
+  {% endif %}
   {% if profile_takeaways.drift %}<div class="sec-takeaway">{{ profile_takeaways.drift }}</div>{% endif %}
 
   <!-- Zone Distribution — training mix -->
@@ -712,7 +725,7 @@
   <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
     {% for slot in training_objectives.slots %}
     {% set sc = 'var(--safe)' if slot.status == 'on_track' else 'var(--caution)' if slot.status == 'at_risk' else 'var(--danger)' if slot.status == 'off_track' else 'var(--text-dim)' %}
-    <div style="background:var(--surface);border-radius:10px;padding:14px 16px;border:1px solid rgba(255,255,255,0.08);border-left:3px solid {{ sc }};{% if slot.status == 'deactivated' %}opacity:0.6{% endif %}">
+    <div style="background:var(--surface);border-radius:10px;padding:14px 16px;border:1px solid var(--hairline-strong);border-left:3px solid {{ sc }};{% if slot.status == 'deactivated' %}opacity:0.6{% endif %}">
       <div style="font-size:10px;font-weight:700;color:{{ sc }};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px">{{ slot.name }}</div>
       <div style="font-size:26px;font-weight:800;font-family:var(--mono);color:var(--text);line-height:1.1">{{ slot.current if slot.current is not none else '—' }}<span style="font-size:12px;color:var(--text-muted);font-weight:400;font-family:var(--sans)"> {{ slot.unit }}</span></div>
       {% if slot.wow_delta is not none and slot.wow_delta != 0 %}
@@ -737,7 +750,7 @@
 
   <!-- 2. Last 7 Days — Daily Volume Bar Chart -->
   {% if hero_card %}
-  <div style="background:var(--surface);border-radius:12px;padding:16px;margin-bottom:16px;border:1px solid rgba(255,255,255,0.06)">
+  <div style="background:var(--surface);border-radius:12px;padding:16px;margin-bottom:16px;border:1px solid var(--hairline)">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
       <div>
         <div style="font-size:10px;font-weight:700;color:var(--z2);letter-spacing:0.5px;margin-bottom:4px">LAST 7 DAYS</div>
@@ -768,11 +781,11 @@
   {% if hero_card and hero_card.next_workouts %}
   <div class="sec"><h2>Next Up</h2><div class="line"></div></div>
   {% for w in hero_card.next_workouts %}
-  <div style="background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:8px;border:1px solid rgba(255,255,255,0.06);border-left:3px solid rgba(255,255,255,0.12)">
+  <div style="background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:8px;border:1px solid var(--hairline);border-left:3px solid var(--hairline-strong)">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
       <span style="font-family:var(--mono);font-size:10px;color:var(--text-dim);flex-shrink:0">{{ w.date_label }}</span>
       <span style="font-size:11px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:400px">{{ w.name }}</span>
-      <span style="font-size:9px;padding:1px 6px;border-radius:4px;background:rgba(255,255,255,0.06);color:var(--text-muted);flex-shrink:0">{{ w.type }}</span>
+      <span style="font-size:9px;padding:1px 6px;border-radius:4px;background:var(--surface-hover);color:var(--text-muted);flex-shrink:0">{{ w.type }}</span>
     </div>
     <div style="display:flex;gap:12px;font-family:var(--mono);font-size:10px;color:var(--text-muted)">
       {% if w.distance_km != '?' %}<span>{{ w.distance_km }}km</span>{% endif %}
@@ -788,12 +801,12 @@
   {% if last_7_days_runs %}
   <div class="sec"><h2>Last 7 Days</h2><div class="line"></div></div>
   {% for run in last_7_days_runs %}
-  <div class="run-detail-card" style="background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:8px;border:1px solid rgba(255,255,255,0.06);cursor:pointer" onclick="var e=this.querySelector('.run-detail-expand');e.style.display=e.style.display==='block'?'none':'block'">
+  <div class="run-detail-card" style="background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:8px;border:1px solid var(--hairline);cursor:pointer" onclick="var e=this.querySelector('.run-detail-expand');e.style.display=e.style.display==='block'?'none':'block'">
     <div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
         <span style="font-family:var(--mono);font-size:10px;color:var(--text-dim);flex-shrink:0">{{ run.date[5:] }}</span>
         <span style="font-size:11px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:400px">{{ run.name }}</span>
-        <span style="font-size:9px;padding:1px 6px;border-radius:4px;background:rgba(255,255,255,0.06);color:var(--text-muted);flex-shrink:0">{{ run.run_type }}</span>
+        <span style="font-size:9px;padding:1px 6px;border-radius:4px;background:var(--surface-hover);color:var(--text-muted);flex-shrink:0">{{ run.run_type }}</span>
       </div>
       <div style="display:flex;gap:12px;font-family:var(--mono);font-size:10px;color:var(--text-muted)">
         <span>{{ run.distance_km }}km</span>
@@ -826,7 +839,7 @@
     {% endif %}
 
     <!-- Expandable detail section — most recent run expanded by default -->
-    <div class="run-detail-expand" style="display:{% if loop.first %}block{% else %}none{% endif %};margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04)">
+    <div class="run-detail-expand" style="display:{% if loop.first %}block{% else %}none{% endif %};margin-top:8px;padding-top:8px;border-top:1px solid var(--hairline-soft)">
 
       {% if run.weather %}
       <div style="display:flex;gap:12px;font-size:9px;color:var(--text-dim);margin-bottom:8px">
@@ -855,7 +868,7 @@
       </div>
       {% endif %}
       {% else %}
-      <div style="font-size:9px;color:var(--text-dim);padding:4px 0">No split data — run <code style="background:rgba(255,255,255,0.05);padding:1px 4px;border-radius:3px;font-size:8px">fit sync</code> to fetch splits</div>
+      <div style="font-size:9px;color:var(--text-dim);padding:4px 0">No split data — run <code style="background:var(--surface-hover);padding:1px 4px;border-radius:3px;font-size:8px">fit sync</code> to fetch splits</div>
       {% endif %}
 
       {% if run.srpe and run.srpe.feel %}
@@ -896,7 +909,7 @@
   <div class="sec"><h2>Plan Adherence</h2><div class="line"></div></div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:6px;margin-bottom:16px">
     {% for w in weekly_plan_adherence %}
-    <div style="background:var(--surface);border-radius:8px;padding:8px;text-align:center;border:1px solid rgba(255,255,255,0.06)">
+    <div style="background:var(--surface);border-radius:8px;padding:8px;text-align:center;border:1px solid var(--hairline)">
       <div style="font-size:9px;color:var(--text-dim);margin-bottom:4px">{{ w.week }}</div>
       <div style="font-size:18px;font-weight:700;color:{% if w.color == 'green' %}var(--safe){% elif w.color == 'amber' %}var(--caution){% else %}var(--danger){% endif %}">{{ w.compliance_pct }}%</div>
       <div style="font-size:8px;color:var(--text-dim)">{{ w.completed }}/{{ w.planned }}</div>
@@ -926,7 +939,7 @@
 <!-- BODY -->
 <div id="tab-readiness" class="tab-content">
   {% if body_summary %}
-  <div style="font-size:12px;color:#94a3b8;line-height:1.6;padding:8px 0;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.04)">{{ body_summary }}</div>
+  <div style="font-size:12px;color:var(--text-muted);line-height:1.6;padding:8px 0;margin-bottom:8px;border-bottom:1px solid var(--hairline-soft)">{{ body_summary }}</div>
   {% endif %}
   <div class="sec"><h2>Readiness</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.readiness | safe }}</div><div class="line"></div></div>
   <div class="chart-box chart-canvas-md"><canvas id="chart-readiness"></canvas></div>
@@ -951,7 +964,7 @@
   </div>
   {% endfor %}
   {% else %}
-  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">No mismatches detected. Log sleep quality in <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit checkin</code> to compare Garmin sleep data with how you feel.</div>
+  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">No mismatches detected. Log sleep quality in <code style="background:var(--surface-hover);padding:2px 6px;border-radius:4px">fit checkin</code> to compare Garmin sleep data with how you feel.</div>
   {% endif %}
 </div>
 
@@ -976,10 +989,10 @@
   {% else %}
   <div style="padding:8px 0">
     <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">{{ checkin_progress.total }}/{{ checkin_progress.target }} check-ins ({{ checkin_progress.remaining }} more to unlock correlations)</div>
-    <div style="height:6px;background:rgba(255,255,255,0.04);border-radius:3px;overflow:hidden">
+    <div style="height:6px;background:var(--track);border-radius:3px;overflow:hidden">
       <div style="height:100%;width:{{ checkin_progress.pct }}%;background:var(--accent);border-radius:3px;transition:width 0.3s"></div>
     </div>
-    <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Run <code style="background:rgba(255,255,255,0.05);padding:1px 4px;border-radius:3px">fit checkin</code> daily to build the dataset.</div>
+    <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Run <code style="background:var(--surface-hover);padding:1px 4px;border-radius:3px">fit checkin</code> daily to build the dataset.</div>
   </div>
   {% endif %}
 
@@ -1007,7 +1020,7 @@
     {% endfor %}
   </div>
   {% else %}
-  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">Rolling correlations need 8+ weeks of check-in data. Currently computing from available data — keep running <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">fit checkin</code> daily.</div>
+  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">Rolling correlations need 8+ weeks of check-in data. Currently computing from available data — keep running <code style="background:var(--surface-hover);padding:2px 6px;border-radius:4px">fit checkin</code> daily.</div>
   {% endif %}
 
   {% if coaching %}
@@ -1030,7 +1043,7 @@
     {% endfor %}
   {% else %}
     <div style="color:var(--text-muted);padding:40px 0;text-align:center">
-      No coaching notes yet. Run <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">/fit-coach</code> in Claude Code or ask Claude Chat to generate them.
+      No coaching notes yet. Run <code style="background:var(--surface-hover);padding:2px 6px;border-radius:4px">/fit-coach</code> in Claude Code or ask Claude Chat to generate them.
     </div>
   {% endif %}
 </div>
@@ -1041,6 +1054,39 @@
 <script>{{ date_adapter_code }}</script>
 <script>{{ annotation_code }}</script>
 <script>
+/* ── Theme (dark / light) ──────────────────────────────────────────────────
+   Page chrome flips via CSS vars (data-theme on <html>). Charts bake colours at
+   build time, so applyChartTheme() re-reads the active theme's --grid/--text and
+   re-tints every chart instance (main loop + the standalone ones in extraCharts). */
+function cssVar(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+var extraCharts = [];
+function mkChart(el, cfg){ var c = new Chart(el, cfg); extraCharts.push(c); return c; }  // register for re-theming
+function retintChart(ch, grid){
+  if(!ch || !ch.options) return;
+  var sc = ch.options.scales || {};
+  Object.keys(sc).forEach(function(k){ if(sc[k] && sc[k].grid) sc[k].grid.color = grid; });
+  try { ch.update('none'); } catch(e){}
+}
+function applyChartTheme(){
+  var grid = cssVar('--grid'), txt = cssVar('--text-muted');
+  if(window.Chart){ Chart.defaults.color = txt; Chart.defaults.borderColor = grid; }
+  if(typeof phaseStatusColors !== 'undefined' && phaseStatusColors.planned){
+    phaseStatusColors.planned.bg = cssVar('--track');
+    phaseStatusColors.planned.border = cssVar('--hairline-strong');
+    phaseStatusColors.planned.text = cssVar('--text-dim');
+  }
+  if(typeof chartInstances !== 'undefined'){ Object.keys(chartInstances).forEach(function(k){ retintChart(chartInstances[k], grid); }); }
+  extraCharts.forEach(function(c){ retintChart(c, grid); });
+}
+function setTheme(t){
+  if(t === 'light') document.documentElement.setAttribute('data-theme','light');
+  else document.documentElement.removeAttribute('data-theme');
+  try { localStorage.setItem('fit-theme', t); } catch(e){}
+  var b = document.getElementById('theme-toggle'); if(b) b.textContent = (t === 'light' ? '☾ Dark' : '☀ Light');
+  applyChartTheme();
+}
+function toggleTheme(){ setTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light'); }
+
 function showTab(id, btn) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
@@ -1103,7 +1149,7 @@ const trainingPhases = [];
 const phaseStatusColors = {
   completed: { bg: 'rgba(52,211,153,0.18)', border: 'rgba(52,211,153,0.35)', text: '#34d399' },
   active:    { bg: 'rgba(129,140,248,0.22)', border: 'rgba(129,140,248,0.45)', text: '#a5b4fc' },
-  planned:   { bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.08)', text: 'rgba(255,255,255,0.4)' }
+  planned:   { bg: cssVar('--track'), border: cssVar('--hairline-strong'), text: cssVar('--text-dim') }
 };
 const phaseNameColors = {
   base:    { bg: 'rgba(96,165,250,0.22)',  border: 'rgba(96,165,250,0.45)',  text: '#60a5fa' },
@@ -1264,19 +1310,55 @@ const chartInstances = {};
     };
     {% endif %}
   }
-  // Format prediction chart y-axis as H:MM
-  if ('{{ chart.id }}' === 'chart-marathon-pred' && cfg.options && cfg.options.scales && cfg.options.scales.y) {
+  // Panel B (marathon-equivalent): H:MM y-axis, hide band/whisker helpers from legend +
+  // tooltip, and show the effort dots' distance in the tooltip.
+  if ('{{ chart.id }}' === 'chart-marathon-pred' && cfg.options) {
+    var fmtHM = function(v) { return Math.floor(v/60) + ':' + ('0' + Math.floor(v%60)).slice(-2); };
+    cfg.options.scales = cfg.options.scales || {}; cfg.options.scales.y = cfg.options.scales.y || {};
     cfg.options.scales.y.ticks = cfg.options.scales.y.ticks || {};
-    cfg.options.scales.y.ticks.callback = function(v) {
-      return Math.floor(v/60) + ':' + ('0' + Math.floor(v%60)).slice(-2);
-    };
-    // Also format tooltips
+    cfg.options.scales.y.ticks.callback = function(v) { return fmtHM(v); };
     cfg.options.plugins = cfg.options.plugins || {};
+    cfg.options.plugins.legend = cfg.options.plugins.legend || {};
+    cfg.options.plugins.legend.labels = cfg.options.plugins.legend.labels || {};
+    cfg.options.plugins.legend.labels.filter = function(it) { return it.text && it.text[0] !== '_'; };
     cfg.options.plugins.tooltip = cfg.options.plugins.tooltip || {};
+    cfg.options.plugins.tooltip.filter = function(ctx) { return !(ctx.dataset.label && ctx.dataset.label[0] === '_'); };
     cfg.options.plugins.tooltip.callbacks = cfg.options.plugins.tooltip.callbacks || {};
     cfg.options.plugins.tooltip.callbacks.label = function(ctx) {
       var v = ctx.parsed.y;
-      return ctx.dataset.label + ': ' + Math.floor(v/60) + ':' + ('0' + Math.floor(v%60)).slice(-2);
+      if (ctx.raw && ctx.raw.d != null) return ctx.raw.d + 'km · ' + fmtHM(v);
+      return ctx.dataset.label + ': ' + fmtHM(v);
+    };
+  }
+  // Panel A (durability collapse): log-axis ticks at running distances + h:mm time,
+  // hide the band's helper "_lo" dataset from the legend, time-formatted tooltips.
+  if ('{{ chart.id }}' === 'chart-durability' && cfg.options) {
+    const fmtT = function(v){ return v >= 60 ? Math.floor(v/60)+':'+('0'+Math.round(v%60)).slice(-2) : Math.round(v)+'m'; };
+    const kmTicks = [3,5,10,15,21,30,42], minTicks = [15,20,30,45,60,90,120,180,240];
+    cfg.options.scales.x.afterBuildTicks = function(a){ a.ticks = kmTicks.map(function(v){return {value:v};}); };
+    cfg.options.scales.x.ticks = Object.assign(cfg.options.scales.x.ticks||{}, {callback:function(v){return v;}});
+    cfg.options.scales.y.afterBuildTicks = function(a){ a.ticks = minTicks.map(function(v){return {value:v};}); };
+    cfg.options.scales.y.ticks = Object.assign(cfg.options.scales.y.ticks||{}, {callback:fmtT});
+    cfg.options.plugins.legend.labels = cfg.options.plugins.legend.labels || {};
+    cfg.options.plugins.legend.labels.filter = function(it){ return it.text !== '_lo'; };
+    cfg.options.plugins.tooltip = cfg.options.plugins.tooltip || {};
+    cfg.options.plugins.tooltip.callbacks = {label: function(ctx){ return ctx.parsed.x.toFixed(1)+'km · '+fmtT(ctx.parsed.y); }};
+  }
+  // Long-Run Resilience: the pace axis holds decimal minutes (6.3) — show it as m:ss (6:18);
+  // tooltip splits the pace axis (min/km) from the HR axis (bpm).
+  if ('{{ chart.id }}' === 'chart-drift' && cfg.options && cfg.options.scales) {
+    var fmtPace = function(v){ var m=Math.floor(v), s=Math.round((v-m)*60); if(s===60){m+=1;s=0;} return m+':'+('0'+s).slice(-2); };
+    if (cfg.options.scales.y) {
+      cfg.options.scales.y.ticks = cfg.options.scales.y.ticks || {};
+      cfg.options.scales.y.ticks.callback = function(v){ return fmtPace(v); };
+    }
+    cfg.options.plugins = cfg.options.plugins || {};
+    cfg.options.plugins.tooltip = cfg.options.plugins.tooltip || {};
+    cfg.options.plugins.tooltip.callbacks = cfg.options.plugins.tooltip.callbacks || {};
+    cfg.options.plugins.tooltip.callbacks.label = function(ctx){
+      var v = ctx.parsed.y;
+      if (ctx.dataset.yAxisID === 'y') return ctx.dataset.label + ': ' + fmtPace(v) + ' /km';
+      return ctx.dataset.label + ': ' + Math.round(v) + ' bpm';
     };
   }
   const el = document.getElementById('{{ chart.id }}');
@@ -1331,7 +1413,7 @@ function _zoneStyle(zone) {
   if (!el) return;
   var labels = {{ hero_card.daily_km | map(attribute='label') | list | tojson }};
   var data = {{ hero_card.daily_km | map(attribute='km') | list | tojson }};
-  var colors = data.map(function(v) { return v > 0 ? 'rgba(96,165,250,0.85)' : 'rgba(255,255,255,0.04)'; });
+  var colors = data.map(function(v) { return v > 0 ? 'rgba(96,165,250,0.85)' : cssVar('--track'); });
   var ann = {};
   {% if hero_card.phase_targets %}
   var dailyTarget = {{ '%.1f' % (hero_card.phase_targets.current_min / 7 * 2) }};
@@ -1342,14 +1424,14 @@ function _zoneStyle(zone) {
              color: 'rgba(52,211,153,0.7)', font: { size: 8 }, backgroundColor: 'transparent', padding: 0 }
   };
   {% endif %}
-  new Chart(el, {
+  mkChart(el, {
     type: 'bar',
     data: { labels: labels, datasets: [{ data: data, backgroundColor: colors, borderRadius: 4, barPercentage: 0.7 }] },
     options: {
       responsive: true, maintainAspectRatio: false,
       scales: {
         x: { grid: { display: false }, ticks: { color: '#64748b', font: { size: 9 } } },
-        y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#64748b', font: { size: 9 }, callback: function(v) { return v + 'km'; } } }
+        y: { beginAtZero: true, grid: { color: cssVar('--grid') }, ticks: { color: cssVar('--text-dim'), font: { size: 9 }, callback: function(v) { return v + 'km'; } } }
       },
       plugins: {
         legend: { display: false },
@@ -1393,7 +1475,7 @@ function _zoneStyle(zone) {
         var l=this.getLabelForValue(i); return l||null;
       };
     }
-    var mainChart = new Chart(el, cfg);
+    var mainChart = mkChart(el, cfg);
     // Elevation chart (separate canvas)
     {% if run.split_elev_chart %}
     var elevEl = document.getElementById('split-elev-{{ loop.index }}');
@@ -1402,7 +1484,7 @@ function _zoneStyle(zone) {
       elevCfg.options.plugins.tooltip = {callbacks:{label:function(ctx){
         return ctx.raw + 'm';
       }}};
-      new Chart(elevEl, elevCfg);
+      mkChart(elevEl, elevCfg);
     }
     {% endif %}
     // Zone strip — same structural element as genericPhaseBandPlugin
@@ -1448,7 +1530,7 @@ function _zoneStyle(zone) {
           });
         }
       };
-      new Chart(zoneEl, {
+      mkChart(zoneEl, {
         type: 'bar',
         data: { labels: cfg.data.labels, datasets: [{ data: cfg.data.labels.map(function(){return 0;}), backgroundColor:'transparent' }] },
         plugins: [zoneBandPlugin],
@@ -1476,7 +1558,7 @@ function _zoneStyle(zone) {
     if (legendEl && phaseLegend.length > 0) {
       phaseLegend.forEach(function(item) {
         var span = document.createElement('span');
-        span.style.cssText = 'display:inline-flex;align-items:center;gap:3px;font-size:8px;color:rgba(255,255,255,0.5)';
+        span.style.cssText = 'display:inline-flex;align-items:center;gap:3px;font-size:8px;color:'+cssVar('--text-dim');
         var box = document.createElement('span');
         var c = _zoneStyle(item.zone);
         box.style.cssText = 'display:inline-block;width:8px;height:8px;border-radius:1px;background:' + c.border;
@@ -1627,7 +1709,7 @@ function _zoneStyle(zone) {
   let yMax = Math.max(...allWithCp) + 20;
   let yMin = Math.min(...allWithCp) - 10;
 
-  new Chart(el, {
+  mkChart(el, {
     type: 'line',
     plugins: [checkpointNumberPlugin, phaseBandPlugin],
     data: {
@@ -1656,7 +1738,7 @@ function _zoneStyle(zone) {
       scales: {
         y: {
           min: yMin, max: yMax,
-          grid: { color: 'rgba(255,255,255,0.03)' },
+          grid: { color: cssVar('--grid') },
           ticks: {
             callback: function(v) { return Math.floor(v/60) + ':' + ('0'+Math.floor(v%60)).slice(-2); },
             stepSize: 10
@@ -1768,6 +1850,10 @@ function setZoom(range, btn) {
 // keep the layout they were born with; display:none↔block toggles don't
 // resize the canvas, so they stay correct when tabs are switched.
 document.querySelectorAll('.tab-content').forEach(function (t) { t.style.display = ''; });
+
+// Theme init — restore saved choice (head script already set the attribute for CSS;
+// this sets the toggle label and re-tints every chart now that they all exist).
+setTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
 </script>
 </body>
 </html>

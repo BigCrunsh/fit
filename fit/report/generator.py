@@ -75,7 +75,7 @@ from fit.report.sections.cards import (  # noqa: E402
     _weekly_plan_adherence,
 )
 from fit.report.sections.charts import _all_charts  # noqa: E402
-from fit.report.sections.predictions import _prediction_summary, _race_prediction  # noqa: E402
+from fit.report.sections.predictions import _prediction_summary, _race_prediction, _marathon_forecast  # noqa: E402
 
 
 def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
@@ -104,6 +104,7 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "headline": _headline(conn),
         "headline_signal": _headline_signal(conn),
         "prediction_summary": _prediction_summary(conn),
+        "marathon_forecast": _marathon_forecast(conn),
         "status_cards": _status_cards(conn),
         "checkin": _checkin(conn),
         "journey": _journey(conn),

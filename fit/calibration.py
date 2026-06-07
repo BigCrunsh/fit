@@ -64,7 +64,7 @@ def derive_flags(metric: str, value: float, method: str,
     Inputs:
         metric: 'max_hr' | 'lthr' | 'aet' | 'vo2max' | 'weight'
         value: the new reading
-        method: 'manual' | 'race_extract' | 'activity_max' | 'drift_test' | ...
+        method: 'manual' | 'race_candidate' | 'activity_max' | 'drift_test' | ...
         prior: the currently-active calibration dict (or None)
 
     Returns:
@@ -144,11 +144,11 @@ def derive_confidence(method: str, flags: list[str], has_prior_agreement: bool =
 _CONFIDENCE_RANK = {"high": 0, "medium": 1, "low": 2}
 
 # Methods that are recorded for history/context only and must NEVER be
-# auto-selected as the active calibration. `race_estimate` LTHR rows are
+# auto-selected as the active calibration. `race_observation` LTHR rows are
 # written from past races to populate the calibration-history chart, but the
 # active LTHR stays human-confirmed (run `fit calibrate lthr`) so a noisy or
 # non-max effort sitting in race_calendar can't silently shift the zone model.
-INFORMATIONAL_METHODS = {"race_estimate", "effort_estimate"}
+INFORMATIONAL_METHODS = {"race_observation", "effort_observation"}
 
 
 def get_active_calibration(conn: sqlite3.Connection, metric: str,
@@ -229,7 +229,14 @@ CONFIRMED_METHODS = {"manual", "confirmed"}
 # Reference-only observations: recorded for context but never fed to an
 # estimator. Garmin's wrist-HR VO2max is optimistic, so it never enters VDOT's
 # max — it's only a last-resort bootstrap value.
-REFERENCE_METHODS = {"garmin_estimate"}
+REFERENCE_METHODS = {"device_vo2max"}
+
+# Device-measured anchors: a direct instrument reading (Garmin's auto-detected
+# lactate-threshold HR), trusted as authoritative — it ranks ABOVE the race-proxy
+# policy estimate but BELOW a deliberate human confirm. Like REFERENCE rows it is
+# kept out of the policy estimator (the policy answers "what do your RACES imply",
+# which stays a useful cross-check vs the device value via `differs`).
+DEVICE_METHODS = {"device_lt"}
 
 # Two estimator families, picked by the metric's statistics:
 #   - 'max'    — one-sided / ceiling metrics (VDOT, MaxHR). A slow/distorted
@@ -330,7 +337,9 @@ def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> dict | None
 
     rows = [dict(r) for r in conn.execute(
         "SELECT * FROM calibration WHERE metric = ?", (metric,)).fetchall()]
-    observations = [r for r in rows if (r.get("method") or "") not in REFERENCE_METHODS]
+    observations = [r for r in rows
+                    if (r.get("method") or "") not in REFERENCE_METHODS
+                    and (r.get("method") or "") not in DEVICE_METHODS]
     now = date.today()
     window = policy["window_days"]
     family = policy["family"]
@@ -366,12 +375,18 @@ def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> dict | None
                 "inputs": contributors,
             }
 
-    # Sticky active: a confirmed/manual row is the value, untouched by the
-    # estimator. Without one (bootstrap), fall back to the policy suggestion.
+    # Precedence: human confirm (sticky) > device measurement (Garmin LT) > policy
+    # estimate (what races imply) > legacy active. A confirmed/manual row is the
+    # value, untouched by the estimator; else a recent device reading is
+    # authoritative over the race-proxy; else fall back to the policy suggestion.
     confirmed = active if (active and active.get("method") in CONFIRMED_METHODS) else None
+    device = active if (not confirmed and active and active.get("method") in DEVICE_METHODS) else None
     if confirmed:
         value, confidence, method, src_date = (
             confirmed["value"], confirmed.get("confidence"), confirmed["method"], confirmed.get("date"))
+    elif device:
+        value, confidence, method, src_date = (
+            device["value"], device.get("confidence"), device["method"], device.get("date"))
     elif suggestion is not None:
         value, confidence, method, src_date = (
             suggestion["value"], suggestion["confidence"], "policy", suggestion["inputs"][0]["date"])
@@ -644,11 +659,11 @@ def backfill_race_lthr(conn: sqlite3.Connection) -> int:
     """Populate LTHR *history* from past races for the calibration chart.
 
     For every completed race ≥10km with a linked activity, write an
-    informational `race_estimate` LTHR row (a method get_active_calibration
+    informational `race_observation` LTHR row (a method get_active_calibration
     ignores) dated at the race. This builds the LTHR-over-time series the
     calibration chart shows WITHOUT touching the active calibration — under
     the human-confirmed model (Option A) a noisy or non-max race can't shift
-    the zones. Idempotent: skips a race already represented by a race_estimate
+    the zones. Idempotent: skips a race already represented by a race_observation
     row (matched on source_activity_id). Returns the number of rows added.
 
     To promote one of these to the active LTHR, the athlete confirms it
@@ -667,7 +682,7 @@ def backfill_race_lthr(conn: sqlite3.Connection) -> int:
     added = 0
     for r in races:
         exists = conn.execute(
-            "SELECT 1 FROM calibration WHERE metric = 'lthr' AND method = 'race_estimate' "
+            "SELECT 1 FROM calibration WHERE metric = 'lthr' AND method = 'race_observation' "
             "AND source_activity_id = ? LIMIT 1", (r["id"],),
         ).fetchone()
         if exists:
@@ -681,14 +696,14 @@ def backfill_race_lthr(conn: sqlite3.Connection) -> int:
         # Plain insert with active=0 — do NOT call add_calibration (which would
         # flip the active flag). These are history, not the active value.
         # confidence='low' is belt-and-suspenders: get_active_calibration
-        # already excludes race_estimate by method, but low confidence also
+        # already excludes race_observation by method, but low confidence also
         # keeps a real (medium/high) calibration winning under the plain
         # confidence-then-recency rule — so even an older code path can't
         # promote an estimate to active.
         conn.execute("""
             INSERT INTO calibration (metric, value, method, confidence, date,
                                      source_activity_id, notes, active, flags)
-            VALUES ('lthr', ?, 'race_estimate', 'low', ?, ?, ?, 0, '[]')
+            VALUES ('lthr', ?, 'race_observation', 'low', ?, ?, ?, 0, '[]')
         """, (est, r["date"], r["id"],
               f"Race estimate from {r['name']} ({r['distance_km']:.1f}km, avg HR {r['avg_hr']})"))
         added += 1
@@ -715,7 +730,7 @@ def backfill_race_vdot(conn: sqlite3.Connection) -> int:
     """Populate VDOT *observations* from past races for the anchor + history.
 
     For every completed race in 5–25 km with a usable time, write an
-    informational `race_estimate` VDOT row (which get_active_calibration
+    informational `race_observation` VDOT row (which get_active_calibration
     ignores) dated at the race, computed via Daniels. These feed the VDOT
     aggregation policy's windowed max and the calibration-history chart WITHOUT
     becoming the active value — under the human-confirmed model the athlete
@@ -742,7 +757,7 @@ def backfill_race_vdot(conn: sqlite3.Connection) -> int:
         if vdot is None:
             continue
         exists = conn.execute(
-            "SELECT 1 FROM calibration WHERE metric = 'vdot' AND method = 'race_estimate' "
+            "SELECT 1 FROM calibration WHERE metric = 'vdot' AND method = 'race_observation' "
             "AND source_activity_id = ? LIMIT 1", (r["id"],),
         ).fetchone()
         if exists:
@@ -750,7 +765,7 @@ def backfill_race_vdot(conn: sqlite3.Connection) -> int:
         conn.execute("""
             INSERT INTO calibration (metric, value, method, confidence, date,
                                      source_activity_id, notes, active, flags)
-            VALUES ('vdot', ?, 'race_estimate', 'low', ?, ?, ?, 0, '[]')
+            VALUES ('vdot', ?, 'race_observation', 'low', ?, ?, ?, 0, '[]')
         """, (round(vdot, 1), r["date"], r["id"],
               f"Race estimate from {r['name']} ({r['distance_km']:.1f}km)"))
         added += 1
@@ -764,7 +779,7 @@ def backfill_effort_vdot(conn: sqlite3.Connection, days: int = 720) -> int:
     Races are covered by backfill_race_vdot (official times). This adds the
     other half of "races ∪ hard efforts": any non-race effort that passes the
     physiological qualifier (5–25 km, avg HR ≥ LTHR, consistent pace) per
-    get_fitness_anchors, written as an informational `effort_estimate` vdot row.
+    get_fitness_anchors, written as an informational `effort_observation` vdot row.
     A max estimator means a slow effort is harmless (never selected); a genuine
     hard solo time-trial can only sharpen the anchor. Idempotent on
     source_activity_id, and skips activities already represented by a race row.
@@ -779,7 +794,7 @@ def backfill_effort_vdot(conn: sqlite3.Connection, days: int = 720) -> int:
         aid = a["activity_id"]
         exists = conn.execute(
             "SELECT 1 FROM calibration WHERE metric = 'vdot' "
-            "AND method IN ('race_estimate', 'effort_estimate') "
+            "AND method IN ('race_observation', 'effort_observation') "
             "AND source_activity_id = ? LIMIT 1", (aid,),
         ).fetchone()
         if exists:
@@ -787,7 +802,7 @@ def backfill_effort_vdot(conn: sqlite3.Connection, days: int = 720) -> int:
         conn.execute("""
             INSERT INTO calibration (metric, value, method, confidence, date,
                                      source_activity_id, notes, active, flags)
-            VALUES ('vdot', ?, 'effort_estimate', 'low', ?, ?, ?, 0, '[]')
+            VALUES ('vdot', ?, 'effort_observation', 'low', ?, ?, ?, 0, '[]')
         """, (round(a["vdot"], 1), a["date"], aid,
               f"Hard-effort estimate from {a.get('name') or 'training effort'} "
               f"({a['distance_km']:.1f}km, avg HR {a['avg_hr']})"))
@@ -846,6 +861,12 @@ def evaluate_suggestions(conn: sqlite3.Connection, review: dict | None = None) -
         anchor = get_calibration_anchor(conn, metric)
         sug = anchor.get("suggestion") if anchor else None
         if not sug or not sug.get("differs"):
+            continue
+        # The active value is device-measured (e.g. Garmin's auto-detected LT).
+        # Anchor precedence is confirmed > device > policy, so a policy estimate
+        # can never displace a device reading — nagging to change it would be
+        # self-contradictory. Suppress until the device stops providing the value.
+        if anchor.get("method") in DEVICE_METHODS:
             continue
         dismissed = review.get(metric)
         if (dismissed and dismissed.get("state") == "dismissed"

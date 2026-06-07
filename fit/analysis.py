@@ -346,7 +346,7 @@ def _aggregate_date_range(conn: sqlite3.Connection, start_date: date,
     """, (start_iso, end_iso)).fetchall()
 
     cross = conn.execute(f"""
-        SELECT duration_min, training_load
+        SELECT type, duration_min, training_load
         FROM activities
         WHERE type NOT IN {RUNNING_TYPES_SQL} AND date BETWEEN ? AND ?
     """, (start_iso, end_iso)).fetchall()
@@ -395,14 +395,18 @@ def _aggregate_date_range(conn: sqlite3.Connection, start_date: date,
     cross_count = len(cross)
     cross_min = sum(c["duration_min"] or 0 for c in cross)
 
-    # Combined load
-    all_loads = [r["training_load"] or 0 for r in runs] + [c["training_load"] or 0 for c in cross]
-    total_load = sum(all_loads)
-
-    # Training monotony and strain
+    # Combined load. Cycling is cross-training, downweighted by cycling_load_weight
+    # (default 0.3) — applied to BOTH total_load and the daily loads behind
+    # monotony/strain below, so strain (= total_load × monotony) isn't a
+    # weighted/unweighted mix (D11). With no config the weight is 1.0 (unweighted).
     cycling_load_weight = 1.0
     if config:
         cycling_load_weight = config.get("analysis", {}).get("cycling_load_weight", 0.3)
+
+    total_load = sum(r["training_load"] or 0 for r in runs) + sum(
+        (c["training_load"] or 0) * (cycling_load_weight if c["type"] == "cycling" else 1.0)
+        for c in cross
+    )
 
     num_days = (end_date - start_date).days + 1
     daily_loads = []
@@ -538,70 +542,17 @@ def compute_rolling_week(conn: sqlite3.Connection, end_date: date | None = None,
     return result
 
 
-def compute_rolling_acwr(conn: sqlite3.Connection, end_date: date | None = None,
-                         config: dict | None = None) -> float | None:
-    """Compute ACWR using rolling 7-day acute load vs ISO-week chronic baseline.
-
-    Acute load: from compute_rolling_week() (last 7 days).
-    Chronic load: average of prior 4 ISO weeks from weekly_agg.
-    """
-    if end_date is None:
-        end_date = date.today()
-
-    rolling = compute_rolling_week(conn, end_date, config=config)
-    acute_load = rolling["total_load"]
-
-    # Chronic: prior 4 ISO weeks from weekly_agg
-    # Step back from end_date to find the 4 prior complete ISO weeks
-    prev_loads = []
-    ref_date = end_date - timedelta(days=7)
-    for i in range(4):
-        ref_iso = ref_date.isocalendar()
-        pw_str = f"{ref_iso[0]}-W{ref_iso[1]:02d}"
-        row = conn.execute(
-            "SELECT total_load FROM weekly_agg WHERE week = ?", (pw_str,)
-        ).fetchone()
-        if row and row["total_load"] is not None:
-            prev_loads.append(row["total_load"])
-        ref_date -= timedelta(weeks=1)
-
-    if len(prev_loads) < 3:
-        return None
-
-    chronic = sum(prev_loads) / len(prev_loads)
-    if chronic <= 0:
-        return None
-
-    acwr = round(acute_load / chronic, 2)
-    if acwr > 3.0:
-        return None
-
-    return acwr
-
-
-# ── Daniels VDOT Lookup Table ──
-# VO2max → marathon time in seconds (from Daniels' Running Formula)
-_VDOT_TABLE = [
-    (35, 19800),   # ~5:30:00
-    (38, 18000),   # ~5:00:00
-    (40, 16800),   # ~4:40:00
-    (42, 16080),   # ~4:28:00
-    (45, 14700),   # ~4:05:00
-    (48, 13680),   # ~3:48:00
-    (50, 13080),   # ~3:38:00
-    (52, 12480),   # ~3:28:00
-    (55, 11700),   # ~3:15:00
-    (58, 10980),   # ~3:03:00
-    (60, 10500),   # ~2:55:00
-]
+# Moved to the Training-Load context (fit/training_load.py) — re-exported here so
+# existing imports keep working during the incremental context split (DDD review).
+from fit.training_load import compute_rolling_acwr  # noqa: F401,E402
 
 
 def compute_daniels_paces(vo2max: float | None, lthr: int | None = None) -> dict | None:
     """Compute Daniels training paces (E/M/T/I/R) in seconds per km.
 
-    Anchored on VDOT (= vo2max) — marathon time is derived from the table
-    above, and the five paces are computed as offsets from M pace using
-    Daniels' typical spreads:
+    Anchored on VDOT (= vo2max) — marathon time is derived via the Daniels formula
+    inverse (`vdot_to_race_time`), and the five paces are computed as offsets from M
+    pace using Daniels' typical spreads:
 
       E (Easy)        — M + 45 sec/km to M + 60 sec/km
       M (Marathon)    — from VDOT table
@@ -627,7 +578,7 @@ def compute_daniels_paces(vo2max: float | None, lthr: int | None = None) -> dict
     # Marathon pace = the Daniels-equivalent marathon time for this VDOT, via the
     # SAME formula the VDOT estimate uses (vdot_to_race_time inverts
     # compute_vdot_from_race). The old _vdot_to_marathon_seconds table was a
-    # heavy, inconsistent pessimism (VDOT 38.9 → 6:54/km M-pace) that made
+    # heavy, inconsistent pessimism (a low VDOT mapped to a far-too-slow M-pace) that made
     # training paces far too slow; training paces must reflect true VDOT
     # equivalence, not a marathon-durability discount. (Local import: fitness
     # imports analysis, so a module-level import would be circular.)
@@ -645,26 +596,11 @@ def compute_daniels_paces(vo2max: float | None, lthr: int | None = None) -> dict
     }
 
 
-def _vdot_to_marathon_seconds(vo2max: float) -> float:
-    """Interpolate marathon time from Daniels VDOT table.
-
-    Uses linear interpolation between table points.
-    Clamps to table boundaries for out-of-range values.
-    """
-    if vo2max <= _VDOT_TABLE[0][0]:
-        return float(_VDOT_TABLE[0][1])
-    if vo2max >= _VDOT_TABLE[-1][0]:
-        return float(_VDOT_TABLE[-1][1])
-
-    for i in range(len(_VDOT_TABLE) - 1):
-        v1, t1 = _VDOT_TABLE[i]
-        v2, t2 = _VDOT_TABLE[i + 1]
-        if v1 <= vo2max <= v2:
-            # Linear interpolation
-            frac = (vo2max - v1) / (v2 - v1)
-            return t1 + frac * (t2 - t1)
-
-    return float(_VDOT_TABLE[-1][1])
+# Riegel power-law endurance-fade exponent: T2 = T1·(D2/D1)^RIEGEL_EXPONENT. The population
+# average (1.06); the durability model fits a per-athlete β_d (~1.07) — this constant is the
+# single source for the population fallback / Daniels-comparison path so it isn't hardcoded
+# in several places (D15).
+RIEGEL_EXPONENT = 1.06
 
 
 def predict_race_time(conn: sqlite3.Connection | None = None,
@@ -708,7 +644,7 @@ def predict_race_time(conn: sqlite3.Connection | None = None,
         d1 = race.get("distance_km", 0)
         t1 = race.get("time_seconds", 0)
         if d1 > 0 and t1 > 0 and d1 < marathon_km:
-            t2 = t1 * (marathon_km / d1) ** 1.06
+            t2 = t1 * (marathon_km / d1) ** RIEGEL_EXPONENT
             riegel_preds.append({
                 "from_race": race.get("name", f"{d1:.1f}km"),
                 "from_date": race.get("date"),
@@ -718,22 +654,57 @@ def predict_race_time(conn: sqlite3.Connection | None = None,
             })
     predictions["riegel"] = riegel_preds
 
-    # VDOT prediction using Daniels lookup table with interpolation
-    if vo2max and vo2max > 30:
-        vdot_seconds = _vdot_to_marathon_seconds(vo2max)
-        predictions["vdot"] = {
-            "vo2max": vo2max,
-            "predicted_seconds": round(vdot_seconds),
-            "predicted_pace_sec_km": round(vdot_seconds / marathon_km),
-        }
-    else:
-        predictions["vdot"] = None
+    # VDOT prediction from the calibrated race anchor (Daniels formula inverse),
+    # NOT Garmin VO2max via the retired _vdot_to_marathon_seconds table. The
+    # `vo2max` arg is accepted for backward compatibility but no longer used here.
+    predictions["vdot"] = None
+    if conn is not None:
+        from fit.fitness import anchor_race_time  # local
+        from fit.calibration import get_calibration_anchor  # local
+        vdot_seconds = anchor_race_time(conn, marathon_km)
+        if vdot_seconds:
+            anchor = get_calibration_anchor(conn, "vdot")
+            predictions["vdot"] = {
+                "vdot": anchor["value"] if anchor else None,
+                "predicted_seconds": round(vdot_seconds),
+                "predicted_pace_sec_km": round(vdot_seconds / marathon_km),
+            }
 
     # Confidence band based on data quantity and calibration
     confidence = _compute_prediction_confidence(conn, races)
     predictions["confidence"] = confidence
 
     return predictions
+
+
+def riegel_fallback_secs(conn: sqlite3.Connection, target_km: float) -> int | None:
+    """Conservative (slowest) Riegel extrapolation to target_km from completed
+    races, in seconds.
+
+    The cold-start fallback for the forecast headline when no VDOT anchor exists
+    yet — race-based (exponent 1.06), never the retired Garmin-VO2max table.
+    Conservative = slowest, per the project's prediction convention. Returns None
+    when there is no usable completed race.
+    """
+    def _parse(t):
+        p = (t or "").split(":")
+        if len(p) == 3:
+            return int(p[0]) * 3600 + int(p[1]) * 60 + int(p[2])
+        if len(p) == 2:
+            return int(p[0]) * 60 + int(p[1])
+        return 0
+    rows = conn.execute("""
+        SELECT distance_km, COALESCE(result_time, garmin_time) AS rt
+        FROM race_calendar
+        WHERE status = 'completed' AND COALESCE(result_time, garmin_time) IS NOT NULL
+    """).fetchall()
+    cand = []
+    for r in rows:
+        d1 = r["distance_km"]
+        t1 = _parse(r["rt"])
+        if d1 and t1 and d1 != target_km:
+            cand.append(t1 * (target_km / d1) ** RIEGEL_EXPONENT)
+    return round(max(cand)) if cand else None
 
 
 def _compute_prediction_confidence(conn: sqlite3.Connection | None,

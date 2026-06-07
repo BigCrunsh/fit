@@ -547,6 +547,61 @@ def _ctx_goals(conn) -> list[str]:
 
 
 @mcp.tool()
+def _ctx_forecast(conn) -> list[str]:
+    """Marathon durability-model forecast for coaching (None-safe — empty when the
+    forecast extra/posterior/history is absent, so the coach simply doesn't see it).
+
+    Keeps the coaching context in sync with the dashboard headline (CLAUDE.md contract):
+    median + 90% interval + P(goal) as a fitness-SUFFICIENCY ceiling (not race-day odds),
+    the unvalidated-extrapolation caveat, and the chronic-load lever.
+    """
+    try:
+        from fit.marathon.predict import (
+            forecast as run_forecast, required_chronic_for_goal, _current_c, forecast_context,
+        )
+    except ImportError:
+        return []
+    ctx = forecast_context(conn)        # shared load (posterior + efforts + prior)
+    if ctx is None:
+        return []
+    post, ds = ctx.idata, ctx.ds
+
+    row = conn.execute("SELECT target_time FROM goals WHERE active = 1 AND target_time IS NOT NULL "
+                       "ORDER BY type DESC LIMIT 1").fetchone()
+    goal_secs = None
+    if row and row["target_time"]:
+        p = str(row["target_time"]).split(":")
+        try:
+            goal_secs = int(p[0]) * 3600 + int(p[1]) * 60 + (int(p[2]) if len(p) > 2 else 0)
+        except (ValueError, IndexError):
+            goal_secs = None
+
+    fc = run_forecast(conn, goal_seconds=goal_secs)  # cached shared load
+    if not fc:
+        return []
+
+    def _hms(x):
+        x = int(round(x)); return f"{x // 3600}:{(x % 3600) // 60:02d}:{x % 60:02d}"
+
+    ex = fc["extrapolation"]
+    s = [f"Marathon forecast (durability model, maximal effort): {_hms(fc['median'])} "
+         f"[90% {_hms(fc['lo'])}–{_hms(fc['hi'])}]"]
+    if goal_secs and fc.get("p_ceiling") is not None:
+        s.append(f"  P(goal {_hms(goal_secs)}) = {fc['p_ceiling']:.0%} — fitness-SUFFICIENCY ceiling, "
+                 f"NOT race-day odds (excludes weather/pacing/fuelling)")
+    if ds.d_max < ds.goal:
+        s.append(f"  UNVALIDATED: longest effort {ds.d_max:.0f} km vs {ds.goal:.0f} km goal — "
+                 f"treat the interval as a floor; a 30 km+ run is what validates it")
+    if goal_secs:
+        req = required_chronic_for_goal(post, ds, goal_seconds=goal_secs,
+                                        extrapolation_scale=ex["scale"], nu=ex["nu"])
+        cur = _current_c(conn) * 10 + 50
+        if req:
+            s.append(f"  Lever: chronic load ≈{req['chronic_load']:.0f} for P(goal)≥80% "
+                     f"(now ≈{cur:.0f}) — fitness/volume is the lever; durability is normal")
+    return s
+
+
 def get_coaching_context() -> str:
     """Get structured data summary for coaching analysis. Returns key metrics, trends, and status."""
     conn = _get_conn()
@@ -557,6 +612,7 @@ def get_coaching_context() -> str:
         sections.extend(_ctx_training(conn))
         sections.extend(_ctx_correlations(conn))
         sections.extend(_ctx_goals(conn))
+        sections.extend(_ctx_forecast(conn))
         sections.extend(_ctx_plan(conn))
         sections.extend(_ctx_previous_coaching())
         return "Coaching Context:\n" + "\n".join(f"  {s}" for s in sections)

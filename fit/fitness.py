@@ -5,7 +5,7 @@ import math
 import sqlite3
 from datetime import date
 
-from fit.analysis import RUNNING_TYPES_SQL
+from fit.analysis import RUNNING_TYPES_SQL, RIEGEL_EXPONENT
 
 logger = logging.getLogger(__name__)
 
@@ -34,21 +34,11 @@ def get_fitness_profile(conn: sqlite3.Connection) -> dict:
         "resilience": _compute_resilience(conn),
     }
 
-    # VDOT computation
+    # VDOT computation — _effective_vdot is the single trusted aerobic anchor (the Aerobic
+    # dimension reads the same helper, so the bar and the headline never diverge).
     garmin_vo2 = _get_garmin_vo2max(conn)
     race_vdot, race_vdot_date = _get_race_vdot(conn)
-    effective = _compute_effective_vdot(garmin_vo2, race_vdot, race_vdot_date)
-
-    # effective_vdot IS the standardized anchor (the single confirmed/windowed-max
-    # VDOT every consumer reads). Fall back to the legacy blend only when no
-    # anchor exists yet. (Local import: calibration imports fitness lazily.)
-    try:
-        from fit.calibration import get_calibration_anchor
-        anchor = get_calibration_anchor(conn, "vdot")
-        if anchor and anchor.get("value") is not None:
-            effective = anchor["value"]
-    except Exception as e:
-        logger.debug("vdot anchor unavailable, using legacy effective_vdot: %s", e)
+    effective = _effective_vdot(conn)
 
     profile["garmin_vo2max"] = garmin_vo2
     profile["race_vdot"] = race_vdot
@@ -80,46 +70,59 @@ def _median(nums: list[float]) -> float:
     return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
 
 
+def _effective_vdot(conn: sqlite3.Connection):
+    """The single trusted aerobic anchor every consumer reads: confirmed VDOT calibration >
+    recent race VDOT > Garmin VO2max minus its ~5-point overestimate. None if none exist."""
+    try:
+        from fit.calibration import get_calibration_anchor  # local: calibration imports fitness
+        anchor = get_calibration_anchor(conn, "vdot")
+        if anchor and anchor.get("value") is not None:
+            return float(anchor["value"])
+    except Exception as e:
+        logger.debug("vdot anchor unavailable, using legacy effective_vdot: %s", e)
+    race_vdot, race_date = _get_race_vdot(conn)
+    return _compute_effective_vdot(_get_garmin_vo2max(conn), race_vdot, race_date)
+
+
 def _compute_aerobic(conn: sqlite3.Connection) -> dict:
-    """Aerobic capacity: Garmin VO2max, median over the dimension window."""
+    """Aerobic capacity = the trusted effective VDOT (the same value the forecast/headline use,
+    via _effective_vdot), NOT Garmin VO2max — which reads ~5-10 high and is kept only as a
+    reference (the Anchor-vs-Garmin chart). The trend DIRECTION still comes from the Garmin
+    VO2max series (the densest signal), shifted to the anchor level so the sparkline matches."""
+    vdot = _effective_vdot(conn)
+    if vdot is None:
+        return _empty_dimension("No VDOT anchor — confirm a race-effort VDOT")
+
     rows = conn.execute(
         "SELECT date, vo2max FROM activities "
         "WHERE vo2max IS NOT NULL AND date >= date('now', ?) ORDER BY date",
         (f"-{DIMENSION_WINDOW_DAYS} days",),
     ).fetchall()
-
-    if not rows:
-        return _empty_dimension("No VO2max data in last 4 weeks")
-
-    values = [(r["date"], r["vo2max"]) for r in rows]
-    current = _median([v for _, v in values])
-    trend, rate = _compute_trend(values)
+    garmin = [(r["date"], r["vo2max"]) for r in rows]
+    if garmin:
+        trend, rate = _compute_trend(garmin)
+        shift = vdot - garmin[-1][1]                       # anchor the Garmin trend at the VDOT level
+        history = [round(v + shift, 1) for _, v in garmin[-8:]]
+    else:
+        trend, rate, history = "insufficient_data", None, [round(vdot, 1)]
 
     return {
-        "current_value": round(current, 1),
+        "current_value": round(vdot),                      # VDOT is an integer index (Daniels)
         "trend": trend,
         "rate_per_month": rate,
-        "unit": "ml/kg/min",
-        "source": "Garmin VO2max",
-        "data_points": len(values),
-        "history": [v for _, v in values[-8:]],
+        "unit": "VDOT",
+        "source": "VDOT anchor (race-derived)",
+        "data_points": len(garmin),
+        "history": history,
     }
 
 
 def _compute_threshold(conn: sqlite3.Connection) -> dict:
-    """Threshold: Z2 pace at HR ceiling (speed at controlled effort)."""
-    rows = conn.execute(f"""
-        SELECT date, speed_per_bpm_z2 FROM activities
-        WHERE type IN {RUNNING_TYPES_SQL}
-        AND speed_per_bpm_z2 IS NOT NULL
-        AND date >= date('now', '-{DIMENSION_WINDOW_DAYS} days')
-        ORDER BY date
-    """).fetchall()
-
-    if len(rows) < 3:
+    """Threshold: Z2 pace at HR ceiling (speed at controlled effort), grade-adjusted."""
+    values = _ga_spb_series(conn, "speed_per_bpm_z2")
+    if len(values) < 3:
         return _empty_dimension("Need 3+ Z2 runs in last 4 weeks")
 
-    values = [(r["date"], r["speed_per_bpm_z2"]) for r in rows]
     current = _median([v for _, v in values])
     trend, rate = _compute_trend(values)
 
@@ -128,26 +131,44 @@ def _compute_threshold(conn: sqlite3.Connection) -> dict:
         "trend": trend,
         "rate_per_month": round(rate, 4) if rate else None,
         "unit": "m/min/bpm (Z2)",
-        "source": "Z2 speed per BPM",
+        "source": "Z2 speed per BPM (grade-adjusted)",
         "data_points": len(values),
         "history": [v for _, v in values[-8:]],
     }
 
 
-def _compute_economy(conn: sqlite3.Connection) -> dict:
-    """Economy: overall speed per BPM (running efficiency)."""
+def _ga_spb_series(conn: sqlite3.Connection, col: str):
+    """[(date, grade-adjusted <col>)] over the dimension window. The stored speed-per-bpm is
+    scaled by raw_duration / flat-equivalent-duration (terrain removed via the splits), so a
+    hilly run isn't judged less efficient than it was. Falls back to the raw value when an
+    activity has no splits. `col` is an internal constant, not user input."""
+    from fit.fit_file import grade_adjusted_duration_min
     rows = conn.execute(f"""
-        SELECT date, speed_per_bpm FROM activities
-        WHERE type IN {RUNNING_TYPES_SQL}
-        AND speed_per_bpm IS NOT NULL
-        AND date >= date('now', '-{DIMENSION_WINDOW_DAYS} days')
-        ORDER BY date
+        SELECT date, id, {col} AS spb, duration_min FROM activities
+        WHERE type IN {RUNNING_TYPES_SQL} AND {col} IS NOT NULL
+        AND date >= date('now', '-{DIMENSION_WINDOW_DAYS} days') ORDER BY date
     """).fetchall()
+    out = []
+    for r in rows:
+        val = r["spb"]
+        if r["duration_min"] and r["duration_min"] > 0:
+            sp = conn.execute(
+                "SELECT split_num, pace_sec_per_km, distance_km, elevation_gain_m, "
+                "elevation_loss_m FROM activity_splits WHERE activity_id=? ORDER BY split_num",
+                (r["id"],)).fetchall()
+            ga = grade_adjusted_duration_min([dict(s) for s in sp]) if sp else None
+            if ga and ga > 0:
+                val = round(val * r["duration_min"] / ga, 4)
+        out.append((r["date"], val))
+    return out
 
-    if len(rows) < 3:
+
+def _compute_economy(conn: sqlite3.Connection) -> dict:
+    """Economy: overall speed per BPM (running efficiency), grade-adjusted."""
+    values = _ga_spb_series(conn, "speed_per_bpm")
+    if len(values) < 3:
         return _empty_dimension("Need 3+ runs with HR data in last 4 weeks")
 
-    values = [(r["date"], r["speed_per_bpm"]) for r in rows]
     current = _median([v for _, v in values])
     trend, rate = _compute_trend(values)
 
@@ -156,7 +177,7 @@ def _compute_economy(conn: sqlite3.Connection) -> dict:
         "trend": trend,
         "rate_per_month": round(rate, 4) if rate else None,
         "unit": "m/min/bpm",
-        "source": "Speed per BPM (all runs)",
+        "source": "Speed per BPM (grade-adjusted)",
         "data_points": len(values),
         "history": [v for _, v in values[-8:]],
     }
@@ -184,7 +205,8 @@ def _compute_resilience(conn: sqlite3.Connection) -> dict:
     drift_points = []
     for run in splits_runs:
         splits = conn.execute("""
-            SELECT split_num, avg_hr, pace_sec_per_km FROM activity_splits
+            SELECT split_num, avg_hr, pace_sec_per_km, distance_km,
+                   elevation_gain_m, elevation_loss_m FROM activity_splits
             WHERE activity_id = ? ORDER BY split_num
         """, (run["id"],)).fetchall()
 
@@ -308,6 +330,27 @@ def vdot_to_race_time(vdot: float, distance_km: float) -> int | None:
             hi = mid  # too slow (low VDOT) → need less time
 
     return (lo + hi) // 2
+
+
+def anchor_race_time(conn: sqlite3.Connection, distance_km: float) -> int | None:
+    """Predicted race time (seconds) at a distance, from the calibrated VDOT anchor.
+
+    The single source for the race-forecast headline. Supersedes the retired
+    ``_vdot_to_marathon_seconds`` table and the "latest Garmin VO2max" input:
+    Garmin's HR-based VO2max runs well above this athlete's race-implied VDOT, so
+    forecasting off it inflated the number. The anchor is race-calibrated, so the
+    forecast is grounded in what was actually run.
+
+    Returns None when there is no usable anchor (dashboard then degrades to the
+    per-race Riegel extrapolation, never to the removed table).
+    """
+    if conn is None or distance_km <= 0:
+        return None
+    from fit.calibration import get_calibration_anchor  # local: avoid import cycle
+    anchor = get_calibration_anchor(conn, "vdot")
+    if not anchor or not anchor.get("value"):
+        return None
+    return vdot_to_race_time(anchor["value"], distance_km)
 
 
 def inverse_vdot(target_time_seconds: int, distance_km: float) -> float | None:
@@ -689,14 +732,14 @@ def derive_objectives(conn, race_id: int) -> list[dict]:
     # ── Dimension-specific targets (for fitness profile display) ──
 
     if target_secs and required_vdot:
-        # Aerobic target: Garmin VO2max corresponding to required VDOT
-        # Garmin reads ~5 higher than race VDOT
-        aerobic_target = round(required_vdot + 5)
+        # Aerobic target: the VDOT the goal requires. The dimension's current value is now the
+        # calibrated VDOT anchor (race-derived), so compare like-for-like — no +5 Garmin pad.
+        aerobic_target = round(required_vdot)
         objectives.append({
             "name": "_dim_aerobic",
             "type": "metric",
             "target_value": aerobic_target,
-            "target_unit": "VO2max",
+            "target_unit": "VDOT",
             "derivation_source": "auto_daniels",
             "auto_value": aerobic_target,
         })
@@ -706,7 +749,11 @@ def derive_objectives(conn, race_id: int) -> list[dict]:
         # speed_per_bpm at easy pace ≈ (easy_m_per_min / Z2_hr)
         marathon_pace_m_per_min = (distance_km * 1000) / (target_secs / 60)
         easy_pace_m_per_min = marathon_pace_m_per_min * 0.78  # ~78% of marathon pace
-        z2_hr = 134  # Z2 ceiling from config
+        # HRs are LTHR-relative (personalised), not stale textbook absolutes (was 134 / 165).
+        from fit.calibration import get_calibration_anchor as _gca
+        _lthr_a = _gca(conn, "lthr")
+        _lthr = float(_lthr_a["value"]) if _lthr_a and _lthr_a.get("value") else 172.0
+        z2_hr = round(0.89 * _lthr)   # Friel %LTHR Z2 ceiling (≈154 at LTHR 173), was hardcoded 134
         threshold_target = round(easy_pace_m_per_min / z2_hr, 3)
         objectives.append({
             "name": "_dim_threshold",
@@ -717,8 +764,9 @@ def derive_objectives(conn, race_id: int) -> list[dict]:
             "auto_value": threshold_target,
         })
 
-        # Economy target: speed_per_bpm at marathon pace and race HR
-        race_hr = 165  # typical marathon race HR (~86% max HR)
+        # Economy target: speed_per_bpm at marathon pace and race HR (~LTHR-6, the marathon
+        # point of the maximal-effort schedule; LTHR-relative, was hardcoded 165).
+        race_hr = round(_lthr - 6)
         economy_target = round(marathon_pace_m_per_min / race_hr, 3)
         objectives.append({
             "name": "_dim_economy",
@@ -873,7 +921,7 @@ def derive_checkpoint_targets(conn) -> list[dict]:
             continue
 
         # Riegel back-calculation: what time at cp_km corresponds to target_secs at target_km?
-        derived_secs = round(target_secs * (cp_km / target_km) ** 1.06)
+        derived_secs = round(target_secs * (cp_km / target_km) ** RIEGEL_EXPONENT)
         derived_vdot = compute_vdot_from_race(cp_km, derived_secs)
 
         days_to_cp = (date.fromisoformat(cp["date"]) - date.today()).days

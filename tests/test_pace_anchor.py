@@ -36,7 +36,7 @@ class TestPaceZonesAnchor:
         _ins_vdot(db, 38.9, "manual", days_ago=10, active=1, confidence="high")
         # Garmin wrist-HR estimate sits high — must NOT be used for paces.
         db.execute("INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
-                   "VALUES ('vdot', 49, 'garmin_estimate', 'medium', ?, 0, '[]')",
+                   "VALUES ('vdot', 49, 'device_vo2max', 'medium', ?, 0, '[]')",
                    ((date.today() - timedelta(days=5)).isoformat(),))
         db.commit()
 
@@ -49,8 +49,8 @@ class TestPaceZonesAnchor:
 
     def test_bootstrap_uses_windowed_max_when_unconfirmed(self, db):
         """No confirmed row → paces use the windowed-max of race observations."""
-        _ins_vdot(db, 35.5, "race_estimate", days_ago=70, confidence="low")
-        _ins_vdot(db, 38.9, "race_estimate", days_ago=30, confidence="low")
+        _ins_vdot(db, 35.5, "race_observation", days_ago=70, confidence="low")
+        _ins_vdot(db, 38.9, "race_observation", days_ago=30, confidence="low")
         pz = _pace_zones(db)
         assert pz["available"] is True
         assert pz["vo2max"] == 38.9          # the max, not the trail 35.5
@@ -58,7 +58,7 @@ class TestPaceZonesAnchor:
     def test_unavailable_without_any_vdot_observation(self, db):
         """Only a Garmin estimate (reference-only) → no paces, prompt to race."""
         db.execute("INSERT INTO calibration (metric, value, method, confidence, date, active, flags) "
-                   "VALUES ('vdot', 49, 'garmin_estimate', 'medium', ?, 1, '[]')",
+                   "VALUES ('vdot', 49, 'device_vo2max', 'medium', ?, 1, '[]')",
                    (date.today().isoformat(),))
         db.commit()
         pz = _pace_zones(db)
