@@ -407,9 +407,11 @@ these meanings; a name that contradicts the glossary is a bug.
   → median + 90% interval + P(goal). Sourced from `predict.forecast` everywhere (Overview
   hero/block/trend, Profile hero/Panel A/Panel B, `fit forecast` CLI, MCP coaching
   context). The old `_vdot_to_marathon_seconds` VDOT→time table is **deleted** (D1).
-  Maximal-effort HR is LTHR-relative + goal-adaptive (`maximal_effort_h`: ≈LTHR+10 at 5k →
-  LTHR at the half → LTHR−6 at the marathon), not an absolute constant — see design.md
-  "Constants & assumptions". β_d = durability exponent; φ = fitness value; κ = HR↔pace.
+  Maximal-effort HR is LTHR-relative + **duration-keyed** (`effort_schedule` → `effort_h_for_distance`:
+  offset(t)=β·(log t − log T₀) on the model's predicted DURATION, not distance). **T₀** is
+  data-driven (prior + recency/representativeness-weighted at-threshold races); **β stays the
+  population −6.5 prior** — race HRs can't fit the slope reliably (sub-maximal short parkruns), a
+  Decision-4 follow-on gated on a maximality flag. β_d = durability exponent; φ = fitness value; κ = HR↔pace.
   Degrades to the calibrated-VDOT anchor (`anchor_race_time`) when the model isn't fit.
 - **β_d (durability exponent)** — the fitted Riegel power-law slope. The *optimistic*
   cross-distance bound ("what holds if the power law extends"); the dashboard leads with

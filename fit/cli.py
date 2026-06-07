@@ -164,8 +164,11 @@ def forecast(refit, hr):
     c = _current_c(conn)
     dm = derived_metrics(idata, ds, c=c, extrapolation_scale=ex["scale"], nu=ex["nu"])
 
-    from fit.marathon.predict import maximal_effort_h, _reserve
-    eff_hr = hr if hr is not None else round(ds.lthr + maximal_effort_h(ds.goal, _reserve(ds)) * 5)
+    from fit.marathon.predict import effort_h_for_distance
+    from fit.marathon.features import H_DIV
+    eff_hr = hr if hr is not None else round(
+        ds.lthr + effort_h_for_distance(idata, ds, ds.goal, c=c,
+                                        extrapolation_scale=ex["scale"], nu=ex["nu"]) * H_DIV)
     console.print(f"\n[bold]Marathon forecast[/bold] (goal {ds.goal:g} km, maximal effort HR {eff_hr}, LTHR {ds.lthr:g})")
     console.print(f"  [bold cyan]{_fmt_hms(fc['median'])}[/bold cyan]  "
                   f"90% [{_fmt_hms(fc['lo'])} … {_fmt_hms(fc['hi'])}]")

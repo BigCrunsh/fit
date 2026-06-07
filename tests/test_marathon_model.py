@@ -204,31 +204,89 @@ class TestMarathonEquivPoints:
 
 
 class TestMaximalEffortCap:
-    """maximal_effort_h is LTHR-relative; hr_reserve (=MaxHR−LTHR) caps the offset so a
-    maximal effort can never exceed MaxHR (matters only for a low-reserve athlete)."""
+    """maximal_effort_h is the duration-keyed fade law offset(t)=β·(log t−log T₀)/H_DIV,
+    LTHR-relative; hr_reserve (=MaxHR−LTHR) caps the offset so a maximal effort can never
+    exceed MaxHR (matters only for a low-reserve athlete)."""
 
-    def test_uncapped_matches_schedule(self):
+    def test_law_short_above_long_below_threshold(self):
         from fit.marathon.predict import maximal_effort_h
         from fit.marathon.features import H_DIV
-        assert maximal_effort_h(5.0) == pytest.approx(10.0 / H_DIV)        # 5k → +10 bpm vs LTHR
-        assert maximal_effort_h(21.0975) == pytest.approx(0.0)            # HM → at LTHR
-        assert maximal_effort_h(42.195) == pytest.approx(-6.0 / H_DIV)    # M → −6 bpm vs LTHR
+        t0, beta = 100.0, -6.5
+        # a 25-min effort sits above threshold; at T₀ it's exactly LTHR; a 240-min effort below
+        assert maximal_effort_h(25.0, t0, beta) > 0
+        assert maximal_effort_h(t0, t0, beta) == pytest.approx(0.0)
+        assert maximal_effort_h(240.0, t0, beta) < 0
+        # offset = β·(log t − log T₀) / H_DIV
+        assert maximal_effort_h(50.0, t0, beta) == pytest.approx(beta * (np.log(50.0) - np.log(t0)) / H_DIV)
 
     def test_cap_binds_for_low_reserve(self):
         from fit.marathon.predict import maximal_effort_h
         from fit.marathon.features import H_DIV
-        # reserve 5 bpm < the +10 bpm 5k offset → the short-race limb is clamped to reserve
-        assert maximal_effort_h(5.0, hr_reserve=5.0) == pytest.approx(5.0 / H_DIV)
+        # a 22-min effort uncapped is well above threshold; reserve 3 bpm clamps it
+        uncapped = maximal_effort_h(22.0, 100.0, -6.5)
+        assert uncapped * H_DIV > 3.0
+        assert maximal_effort_h(22.0, 100.0, -6.5, hr_reserve=3.0) == pytest.approx(3.0 / H_DIV)
 
     def test_cap_is_noop_when_reserve_exceeds_offset(self):
         from fit.marathon.predict import maximal_effort_h
-        # reserve 22 (this athlete) ≥ +10 → unchanged
-        assert maximal_effort_h(5.0, hr_reserve=22.0) == maximal_effort_h(5.0)
+        # reserve 22 ≥ the short-effort offset → unchanged
+        assert maximal_effort_h(22.0, 100.0, -6.5, hr_reserve=22.0) == maximal_effort_h(22.0, 100.0, -6.5)
 
     def test_cap_never_raises_a_sub_threshold_offset(self):
         from fit.marathon.predict import maximal_effort_h
-        # marathon offset is −6 bpm; a tiny reserve must not LIFT it (min, not max)
-        assert maximal_effort_h(42.195, hr_reserve=2.0) == maximal_effort_h(42.195)
+        # a long (sub-threshold, negative) offset must not be LIFTED by a tiny reserve (min, not max)
+        assert maximal_effort_h(240.0, 100.0, -6.5, hr_reserve=2.0) == maximal_effort_h(240.0, 100.0, -6.5)
+
+
+class TestEffortSchedule:
+    """T₀ from at-or-above-threshold races (prior+data shrinkage); β stays the population prior."""
+
+    def _ds(self, rows, lthr=171.0, goal=42.195):
+        # rows: list of (days_ago, distance_km, duration_min, avg_hr, run_type)
+        import pandas as pd
+        from datetime import date, timedelta
+        recs = []
+        today = date.today()
+        for days_ago, dist, dur, hr, rt in rows:
+            recs.append({"date": pd.Timestamp(today - timedelta(days=days_ago)),
+                         "run_type": rt, "distance_km": dist, "avg_hr": hr,
+                         "logt": np.log(dur)})
+        eff = pd.DataFrame(recs)
+        from collections import namedtuple
+        DS = namedtuple("DS", "efforts lthr goal d_max max_hr")
+        return DS(efforts=eff, lthr=lthr, goal=goal, d_max=21.1, max_hr=195.0)
+
+    def test_t0_from_at_threshold_races_beta_is_population(self):
+        from fit.marathon.predict import effort_schedule, EFFORT_BETA_PRIOR
+        ds = self._ds([(30, 21.1, 120, 173, "race"),   # hard HM at/above LTHR
+                       (60, 21.1, 110, 172, "race"),
+                       (90, 10.0, 48, 178, "race")])
+        s = effort_schedule(ds)
+        assert s["beta"] == EFFORT_BETA_PRIOR          # slope stays population (not fitted)
+        assert 80 < s["t0"] < 150                      # threshold-duration ≈ the HMs
+        assert s["defaulted"] is False
+
+    def test_submaximal_short_race_does_not_collapse_t0(self):
+        # an easy 5K run AT threshold (the real-data failure) must not pin T₀ to ~25 min
+        from fit.marathon.predict import effort_schedule
+        ds = self._ds([(10, 5.0, 25, 171, "race"),     # sub-maximal 5K at LTHR
+                       (40, 21.1, 120, 173, "race")])   # genuine hard HM
+        s = effort_schedule(ds)
+        assert s["t0"] > 60                            # NOT dragged to 25 min by the easy 5K
+
+    def test_defaults_to_prior_without_at_threshold_race(self):
+        from fit.marathon.predict import effort_schedule, EFFORT_T0_PRIOR_MIN, EFFORT_BETA_PRIOR
+        ds = self._ds([(30, 21.1, 120, 160, "race")])  # only a sub-threshold (easy) race
+        s = effort_schedule(ds)
+        assert s["defaulted"] is True
+        assert s["t0"] == EFFORT_T0_PRIOR_MIN and s["beta"] == EFFORT_BETA_PRIOR
+
+    def test_recency_shifts_t0(self):
+        from fit.marathon.predict import effort_schedule
+        recent = effort_schedule(self._ds([(15, 21.1, 130, 173, "race"), (20, 21.1, 128, 172, "race")]))
+        old = effort_schedule(self._ds([(800, 21.1, 130, 173, "race"), (820, 21.1, 128, 172, "race")]))
+        # an old block shrinks harder toward the prior (lower T₀) than the same recent block
+        assert recent["t0"] > old["t0"]
 
 
 class TestForecastContext:

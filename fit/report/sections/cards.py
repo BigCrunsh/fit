@@ -1906,7 +1906,7 @@ def _model_week_trend(conn, week_starts):
         import numpy as _np
         import pandas as _pd
         from fit.marathon.predict import (
-            predict as _predict, maximal_effort_h, _reserve, forecast_context,
+            predict as _predict, effort_h_for_distance, effort_schedule, forecast_context,
         )
         from fit.marathon.features import CHRONIC_REF, CHRONIC_SCALE
         from fit.training_load import DAILY_LOAD_SQL, chronic_load_before
@@ -1917,7 +1917,7 @@ def _model_week_trend(conn, week_starts):
         return None
     post, ds, prior = ctx.idata, ctx.ds, ctx.prior
     gap = max(0.0, float(_np.log(ds.goal / ds.d_max)))
-    h = maximal_effort_h(ds.goal, _reserve(ds))
+    sched = effort_schedule(ds)         # duration-keyed maximal h is c-dependent → resolve once, apply per week
     # Load daily loads ONCE (chronic_load_before is pure) — not a full-table read per week.
     dl = _pd.read_sql_query(DAILY_LOAD_SQL, conn, parse_dates=["date"])
     day_ord = dl["date"].map(_pd.Timestamp.toordinal).to_numpy() if not dl.empty else _np.array([])
@@ -1929,6 +1929,8 @@ def _model_week_trend(conn, week_starts):
         except ValueError:
             continue
         c = (chronic_load_before(ref, day_ord, day_load) - CHRONIC_REF) / CHRONIC_SCALE
+        h = effort_h_for_distance(post, ds, ds.goal, c=c, extrapolation_scale=prior["scale"],
+                                  nu=prior["nu"], schedule=sched)
         r = _predict(post, x=0.0, c=c, h=h, gap=gap,
                      extrapolation_scale=prior["scale"], nu=prior["nu"])
         out[ws] = (r["median"] / 60.0, r["lo"] / 60.0, r["hi"] / 60.0)

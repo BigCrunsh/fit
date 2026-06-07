@@ -12,40 +12,82 @@ observed range (interpolation), and grows with the goal/d_max gap (goal-adaptive
 
 from __future__ import annotations
 
+from datetime import date
 from typing import NamedTuple
 
 import numpy as np
 
-# Maximal sustainable effort vs LTHR by distance, as a bpm offset: you hold ABOVE threshold
-# for short races and progressively below it as duration grows. This is LTHR-RELATIVE (the
-# model is LTHR-anchored, h = (HR−LTHR)/H_DIV) and goal-adaptive — NOT an absolute HR, so it
-# tracks the athlete's threshold automatically. An input assumption (±2 bpm ≈ ±3 min at the
-# marathon). Interpolated in log-distance; clamped past the endpoints.
-_MAXIMAL_HR_OFFSET = [(5.0, 10.0), (10.0, 5.0), (21.0975, 0.0), (42.195, -6.0)]  # (km, bpm vs LTHR)
+# ── Duration-keyed maximal-effort schedule (design: duration-keyed-effort-schedule) ──
+# offset(t) = beta·(log t − log T0)  — bpm vs LTHR; t = predicted maximal-effort DURATION (min).
+# You hold ABOVE threshold for short (fast) efforts and progressively below it as duration grows.
+# Keyed on duration, NOT distance, so it doesn't smuggle a fitness assumption into the effort
+# covariate (the distance↔fitness confound the durability model removes). T0 (threshold-duration)
+# and beta (fade slope) are POPULATION PRIORS the athlete's races update — a precision-weighted
+# shrinkage estimate, weighted by recency (tracks fitness) and representativeness (longer efforts,
+# nearer the marathon, count more) — shrinking to the prior when data is thin, so a single
+# sub-maximal or stale race can't break it. Same prior+data treatment the durability model gives
+# beta_d. LTHR-relative throughout (the model is LTHR-anchored, h = (HR−LTHR)/H_DIV).
+EFFORT_T0_PRIOR_MIN = 55.0   # population threshold-sustainable duration (textbook MLSS ~30–60 min)
+EFFORT_BETA_PRIOR = -6.5     # population duration–intensity fade (bpm per natural-log-unit)
+EFFORT_TAU_DAYS = 450.0      # recency decay (~15 months) — recent races inform T0/beta more
+EFFORT_PRIOR_PSEUDO = 1.0    # prior strength in "effective races"; data past this personalises
+_EFFORT_T0_CLAMP = (20.0, 240.0)
+_EFFORT_BETA_CLAMP = (-12.0, -2.0)
 
 
-def maximal_effort_h(distance_km, hr_reserve=None):
-    """The model `h` covariate for a MAXIMAL effort at a distance — LTHR-relative and
-    distance-appropriate (≈LTHR+10 for a 5k, ≈LTHR for a half, ≈LTHR−6 for a marathon).
-    Returns h = offset_bpm / H_DIV. Pass to `predict`/`derived_metrics`/`durability_panel`.
+def effort_schedule(ds):
+    """(T0, beta) for the maximal-effort fade law. Returns {t0, beta, defaulted, reason}.
 
-    `hr_reserve` (= MaxHR − LTHR, from the MaxHR anchor) caps the offset: you cannot hold
-    above your max heart rate. It is a no-op for a high-reserve athlete (e.g. reserve 22 vs
-    the +10 short-race offset) but protects the short-distance limb for a low-reserve one.
-    Pass `None` to skip the cap (MaxHR uncalibrated)."""
+    **beta** stays the population prior. The slope CANNOT be reliably fit from this data: the
+    athlete's short races are mostly sub-maximal parkruns run *at* threshold (offset ≈ 0, not the
+    ~+10 a maximal 5 K would show), so a weighted fit flattens to ≈ −2 to −3 and distorts the whole
+    curve (validated: 5 K would read +3 instead of +10). Fitting beta is gated on a maximality flag
+    (mark which races were all-out) — the Decision-4 follow-on. See the CLAUDE.md note.
+
+    **T0** (the athlete's threshold-duration) IS data-driven: population prior updated by a
+    recency- and representativeness-weighted estimate over the athlete's *at-or-above-threshold*
+    races (offset ≥ 0 — a sub-threshold race was run easy and would drag T0 down spuriously).
+    With beta fixed, each such race implies T0_i = exp(log t_i − offset_i/beta); T0 is the
+    prior-shrunk weighted mean. Cold-start / no hard race → the prior, labelled ``defaulted``."""
+    beta, t0_p = EFFORT_BETA_PRIOR, EFFORT_T0_PRIOR_MIN
+    eff = getattr(ds, "efforts", None)
+    if eff is None or "run_type" not in getattr(eff, "columns", []):
+        return {"t0": t0_p, "beta": beta, "defaulted": True, "reason": "no efforts"}
+    races = eff[eff["run_type"] == "race"]
+    if len(races) >= 1:
+        dur = np.exp(races["logt"].to_numpy())            # grade-adjusted minutes (model time-space)
+        offset = races["avg_hr"].to_numpy() - ds.lthr     # bpm vs LTHR
+        hard = offset >= 0                                # genuine at/above-threshold (maximal) efforts
+        if hard.any():
+            dur, offset = dur[hard], offset[hard]
+            today = date.today()
+            ages = np.array([(today - d.date()).days if hasattr(d, "date") else 0.0
+                             for d in races["date"][hard]], dtype=float)
+            w = np.exp(-ages / EFFORT_TAU_DAYS) * (dur / dur.max())   # recency × representativeness
+            n_eff = float(w.sum())
+            implied_t0 = np.exp(np.log(dur) - offset / beta)          # offset = beta·(log t − log T0)
+            if n_eff > 0:
+                t0_data = float(np.average(implied_t0, weights=w))
+                lam = n_eff / (n_eff + EFFORT_PRIOR_PSEUDO)           # data weight vs prior
+                t0 = float(np.clip(np.exp((1 - lam) * np.log(t0_p) + lam * np.log(t0_data)),
+                                   *_EFFORT_T0_CLAMP))
+                return {"t0": t0, "beta": beta, "defaulted": False,
+                        "reason": f"{int(hard.sum())}/{len(races)} at-threshold races, "
+                                  f"λ={lam:.2f} (T0_data≈{t0_data:.0f}min, β=population)"}
+    return {"t0": t0_p, "beta": beta, "defaulted": True,
+            "reason": "population prior (no at-threshold race to anchor T0)"}
+
+
+def maximal_effort_h(predicted_minutes, t0, beta, hr_reserve=None):
+    """Model `h` covariate for a MAXIMAL effort of a given predicted DURATION (minutes), via the
+    duration-keyed fade law offset(t) = beta·(log t − log T0). Returns h = offset_bpm / H_DIV.
+
+    `hr_reserve` (= MaxHR − LTHR, from the MaxHR anchor) caps the offset so a maximal effort never
+    exceeds MaxHR — a no-op for a high-reserve athlete but protective for a low-reserve one. Pass
+    `None` to skip the cap (MaxHR uncalibrated). Callers normally go via `effort_h_for_distance`,
+    which resolves `t0`/`beta` from `effort_schedule` and supplies the predicted duration."""
     from fit.marathon.features import H_DIV
-    pts = _MAXIMAL_HR_OFFSET
-    if distance_km <= pts[0][0]:
-        off = pts[0][1]
-    elif distance_km >= pts[-1][0]:
-        off = pts[-1][1]
-    else:
-        off = pts[-1][1]
-        for (d1, o1), (d2, o2) in zip(pts, pts[1:]):
-            if d1 <= distance_km <= d2:
-                f = (np.log(distance_km) - np.log(d1)) / (np.log(d2) - np.log(d1))
-                off = o1 + (o2 - o1) * f
-                break
+    off = beta * (np.log(predicted_minutes) - np.log(t0))
     if hr_reserve is not None:
         off = min(off, hr_reserve)
     return off / H_DIV
@@ -53,9 +95,29 @@ def maximal_effort_h(distance_km, hr_reserve=None):
 
 def _reserve(ds):
     """HR reserve (MaxHR − LTHR) for the maximal-effort cap; None when MaxHR is uncalibrated
-    (then `maximal_effort_h` runs uncapped). See `maximal_effort_h`."""
+    (then the offset runs uncapped). See `maximal_effort_h`."""
     mh = getattr(ds, "max_hr", None)
     return (mh - ds.lthr) if mh else None
+
+
+def effort_h_for_distance(idata, ds, d, *, c, extrapolation_scale=0.0, nu=4, seed=0, schedule=None):
+    """Maximal-effort `h` at distance `d`, keyed on the model's OWN predicted duration via a
+    two-pass coupling (design Decision 2): predict t(d) with seed h=0, recompute h from t(d),
+    predict once more — the correction is <0.1 bpm because κ is small. Pass `schedule` to reuse
+    one `effort_schedule(ds)` across a loop (it's d-independent)."""
+    sched = schedule or effort_schedule(ds)
+    t0, beta, reserve = sched["t0"], sched["beta"], _reserve(ds)
+    x = float(np.log(d / ds.goal))
+    gap = max(0.0, float(np.log(d / ds.d_max)))
+
+    def _t_min(h):
+        r = predict(idata, x=x, c=c, h=h, gap=gap,
+                    extrapolation_scale=extrapolation_scale, nu=nu, seed=seed)
+        return r["median"] / 60.0
+
+    h = maximal_effort_h(_t_min(0.0), t0, beta, reserve)         # pass 1 from seed h=0
+    h = maximal_effort_h(_t_min(h), t0, beta, reserve)           # pass 2 (converged)
+    return h
 
 
 def _flat(idata, name):
@@ -157,12 +219,14 @@ def forecast(conn, *, avg_hr=None, goal_seconds=None, seed=0, posterior=None):
     idata = posterior if posterior is not None else ctx.idata
 
     gap = max(0.0, float(np.log(ds.goal / ds.d_max)))
-    # Maximal-goal effort: the distance-appropriate, LTHR-relative maximal HR for the goal
-    # (e.g. ~LTHR−6 for a marathon, ~LTHR for a half), capped at the MaxHR reserve. An
-    # explicit avg_hr overrides.
+    c = _current_c(conn)
+    # Maximal-goal effort: the duration-keyed, LTHR-relative maximal HR for the goal (read off the
+    # model's own predicted time at the goal, capped at the MaxHR reserve). An explicit avg_hr overrides.
     from fit.marathon.features import H_DIV
-    h = maximal_effort_h(ds.goal, _reserve(ds)) if avg_hr is None else (avg_hr - ds.lthr) / H_DIV
-    res = predict(idata, x=0.0, c=_current_c(conn), h=h, gap=gap,
+    h = (effort_h_for_distance(idata, ds, ds.goal, c=c, extrapolation_scale=prior["scale"],
+                               nu=prior["nu"], seed=seed)
+         if avg_hr is None else (avg_hr - ds.lthr) / H_DIV)
+    res = predict(idata, x=0.0, c=c, h=h, gap=gap,
                   extrapolation_scale=prior["scale"], nu=prior["nu"],
                   goal_seconds=goal_seconds, seed=seed)
     res["extrapolation"] = prior
@@ -181,8 +245,8 @@ def _current_c(conn):
 
 # ── Derived readouts (the metrics the model unlocks beyond the headline) ──
 
-# Race-equivalency rows; the maximal-effort h for each is `maximal_effort_h(distance)`
-# (the LTHR-relative, distance-appropriate schedule above).
+# Race-equivalency rows; the maximal-effort h for each is duration-keyed via
+# `effort_h_for_distance` (the schedule resolved once and reused across the table).
 _STD_DISTANCES = [("5K", 5.0), ("10K", 10.0), ("HM", 21.0975), ("M", 42.195)]
 
 
@@ -210,12 +274,16 @@ def derived_metrics(idata, ds, *, c, extrapolation_scale=0.0, nu=4, seed=0):
     kappa = _summ("kappa", PRIOR_KAPPA)
 
     # race-equivalency at today's fitness + maximal effort, each distance penalised by
-    # its OWN gap vs d_max (short distances interpolate → no penalty).
+    # its OWN gap vs d_max (short distances interpolate → no penalty). The duration-keyed
+    # maximal h is per-distance; resolve the schedule once and reuse it across the table.
+    sched = effort_schedule(ds)
     equiv = []
     for label, d in _STD_DISTANCES:
         x = float(np.log(d / ds.goal))
         gap = max(0.0, float(np.log(d / ds.d_max)))
-        r = predict(idata, x=x, c=c, h=maximal_effort_h(d, _reserve(ds)), gap=gap,
+        h = effort_h_for_distance(idata, ds, d, c=c, extrapolation_scale=extrapolation_scale,
+                                  nu=nu, seed=seed, schedule=sched)
+        r = predict(idata, x=x, c=c, h=h, gap=gap,
                     extrapolation_scale=extrapolation_scale, nu=nu, seed=seed)
         equiv.append({"label": label, "distance_km": d, **r})
 
@@ -233,11 +301,15 @@ def required_chronic_for_goal(idata, ds, *, goal_seconds, target_p=0.80,
     Turns the goal into a fitness target. Returns chronic-load units, or None if even
     very high fitness can't reach it (within the searched range)."""
     from fit.marathon.features import CHRONIC_REF, CHRONIC_SCALE
-    if maximal_h is None:
-        maximal_h = maximal_effort_h(ds.goal, _reserve(ds))
+    sched = effort_schedule(ds) if maximal_h is None else None  # duration-keyed h is c-dependent
+    gap = max(0.0, float(np.log(ds.goal / ds.d_max)))
 
     for c in np.linspace(-3.0, 5.0, 81):          # chronic-load c grid (≈ load 20..100)
-        r = predict(idata, x=0.0, c=float(c), h=maximal_h, gap=max(0.0, float(np.log(ds.goal / ds.d_max))),
+        h = (maximal_h if maximal_h is not None
+             else effort_h_for_distance(idata, ds, ds.goal, c=float(c),
+                                        extrapolation_scale=extrapolation_scale, nu=nu,
+                                        seed=seed, schedule=sched))
+        r = predict(idata, x=0.0, c=float(c), h=h, gap=gap,
                     extrapolation_scale=extrapolation_scale, nu=nu, goal_seconds=goal_seconds, seed=seed)
         if r["p_ceiling"] >= target_p:
             return {"c": float(c), "chronic_load": float(c * CHRONIC_SCALE + CHRONIC_REF),
@@ -295,8 +367,9 @@ def durability_panel(idata, ds, *, c_ref=0.0, maximal_h=None, extrapolation_scal
     forecast (dashboard consistency) — at c_ref=0 it's the reference-fitness curve, which
     would disagree with a current-fitness headline.
     """
-    if maximal_h is None:
-        maximal_h = maximal_effort_h(ds.goal, _reserve(ds))
+    if maximal_h is None:                       # goal's maximal-effort h at the reference fitness
+        maximal_h = effort_h_for_distance(idata, ds, ds.goal, c=c_ref,
+                                          extrapolation_scale=extrapolation_scale, nu=nu, seed=seed)
     a, b, phi, kappa = (_flat(idata, p) for p in ("alpha", "beta_d", "phi", "kappa"))
     bm, pm, km = (float(np.median(v)) for v in (b, phi, kappa))
     eff = ds.efforts
@@ -342,8 +415,7 @@ def trend_series(conn, idata, ds, *, days=420, step_days=14, maximal_h=None,
     from fit.training_load import DAILY_LOAD_SQL, chronic_load_before
     from fit.marathon.features import CHRONIC_REF, CHRONIC_SCALE
 
-    if maximal_h is None:
-        maximal_h = maximal_effort_h(ds.goal, _reserve(ds))
+    sched = effort_schedule(ds) if maximal_h is None else None  # duration-keyed h is c-dependent
 
     gap = max(0.0, float(np.log(ds.goal / ds.d_max)))
     # Load daily loads once; chronic_load_before is pure (no per-step full-table read).
@@ -355,7 +427,10 @@ def trend_series(conn, idata, ds, *, days=420, step_days=14, maximal_h=None,
     for back in range(days, -1, -step_days):
         d = today - timedelta(days=back)
         c = (chronic_load_before(d.toordinal(), day_ord, day_load) - CHRONIC_REF) / CHRONIC_SCALE
-        r = predict(idata, x=0.0, c=c, h=maximal_h, gap=gap,
+        h = (maximal_h if maximal_h is not None
+             else effort_h_for_distance(idata, ds, ds.goal, c=c, extrapolation_scale=extrapolation_scale,
+                                        nu=nu, seed=seed, schedule=sched))
+        r = predict(idata, x=0.0, c=c, h=h, gap=gap,
                     extrapolation_scale=extrapolation_scale, nu=nu, seed=seed)
         out.append({"date": d.isoformat(), "median": r["median"], "lo": r["lo"], "hi": r["hi"]})
     return out
@@ -369,8 +444,8 @@ def marathon_equiv_points(idata, ds, *, maximal_h=None):
     the dots scatter around the fitness-tracking median line and reveal which efforts the
     forecast leans on. Returns `[{date, minutes, distance_km}]` sorted by date; colour each by
     `distance_km` (RdYlBu_r) to match Panel A. Minutes so it shares Panel B's H:MM axis."""
-    if maximal_h is None:
-        maximal_h = maximal_effort_h(ds.goal, _reserve(ds))
+    if maximal_h is None:                       # goal's maximal-effort h (reference-fitness normaliser)
+        maximal_h = effort_h_for_distance(idata, ds, ds.goal, c=0.0)
     b, kappa = (float(np.median(_flat(idata, p))) for p in ("beta_d", "kappa"))
     eff = ds.efforts
     out = []
