@@ -125,7 +125,17 @@ def extract_efforts(conn: sqlite3.Connection) -> EffortDataset:
     eff["x"] = np.log(eff["distance_km"]) - np.log(goal)
     eff["c"] = (eff["chronic"] - CHRONIC_REF) / CHRONIC_SCALE
     eff["h"] = (eff["avg_hr"] - lthr) / H_DIV
-    eff["logt"] = np.log(eff["duration_min"])
+    # Time is grade-adjusted to flat-equivalent (terrain removed) so a hilly long run isn't
+    # misread as worse durability. Falls back to the raw duration when an effort has no splits.
+    from fit.fit_file import grade_adjusted_duration_min
+    ga_dur = []
+    for aid, raw in zip(eff["id"], eff["duration_min"]):
+        sp = conn.execute(
+            "SELECT split_num, pace_sec_per_km, distance_km, elevation_gain_m, elevation_loss_m "
+            "FROM activity_splits WHERE activity_id = ? ORDER BY split_num", (aid,)).fetchall()
+        g = grade_adjusted_duration_min([dict(s) for s in sp]) if sp else None
+        ga_dur.append(g if g else raw)
+    eff["logt"] = np.log(ga_dur)
 
     eff = eff.reset_index(drop=True)
     return EffortDataset(efforts=eff, d_max=float(eff["distance_km"].max()),

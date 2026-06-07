@@ -118,19 +118,11 @@ def _compute_aerobic(conn: sqlite3.Connection) -> dict:
 
 
 def _compute_threshold(conn: sqlite3.Connection) -> dict:
-    """Threshold: Z2 pace at HR ceiling (speed at controlled effort)."""
-    rows = conn.execute(f"""
-        SELECT date, speed_per_bpm_z2 FROM activities
-        WHERE type IN {RUNNING_TYPES_SQL}
-        AND speed_per_bpm_z2 IS NOT NULL
-        AND date >= date('now', '-{DIMENSION_WINDOW_DAYS} days')
-        ORDER BY date
-    """).fetchall()
-
-    if len(rows) < 3:
+    """Threshold: Z2 pace at HR ceiling (speed at controlled effort), grade-adjusted."""
+    values = _ga_spb_series(conn, "speed_per_bpm_z2")
+    if len(values) < 3:
         return _empty_dimension("Need 3+ Z2 runs in last 4 weeks")
 
-    values = [(r["date"], r["speed_per_bpm_z2"]) for r in rows]
     current = _median([v for _, v in values])
     trend, rate = _compute_trend(values)
 
@@ -139,26 +131,44 @@ def _compute_threshold(conn: sqlite3.Connection) -> dict:
         "trend": trend,
         "rate_per_month": round(rate, 4) if rate else None,
         "unit": "m/min/bpm (Z2)",
-        "source": "Z2 speed per BPM",
+        "source": "Z2 speed per BPM (grade-adjusted)",
         "data_points": len(values),
         "history": [v for _, v in values[-8:]],
     }
 
 
-def _compute_economy(conn: sqlite3.Connection) -> dict:
-    """Economy: overall speed per BPM (running efficiency)."""
+def _ga_spb_series(conn: sqlite3.Connection, col: str):
+    """[(date, grade-adjusted <col>)] over the dimension window. The stored speed-per-bpm is
+    scaled by raw_duration / flat-equivalent-duration (terrain removed via the splits), so a
+    hilly run isn't judged less efficient than it was. Falls back to the raw value when an
+    activity has no splits. `col` is an internal constant, not user input."""
+    from fit.fit_file import grade_adjusted_duration_min
     rows = conn.execute(f"""
-        SELECT date, speed_per_bpm FROM activities
-        WHERE type IN {RUNNING_TYPES_SQL}
-        AND speed_per_bpm IS NOT NULL
-        AND date >= date('now', '-{DIMENSION_WINDOW_DAYS} days')
-        ORDER BY date
+        SELECT date, id, {col} AS spb, duration_min FROM activities
+        WHERE type IN {RUNNING_TYPES_SQL} AND {col} IS NOT NULL
+        AND date >= date('now', '-{DIMENSION_WINDOW_DAYS} days') ORDER BY date
     """).fetchall()
+    out = []
+    for r in rows:
+        val = r["spb"]
+        if r["duration_min"] and r["duration_min"] > 0:
+            sp = conn.execute(
+                "SELECT split_num, pace_sec_per_km, distance_km, elevation_gain_m, "
+                "elevation_loss_m FROM activity_splits WHERE activity_id=? ORDER BY split_num",
+                (r["id"],)).fetchall()
+            ga = grade_adjusted_duration_min([dict(s) for s in sp]) if sp else None
+            if ga and ga > 0:
+                val = round(val * r["duration_min"] / ga, 4)
+        out.append((r["date"], val))
+    return out
 
-    if len(rows) < 3:
+
+def _compute_economy(conn: sqlite3.Connection) -> dict:
+    """Economy: overall speed per BPM (running efficiency), grade-adjusted."""
+    values = _ga_spb_series(conn, "speed_per_bpm")
+    if len(values) < 3:
         return _empty_dimension("Need 3+ runs with HR data in last 4 weeks")
 
-    values = [(r["date"], r["speed_per_bpm"]) for r in rows]
     current = _median([v for _, v in values])
     trend, rate = _compute_trend(values)
 
@@ -167,7 +177,7 @@ def _compute_economy(conn: sqlite3.Connection) -> dict:
         "trend": trend,
         "rate_per_month": round(rate, 4) if rate else None,
         "unit": "m/min/bpm",
-        "source": "Speed per BPM (all runs)",
+        "source": "Speed per BPM (grade-adjusted)",
         "data_points": len(values),
         "history": [v for _, v in values[-8:]],
     }

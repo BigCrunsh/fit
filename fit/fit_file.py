@@ -238,6 +238,20 @@ def grade_adjusted_pace_sec(pace_sec, gain_m, loss_m, dist_km):
     return max(1.0, pace_sec - penalty)   # flat-equivalent: subtract the terrain cost
 
 
+def grade_adjusted_duration_min(splits):
+    """Flat-equivalent total duration (minutes) from per-split grade-adjusted pace — the time
+    the run would have taken on flat ground at the same effort. None if no usable splits.
+    Used to grade-adjust speed-per-bpm (economy/threshold) and the durability model's time."""
+    total_sec, used = 0.0, False
+    for s in splits:
+        pace, dist = s.get("pace_sec_per_km"), s.get("distance_km")
+        if pace and dist and dist > 0:
+            total_sec += grade_adjusted_pace_sec(
+                pace, s.get("elevation_gain_m"), s.get("elevation_loss_m"), dist) * dist
+            used = True
+    return (total_sec / 60.0) if used else None
+
+
 def compute_cardiac_drift(splits):
     """Compute rolling 1km cardiac drift. Returns drift info dict.
 

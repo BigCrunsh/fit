@@ -652,7 +652,13 @@
   <div class="sec-method">Averaged over {{ drift_chart.n_runs }} run{{ 's' if drift_chart.n_runs != 1 else '' }} from last 4 weeks. Individual runs shown as thin lines.{% if split_data and split_data.drift and split_data.drift.drift_onset_km %} Drift onset at km {{ split_data.drift.drift_onset_km }}.{% endif %}</div>
   {% endif %}
   <div class="chart-box chart-canvas-md"><canvas id="chart-drift-trend"></canvas></div>
-  <div class="sec-method">Drift onset = first km where HR exceeds first-half average + 5 bpm. Higher = better aerobic endurance. Green band = onset after km 15 (good base).</div>
+  <div class="sec-method">Drift onset via the HR : grade-adjusted-pace ratio (canonical, terrain-corrected). The dashed "raw" line is the same onset without the grade correction — the gap is how much terrain was distorting it. Higher = better aerobic endurance; green band = onset after km 15.</div>
+
+  {% if charts | selectattr('id', 'equalto', 'chart-grade-spb') | first %}
+  <div id="prof-grade" class="sec"><h2>Grade-Adjustment Impact</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">How much correcting for terrain (Anstieg) changes your efficiency numbers. A climb's slow pace is converted to its flat-equivalent before computing speed-per-heartbeat and drift, so hills don't make you look less efficient or fake aerobic decoupling. <strong>Near-overlapping lines = your terrain is flat enough that it barely matters; a visible gap = hilly runs were understating you.</strong></div><div class="line"></div></div>
+  <div class="sec-sub">Raw (dashed) vs grade-adjusted (solid) speed-per-heartbeat per run. Higher = more efficient.</div>
+  <div class="chart-box chart-canvas-md"><canvas id="chart-grade-spb"></canvas></div>
+  {% endif %}
   {% if profile_takeaways.drift %}<div class="sec-takeaway">{{ profile_takeaways.drift }}</div>{% endif %}
 
   <!-- Zone Distribution — training mix -->

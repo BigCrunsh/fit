@@ -43,7 +43,7 @@ def db():
         CREATE TABLE activity_splits (
             activity_id TEXT, split_num INTEGER, distance_km REAL,
             time_sec REAL, pace_sec_per_km REAL, avg_hr REAL,
-            avg_cadence REAL, elevation_gain_m REAL, avg_speed_m_s REAL,
+            avg_cadence REAL, elevation_gain_m REAL, elevation_loss_m REAL, avg_speed_m_s REAL,
             time_above_z2_ceiling_sec REAL, start_distance_m REAL, end_distance_m REAL,
             PRIMARY KEY (activity_id, split_num)
         );

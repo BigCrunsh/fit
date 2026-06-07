@@ -672,40 +672,65 @@ def _all_charts(conn):
     # grade-adjusted function the Resilience dimension aggregates). Single source of truth, so
     # the trend, the dimension/Distance-Ceiling, and the top-chart marker all agree.
     from fit.fit_file import compute_cardiac_drift
+    from fit.fit_file import grade_adjusted_duration_min
     drift_onset_data = []
+    grade_impact = []   # per-run raw-vs-grade-adjusted speed_per_bpm + onset (for the impact chart)
     all_drift_runs = conn.execute("""
-        SELECT a.id, a.date, a.distance_km FROM activities a
+        SELECT a.id, a.date, a.distance_km, a.duration_min, a.avg_hr FROM activities a
         JOIN activity_splits s ON s.activity_id = a.id
         WHERE a.type IN ('running','track_running','trail_running')
         GROUP BY a.id HAVING COUNT(s.split_num) >= 6
         ORDER BY a.date
     """).fetchall()
+
+    def _onset_from(splits_dicts, dist_km):
+        """drift onset (grade-adj if elevation present): onset km, full distance if no drift, else None."""
+        dd = compute_cardiac_drift(splits_dicts)
+        if dd.get("status") == "detected" and dd.get("drift_onset_km"):
+            return dd["drift_onset_km"]
+        if dd.get("status") == "none":
+            return round(dist_km or 0, 1)
+        return None
+
     for run in all_drift_runs:
         sp = conn.execute(
             "SELECT split_num, avg_hr, pace_sec_per_km, distance_km, elevation_gain_m, "
             "elevation_loss_m FROM activity_splits WHERE activity_id = ? ORDER BY split_num",
             (run["id"],)).fetchall()
-        d = compute_cardiac_drift([dict(s) for s in sp])
-        if d.get("status") == "detected" and d.get("drift_onset_km"):
-            onset = d["drift_onset_km"]
-        elif d.get("status") == "none":
-            onset = round(run["distance_km"] or 0, 1)   # held the full distance → no drift
-        else:
-            continue                                     # inconclusive / insufficient → skip
-        drift_onset_data.append({"date": run["date"], "onset_km": onset,
+        sd = [dict(s) for s in sp]
+        flat = [{**s, "elevation_gain_m": 0, "elevation_loss_m": 0} for s in sd]  # terrain stripped
+        ga_onset = _onset_from(sd, run["distance_km"])
+        if ga_onset is None:
+            continue
+        raw_onset = _onset_from(flat, run["distance_km"])
+        drift_onset_data.append({"date": run["date"], "onset_km": ga_onset, "raw_km": raw_onset,
                                  "dist": round(run["distance_km"] or 0, 1)})
+        # raw vs grade-adjusted speed_per_bpm (efficiency): raw uses actual duration, GA uses
+        # the flat-equivalent duration from the splits.
+        dist, dur, hr = run["distance_km"], run["duration_min"], run["avg_hr"]
+        ga_dur = grade_adjusted_duration_min(sd)
+        if dist and dur and dur > 0 and hr and hr > 0 and ga_dur:
+            grade_impact.append({
+                "date": run["date"],
+                "raw_spb": round((dist * 1000 / dur) / hr, 4),
+                "ga_spb": round((dist * 1000 / ga_dur) / hr, 4),
+            })
     if drift_onset_data:
         max_onset = max(d["onset_km"] for d in drift_onset_data)
         charts.append({"id": "chart-drift-trend", "config": json.dumps({
             "type": "scatter",
-            "data": {"datasets": [{
-                "label": "Drift Onset (km)",
-                "data": [{"x": d["date"], "y": d["onset_km"]} for d in drift_onset_data],
-                "borderColor": DANGER + "b3", "backgroundColor": DANGER + "60",
-                "pointRadius": 5, "showLine": True, "borderWidth": 2, "tension": 0.3,
-            }]},
+            "data": {"datasets": [
+                {"label": "drift onset (grade-adjusted)",
+                 "data": [{"x": d["date"], "y": d["onset_km"]} for d in drift_onset_data],
+                 "borderColor": DANGER + "b3", "backgroundColor": DANGER + "60",
+                 "pointRadius": 5, "showLine": True, "borderWidth": 2, "tension": 0.3},
+                {"label": "raw (no grade adj)",
+                 "data": [{"x": d["date"], "y": d["raw_km"]} for d in drift_onset_data if d.get("raw_km") is not None],
+                 "borderColor": "rgba(148,163,184,0.55)", "backgroundColor": "rgba(148,163,184,0.0)",
+                 "pointRadius": 3, "showLine": True, "borderWidth": 1, "borderDash": [4, 3], "tension": 0.3},
+            ]},
             "options": {"responsive": True,
-                        "plugins": {"legend": {"display": False},
+                        "plugins": {"legend": {"display": True, "labels": {"boxWidth": 10, "font": {"size": 9}}},
                                     "tooltip": {"callbacks": {"__DRIFT_ONSET_TT__": True}},
                                     "annotation": {"annotations": {
                                         "good": {"type": "box", "yMin": 15, "yMax": max(max_onset + 2, 20),
@@ -723,6 +748,27 @@ def _all_charts(conn):
                                        *_profile_x_range(conn))}}
         }).replace('"__DRIFT_ONSET_TT__": true',
                    '"label": function(ctx){return "Drift onset: km "+ctx.parsed.y}')})
+
+    # Grade-adjustment impact (Profile) — raw vs grade-adjusted speed-per-bpm per run, so the
+    # effect of correcting for terrain (Anstieg) is visible: near-overlapping lines mean hills
+    # aren't distorting your efficiency; a gap means hilly runs were understating it.
+    if len(grade_impact) >= 3:
+        charts.append({"id": "chart-grade-spb", "config": json.dumps({
+            "type": "line",
+            "data": {"datasets": [
+                {"label": "raw speed/bpm", "data": [{"x": g["date"], "y": g["raw_spb"]} for g in grade_impact],
+                 "borderColor": "rgba(148,163,184,0.55)", "borderWidth": 1, "borderDash": [4, 3],
+                 "pointRadius": 2, "tension": 0.3, "fill": False},
+                {"label": "grade-adjusted speed/bpm", "data": [{"x": g["date"], "y": g["ga_spb"]} for g in grade_impact],
+                 "borderColor": ACCENT, "borderWidth": 2, "pointRadius": 2, "tension": 0.3, "fill": False},
+            ]},
+            "options": {"responsive": True,
+                        "plugins": {"legend": {"display": True, "position": "bottom", "labels": {"boxWidth": 10, "font": {"size": 9}}}},
+                        "scales": {"x": _time_x_scale(_unit_for_span([g["date"] for g in grade_impact]), *_profile_x_range(conn)),
+                                   "y": {"title": {"display": True, "text": "speed / bpm (higher = more efficient)",
+                                                   "color": "#64748b", "font": {"size": 10}},
+                                         "grid": {"color": "rgba(255,255,255,0.03)"}}}}
+        })})
 
     # Pace Consistency (CV%) — line chart with purple fill (Profile tab)
     pace_cv = conn.execute(f"""
