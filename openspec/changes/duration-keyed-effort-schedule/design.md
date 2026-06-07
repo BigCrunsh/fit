@@ -50,28 +50,51 @@ mildly under-fades the marathon. That residual is **Decision 3**.
 
 ## Decisions
 
-### Decision 1 — T₀ is personalised, β is population (with priors)
+### Decision 1 — T₀ and β are population PRIORS the athlete's data updates (shrinkage)
 
-`T₀` is **personalised**: the duration at which the athlete holds ≈ LTHR at a *genuine maximal*
-effort. Estimated from the qualifying effort whose `avg_hr` is closest to LTHR (this athlete:
-the HM, 111 min, HR 173 ≈ LTHR 173). Population fallback **T₀ ≈ 55 min** (textbook
-threshold-sustainable duration) when no such effort exists — the reusable cold-start default.
+Both parameters get a **population prior** and a **recency-/representativeness-weighted update**
+from the athlete's own maximal efforts — the *same* treatment the durability model already gives
+`β_d` (a `PRIOR_BETA_D` the race data updates). Nothing is purely assumed, and nothing is staked
+on a single hand-picked race. Sparse or noisy data → stays at the population value; enough
+consistent data → personalises. (This supersedes the earlier draft's "personalise T₀, fix β"
+split — see below for why that draft broke on real data.)
 
-`β` is a **population** constant, **β ≈ −6.5 bpm/log-unit** (the duration–intensity slope is
-far more stable across trained runners than T₀, which depends on individual threshold
-endurance). Reusable shape; per-athlete refinement is a follow-on (Decision 4).
+- **β** — prior **≈ −6.5 bpm/log-unit** (population duration–intensity fade). The athlete's race
+  HR-vs-log-duration slope updates it, precision-weighted: thin/noisy → ≈ −6.5; enough consistent
+  data → the athlete's own fade.
+- **T₀** — prior the population threshold-sustainable duration (**~55 min**). The athlete's races
+  update where the curve crosses LTHR, weighted by **recency** (`exp(−age/τ)`, τ ≈ 12–18 months —
+  so it tracks fitness: threshold endurance grows with base, erodes with detraining) and by
+  **representativeness** (efforts nearer the *goal* duration count more; an old, far, or
+  sub-maximal effort counts for almost nothing). Lands ≈ the athlete's half (~110–120 min) because
+  they have *several* recent HMs near threshold — not because one was hand-picked.
 
-**Why personalise T₀ and not β:** T₀ is where the athlete *individually* sits at threshold —
-this athlete holds LTHR for 111 min (strong threshold endurance, or a slightly-low
-Garmin LTHR); a faster runner's threshold duration is shorter. β (how fast intensity fades
-either side of T₀) is close to universal. Pinning T₀ from data is what keeps the forecast
-**stable** (reproduces the validated table) while the duration axis makes it **general**.
+**Why the prior is the whole point (a single-point rule breaks on real data).** The earlier draft
+pinned `T₀` from the one effort whose `avg_hr` was nearest LTHR. On this athlete's *current* data
+that fails: LTHR moved 173→171, and their nearest-LTHR race is now a **sub-maximal 5 K run at
+threshold (25 min)**. The naive rule reads that as "holds threshold only 25 min" and collapses the
+marathon forecast ~15 min slower. A prior dissolves this by construction — a lone sub-maximal race
+barely moves a well-anchored estimate, and a short easy race earns almost no weight (far from the
+goal duration; the prior expects a *maximal* 5 K well *above* threshold). This also answers the
+original objection to fitting β from data ("sparse race HRs are noisy"): the prior is the safety
+net, so fitting is regularised, not fragile.
 
-**Anti-recommendation — anchor offset-0 to a fixed *distance* (e.g. "0 at the HM for
-everyone").** This was the obvious lighter move and I rejected it: it re-imports the speed
-confound. A maximal HM lasts 60–130 min by fitness; only a ~60-min HM is truly at LTHR. Pinning
-offset-0 to the HM distance silently assumes the athlete's HM lasts the threshold time. Pinning
-it to a **duration** (T₀) does not.
+**Why this is also the consistency fix.** Durability fade (`β_d`, time-vs-distance) is *measured*;
+the effort fade (`β`, HR-vs-duration) was *assumed*. They are two faces of the same endurance
+physiology, so measuring one and hard-coding the other was itself an inconsistency. Giving both
+the prior+data treatment makes the two endurance parameters method-consistent. (Related cleanup
+**D15**: the population durability exponent is hardcoded `1.06` in three places —
+`predict_race_time`, `riegel_fallback_secs`, an inline `**1.06` — alongside the fitted
+`β_d ≈ 1.07`; route those through one constant so the durability fade is single-sourced too.)
+
+**Anti-recommendation — pick one race (nearest-LTHR, or longest-race-≥-LTHR).** Both are
+single-point estimates, fragile to that race being sub-maximal, stale, or a bad-HR day.
+"Longest race ≥ LTHR" is a decent heuristic, but the prior+weighted-data form *subsumes* it (it's
+just the data the likelihood sees) without betting the forecast on one point.
+
+**Anti-recommendation — anchor offset-0 to a fixed *distance* ("0 at the HM for everyone").**
+Rejected: it re-imports the speed confound. A maximal HM lasts 60–130 min by fitness; only a
+~60-min HM is truly at LTHR. Keying offset-0 to a *duration* (T₀), estimated as above, does not.
 
 ### Decision 2 — keyed on the model's own predicted duration (one-pass coupling)
 
@@ -96,52 +119,68 @@ correction smaller than rounding. Two passes is the honest precision.
 
 A single `β` under-fades the marathon by ~1.2 bpm (≈ 2 min). Two options:
 
-- **(chosen) Single slope**, `β` chosen by least squares over all four anchors-in-duration
-  (≈ −6.5). Simpler, one physiological law. The table's extra marathon kink (−6 vs the law's
-  −4.8) may itself be a hand-set artifact, not a measured fade — there is no marathon in the
-  data to adjudicate (the wall region is `extrapolation_prior`'s job, and it already widens the
-  interval past `d_max`).
-- (rejected) **Mild curvature** (quadratic in log t). Adds a third constant to fit a 1.2-bpm
-  gap with no data behind it. Defer until a 30 km+ effort exists — at which point it joins the
-  same calibration milestone as the wall knobs.
+- **(chosen) Single slope**, one `β` (the prior-shrunk estimate of Decision 1 — ≈ −6.5 at
+  cold-start, personalising with data). One physiological law. The table's extra marathon kink
+  (−6 vs the law's −4.8) may itself be a hand-set artifact, not a measured fade — there is no
+  marathon in the data to adjudicate (the wall region is `extrapolation_prior`'s job, and it
+  already widens the interval past `d_max`).
+- (rejected) **Mild curvature** (quadratic in log t). Adds a third shape constant to fit a
+  1.2-bpm gap with no data behind it. Defer until a 30 km+ effort exists — at which point it
+  joins the same calibration milestone as the wall knobs.
 
-So the marathon point will read ~1–2 min faster than today's table. This is the only material
-forecast change; it is documented, small, and on the optimistic side of a deliberately
-conservative headline — surfaced for the athlete to accept, not hidden.
+So with **thin data** (β ≈ the population prior) the marathon point reads ~1–2 min faster than
+today's table — documented, small, on the optimistic side of a deliberately conservative headline,
+surfaced for the athlete to accept, not hidden. As race data accumulates and β personalises, this
+point tracks the athlete rather than a fixed assumption. (Confirmed in validation: shrinkage to
+the prior reproduces the validated anchors, so the headline stays ~stable.)
 
-### Decision 4 — prior→posterior is the follow-on, not this change
+### Decision 4 — adopt the prior+data (shrinkage) form now; full-Bayesian-in-sampler is the further follow-on
 
-The unifying principle (replace a hardcoded value with prior + cheap data update) applies:
-`T₀` and `β` get population priors and per-athlete updates. This change does the **lightweight**
-half — pin `T₀` from the nearest-LTHR maximal effort, `β` from population — because fitting them
-properly needs a *maximality filter* (the athlete's 5 Ks are submaximal parkruns at ~LTHR; a
-naive fit would learn "can't exceed threshold short" and over-slow every short prediction).
-Building that filter (race-calendar flag, or HR within X % of distance-expected max) is the
-follow-on, tracked next to the same maximal-effort work.
+The earlier draft deferred prior+data and shipped a single-point `T₀`. That draft is what *broke*
+on real data (the 25-min sub-maximal 5 K, Decision 1), so the prior+data form is **promoted into
+this change**, not deferred. It is implemented as a **lightweight shrinkage estimate outside the
+PyMC sampler** — a closed-form precision-weighted blend of the population prior and the
+recency-/representativeness-weighted race data, computed in `predict.py`. The original objection
+("fitting β from sparse race HRs is noisy") and the maximality concern (sub-maximal parkruns at
+~LTHR) are both handled *by the prior + the weights*, not by a hard filter: a sub-maximal short
+race is far from the goal duration and so earns almost no weight, and even if it did, the prior
+keeps the estimate from running away.
+
+The **further** follow-on (not this change) is making `T₀`/`β` true parameters *inside* the PyMC
+likelihood (HR as part of the model), fit jointly with `β_d`/`φ`/`κ`. That earns its keep only if
+the closed-form shrinkage proves insufficient — it adds likelihood terms, a model refit, and a
+much larger validation surface for little expected gain over a well-prior'd closed form.
 
 ## Migration
 
-1. `maximal_effort_h(distance_km, hr_reserve=None)` → keyed on duration. Two shapes considered:
-   - **(chosen) `maximal_effort_h(predicted_minutes, hr_reserve=None)`** — pure function of
-     duration; callers (who already call `predict`) supply `t(d)` and run the two-pass solve via
-     a small helper `effort_h_for_distance(idata, ds, d, ...)`.
-   - (rejected) `maximal_effort_h(idata, ds, distance)` doing the solve internally — couples the
-     pure schedule to the posterior and is harder to unit-test in isolation.
-2. `T₀`/`β` as module constants `EFFORT_T0_MIN`, `EFFORT_BETA`, plus `effort_t0(ds)` resolving
-   the personalised `T₀` (nearest-LTHR genuine maximal effort → its duration; else `EFFORT_T0_MIN`).
+1. `maximal_effort_h(distance_km, hr_reserve=None)` → keyed on duration:
+   **`maximal_effort_h(predicted_minutes, t0, beta, hr_reserve=None)`** — a pure function of
+   duration given the schedule params; callers (who already call `predict`) supply `t(d)` and run
+   the two-pass solve via `effort_h_for_distance(idata, ds, d, ...)`. (Rejected: doing the solve
+   inside `maximal_effort_h` — couples the pure schedule to the posterior, harder to unit-test.)
+2. `effort_schedule(ds)` resolves the **shrunk** `(T₀, β)`: population priors `EFFORT_T0_PRIOR_MIN`
+   (~55) and `EFFORT_BETA_PRIOR` (~−6.5), updated by a precision-weighted fit over the athlete's
+   races (weight = recency `exp(−age/τ)` × representativeness near the goal duration). Returns the
+   params + a `defaulted`/`reason` flag (mirrors `extrapolation_prior`) when data is too thin to
+   move off the prior. Knobs (τ, prior strength, representativeness bandwidth) are named constants
+   with cited justification.
 3. Rewire the five internal callers (`forecast`, `derived_metrics`, `required_chronic_for_goal`,
    `durability_panel`, `trend_series`) and the two display callers (`cli`, `_model_week_trend`)
    through `effort_h_for_distance`. The MaxHR-reserve cap rides along unchanged.
 4. `design.md` (marathon change) "Constants & assumptions": replace the four-row
-   `_MAXIMAL_HR_OFFSET` justification with the (T₀, β) rows + this validation table. Update
-   `DATA_LINEAGE.md` glossary (maximal-effort schedule → duration-keyed).
+   `_MAXIMAL_HR_OFFSET` justification with the (prior, shrinkage) description + validation table.
+   Update `DATA_LINEAGE.md` glossary (maximal-effort schedule → duration-keyed, prior+data).
+5. **D15** (separate, mechanical): route the three hardcoded Riegel `1.06`s through one constant.
 
 ## Risks
 
-- **T₀ estimation depends on identifying a genuine maximal-at-LTHR effort.** Mitigation:
-  restrict to races / `effort_class ≥ Hard`; fall back to the population default and label it
-  (same `defaulted` pattern as `extrapolation_prior`).
-- **Forecast shift.** Bounded to the marathon ~1–2 min (Decision 3); validated against the
-  athlete's actual race max-HRs before and after, same as the original schedule.
-- **Cold-start athlete** (no maximal effort near LTHR) → population T₀; the law still generalises,
-  just less personalised — strictly better than today's distance table for any non-anchor distance.
+- **New knobs** (τ, prior strength, representativeness bandwidth). Mitigation: set with cited
+  defaults; the prior dominates until data is genuinely informative, so defaults are forgiving.
+  Validate before/after.
+- **Shrinkage to prior must reproduce the validated anchors** (else the headline moves). This is
+  the primary validation gate — confirm the cold-start (prior-only) law lands 5 K +9.65 / M −4.8
+  as in the validation table, and that the current athlete's headline stays ~stable (≤ ~2 min).
+- **Sub-maximal / bad-HR races bias the fit.** Mitigation: recency × representativeness weighting
+  down-weights them; the prior caps the damage; no single race can move the estimate far.
+- **Cold-start athlete** (no informative races) → both params sit at the population prior; the law
+  still generalises across every distance — strictly better than today's distance table.

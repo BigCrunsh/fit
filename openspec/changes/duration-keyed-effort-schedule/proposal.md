@@ -19,8 +19,10 @@ offset(t) = β · ( log t − log T₀ )        # bpm vs LTHR, t = predicted max
 h(d)      = offset( t(d) ) / H_DIV         # t(d) = the model's own predicted time at distance d
 ```
 
-- **T₀** — the duration at which a maximal effort sits *at* LTHR (offset 0). The physiological definition of LTHR (maximal lactate steady state, sustainable ~30–60 min). **Personalised**: pinned to the athlete's genuine maximal effort whose HR is nearest LTHR; population fallback ~55 min for a cold-start athlete.
-- **β** — the fade slope (bpm per natural-log-unit of duration), a **population** constant (~−6.5). Reusable shape; learnable per-athlete later from multiple maximal efforts.
+Both parameters are **population priors the athlete's data updates** (a precision-weighted shrinkage estimate — the same prior+data treatment the durability model already gives `β_d`). Sparse/noisy data stays at the population value; enough consistent race data personalises. This dissolves the "measure durability but *assume* the effort-fade" inconsistency and is robust by construction — no single race can break it.
+
+- **T₀** — the duration at which a maximal effort sits *at* LTHR (offset 0). Prior ~55 min (textbook threshold-sustainable duration); updated by where the athlete's races cross LTHR, weighted by **recency** (so it tracks fitness) and **representativeness** (efforts nearer the goal duration count more). Lands ≈ the athlete's half (~110–120 min) from several recent HMs near threshold — not a hand-picked race. (A single-point "nearest-LTHR race" rule breaks on the real data: LTHR is now 171, so the nearest is a sub-maximal 25-min 5 K → a ~15-min-too-slow forecast. The prior makes that impossible.)
+- **β** — the fade slope (bpm per natural-log-unit of duration). Prior ~−6.5 (population duration–intensity fade); updated by the athlete's race HR-vs-log-duration slope, regularised by the prior so a sparse/noisy fit can't run away.
 
 `maximal_effort_h` becomes keyed on duration; its callers do a **one-pass coupling** (predict `t(d)` with a seed `h`, recompute `h` from `t(d)`, predict once more — the correction is <0.5 % because `κ` is small).
 
@@ -39,9 +41,10 @@ The four-point table *was* a two-parameter log-duration curve all along. The dur
 
 ## Impact
 
-- **Forecast stays stable for the current athlete** — because T₀ derives from their data (maximal HM at ≈ LTHR ⇒ T₀ ≈ 111 min), the law reproduces the validated anchors, so the 4:03:55 headline does not shift materially. The marathon residual (−4.76 vs −6 bpm ≈ ~2 min) is the one flagged decision (single slope vs slight curvature).
-- **Generalises across distance and goal with no special-casing** — changing the goal (marathon → HM) already works today (the schedule is distance-keyed, the goal only selects the point); this change makes the *per-distance* assumption itself fitness-aware.
-- **Code**: `fit/marathon/predict.py` (`maximal_effort_h`, the one-pass solve, the five internal callers); the MaxHR cap (`hr_reserve`) carries over unchanged. No DB/schema change. The constants move from a four-row table to two justified parameters, updating the `design.md` "Constants & assumptions" justification.
-- **Specs**: `adaptive-predictions` — a new requirement that the maximal-effort HR assumption is duration-keyed and generalises across distance/goal.
+- **Forecast stays stable for the current athlete** — the shrinkage estimate lands T₀ ≈ the athlete's half (~110–120 min, from several recent HMs near threshold), so the law reproduces the validated anchors and the headline does not shift materially. The marathon residual (−4.8 vs −6 bpm ≈ ~2 min) is the one flagged decision (single slope vs slight curvature) and rides on the prior at cold-start.
+- **Robust by construction** — population priors + recency-/representativeness-weighted updates mean no single race breaks the estimate; the literal "nearest-LTHR race" rule (earlier draft) would have produced T₀ = 25 min on the current data — the prior makes that impossible.
+- **Generalises across distance and goal with no special-casing** — keyed to predicted duration, so changing the goal (marathon → HM) needs no special case; the per-distance assumption is itself fitness-aware.
+- **Code**: `fit/marathon/predict.py` (`effort_schedule` shrinkage estimate, `maximal_effort_h` re-keyed on duration, the `effort_h_for_distance` two-pass solve, the five internal + two display callers); the MaxHR cap carries over unchanged. No DB/schema change. Plus **D15** (route the three hardcoded Riegel `1.06`s through one constant — separate, mechanical).
+- **Specs**: `adaptive-predictions` — the maximal-effort HR assumption is duration-keyed, prior+data, and generalises across distance/goal.
 
 Affected capability: **adaptive-predictions**.
