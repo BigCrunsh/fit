@@ -95,7 +95,7 @@ def fit(ds: EffortDataset, *, draws: int = 1000, tune: int = 1000, chains: int =
     """
     import pymc as pm
 
-    with build_model(ds) as model:
+    with build_model(ds):
         try:
             idata = pm.sample(draws=draws, tune=tune, chains=chains, target_accept=0.95,
                               nuts_sampler="nutpie", random_seed=seed, progressbar=False)

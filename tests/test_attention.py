@@ -3,7 +3,6 @@ and the race-countdown prediction-confidence helper."""
 
 from datetime import date, timedelta
 
-import pytest
 
 from fit.report.sections.cards import _attention_items, _prediction_confidence
 

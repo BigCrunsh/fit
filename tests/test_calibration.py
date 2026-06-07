@@ -7,6 +7,7 @@ from fit.calibration import (
     add_calibration,
     derive_confidence,
     derive_flags,
+    extract_aet_from_steady_run,
     extract_lthr_from_race,
     extract_max_hr_from_activity,
     get_active_calibration,
@@ -600,9 +601,6 @@ class TestGetCalibrationHistory:
 # ════════════════════════════════════════════════════════════════
 # AeT extraction from steady-pace long runs
 # ════════════════════════════════════════════════════════════════
-
-
-from fit.calibration import extract_aet_from_steady_run
 
 
 class TestExtractAetFromSteadyRun:

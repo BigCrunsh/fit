@@ -7,7 +7,7 @@ deliberate human confirm. Replaces reverse-engineering LTHR from race HR.
 
 from datetime import date, timedelta
 
-from fit.calibration import get_calibration_anchor, DEVICE_METHODS
+from fit.calibration import get_calibration_anchor
 from fit.garmin import fetch_lactate_threshold
 import fit.sync as sync
 

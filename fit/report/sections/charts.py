@@ -942,10 +942,8 @@ def _all_charts(conn):
     try:
         from fit.goals import get_target_race as _gtr
         _target = _gtr(conn)
-        target_km = _target["distance_km"] if _target and _target.get("distance_km") else 42.195
         target_time_str = _target.get("target_time") if _target else None
     except Exception:
-        target_km = 42.195
         target_time_str = None
 
     # Parse target time for annotation

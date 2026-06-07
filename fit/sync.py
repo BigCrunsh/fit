@@ -3,7 +3,6 @@
 import logging
 import sqlite3
 from datetime import date, timedelta
-from pathlib import Path
 
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn
 
@@ -11,8 +10,6 @@ from fit import garmin, weather
 from fit.analysis import RUNNING_TYPES_SQL, enrich_activity, compute_weekly_agg
 from fit.calibration import (
     add_calibration,
-    derive_confidence,
-    derive_flags,
     extract_aet_from_steady_run,
     extract_lthr_from_race,
     extract_max_hr_from_activity,
@@ -597,7 +594,7 @@ def _match_race_calendar(conn: sqlite3.Connection) -> None:
     # race whose tag a past re-enrichment stripped (classify_run_type never
     # reproduces 'race') would otherwise stay mislabeled forever — it counts
     # as easy/tempo/long in every stat and never feeds race calibration.
-    conn.execute(f"""
+    conn.execute("""
         UPDATE activities SET run_type = 'race'
         WHERE id IN (
             SELECT activity_id FROM race_calendar
