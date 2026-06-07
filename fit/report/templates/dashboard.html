@@ -122,36 +122,27 @@
     </div>
 
     {% if marathon_forecast and marathon_forecast.available %}
-    <!-- Durability-model forecast (Bayesian) -->
+    <!-- Durability-model forecast — the at-a-glance line; β_d / race-equivalents /
+         extrapolation detail live on the Profile tab (one place, not duplicated here). -->
     <div class="race-hero-divider">
       {% if marathon_forecast.source == 'model' %}
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
-        <span class="kicker">Durability Model Forecast</span>
-        {% if marathon_forecast.unvalidated %}<span class="badge badge-yellow" title="longest effort {{ marathon_forecast.d_max }} km vs {{ marathon_forecast.goal_km }} km goal">⚠ unvalidated extrapolation</span>{% endif %}
-      </div>
-      <div style="display:flex;gap:28px;align-items:baseline;flex-wrap:wrap">
-        <div>
-          <div class="stat-value-lg" style="color:var(--accent)">{{ marathon_forecast.median }}</div>
-          <div class="race-hero-subtitle">90% {{ marathon_forecast.interval }}</div>
-        </div>
+      <div class="race-hero-subtitle" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:12px">
+        <span>90% credible <strong style="color:var(--text)">{{ marathon_forecast.interval }}</strong></span>
         {% if marathon_forecast.p_ceiling_pct is not none %}
-        <div>
-          <div class="kicker">P({{ marathon_forecast.goal_time }} ceiling)</div>
-          <div class="stat-value-lg" style="color:var(--safe)">{{ marathon_forecast.p_ceiling_pct }}%</div>
-          <div class="race-hero-subtitle">fitness-sufficiency, not race-day odds</div>
-        </div>
+        <span title="Fitness-sufficiency under a well-executed effort — not race-day odds (weather, pacing and fuelling are extra).">sub-{{ marathon_forecast.goal_time }} odds <strong style="color:{% if marathon_forecast.p_ceiling_pct >= 60 %}var(--safe){% elif marathon_forecast.p_ceiling_pct >= 35 %}var(--caution){% else %}var(--danger){% endif %}">{{ marathon_forecast.p_ceiling_pct }}%</strong> <span style="color:var(--text-dim)">ⓘ</span></span>
         {% endif %}
-        <div>
-          <div class="kicker">Durability β<sub>d</sub></div>
-          <div class="stat-value-lg">{{ marathon_forecast.beta_d }}</div>
-          <div class="race-hero-subtitle">{{ marathon_forecast.beta_d_ci }}{% if marathon_forecast.beta_d_dominated %} · prior-dominated{% endif %}</div>
-        </div>
+        {% if race_readiness and race_readiness.verdict and race_readiness.verdict not in ['no_target', 'insufficient_data'] %}
+        <span>·
+          {% if race_readiness.verdict == 'ready' %}<strong style="color:var(--safe)">ready</strong>
+          {% elif race_readiness.verdict == 'almost' %}<strong style="color:var(--safe)">almost there</strong>
+          {% elif race_readiness.verdict == 'on_track' %}<strong style="color:var(--accent)">on track{% if race_readiness.predicted_time %} for {{ race_readiness.predicted_time }}{% endif %}</strong>
+          {% elif race_readiness.verdict == 'tight' %}<strong style="color:var(--caution)">tight</strong>
+          {% elif race_readiness.verdict == 'at_risk' %}<strong style="color:var(--danger)">at risk</strong>{% endif %}
+        </span>
+        {% endif %}
+        {% if marathon_forecast.unvalidated %}<span class="badge badge-yellow" title="longest effort {{ marathon_forecast.d_max }} km vs {{ marathon_forecast.goal_km }} km goal">⚠ unvalidated past {{ marathon_forecast.d_max }} km</span>{% endif %}
       </div>
-      <div class="race-hero-subtitle" style="margin-top:8px">Race-equivalent (today): {% for e in marathon_forecast.equiv %}{{ e.label }} {{ e.time }}{% if not loop.last %} · {% endif %}{% endfor %}</div>
-      <div class="race-hero-subtitle" style="margin-top:2px">Extrapolation: {{ marathon_forecast.extrap_reason }}{% if marathon_forecast.extrap_defaulted %} (defaulted){% endif %}</div>
-      {% if marathon_forecast.influential %}
-      <div class="race-hero-subtitle" style="margin-top:2px">Leans on: {% for e in marathon_forecast.influential %}{{ e.date }} ({{ e.distance_km }} km){% if not loop.last %}, {% endif %}{% endfor %}</div>
-      {% endif %}
+      <div class="race-hero-subtitle" style="margin-top:5px;color:var(--text-dim)">Durability β<sub>d</sub>, race-equivalents and the long-run extrapolation → <strong>Profile</strong> tab.</div>
       {% else %}
       <span class="kicker">Forecast</span>
       <div class="stat-value-lg" style="color:var(--accent)">{{ marathon_forecast.median }}</div>
@@ -403,64 +394,9 @@
 <!-- PROFILE — "Am I fit enough? What can I run today?" -->
 <div id="tab-profile" class="tab-content">
 
-  <!-- 1. RACE READINESS HERO -->
-  {% if race_readiness %}
-  {% set rr = race_readiness %}
-  {% set rr_bg = 'rgba(52,211,153,0.05)' if rr.verdict == 'ready' else 'rgba(129,140,248,0.05)' if rr.verdict in ['on_track', 'almost'] else 'rgba(251,191,36,0.05)' if rr.verdict == 'tight' else 'rgba(248,113,113,0.05)' if rr.verdict == 'at_risk' else 'var(--surface)' %}
-  {% set rr_border = 'rgba(52,211,153,0.12)' if rr.verdict == 'ready' else 'rgba(129,140,248,0.12)' if rr.verdict in ['on_track', 'almost'] else 'rgba(251,191,36,0.12)' if rr.verdict == 'tight' else 'rgba(248,113,113,0.12)' if rr.verdict == 'at_risk' else 'var(--border)' %}
-  <div style="background:{{ rr_bg }};border:1px solid {{ rr_border }};border-radius:14px;padding:18px 22px;margin:14px 0">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
-      <div>
-        <div style="font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px">Race Readiness</div>
-        <div style="display:flex;align-items:baseline;gap:12px">
-          <span style="font-size:32px;font-weight:700;font-family:var(--mono);color:var(--accent)">{{ rr.effective_vdot or '—' }}</span>
-          <span style="font-size:12px;color:var(--text-dim)">effective VDOT</span>
-          {% if rr.vdot_gap is not none %}
-          <span class="badge {% if rr.vdot_gap <= 0 %}badge-green{% elif rr.vdot_gap <= 2 %}badge-yellow{% else %}badge-red{% endif %}">
-            {{ '%+.1f' | format(-rr.vdot_gap) }}
-          </span>
-          {% endif %}
-        </div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
-          {% if rr.race_vdot %}Race VDOT: {{ rr.race_vdot }} ({{ rr.race_vdot_date }}){% endif %}
-          {% if rr.garmin_vo2max %}{% if rr.race_vdot %} · {% endif %}Garmin VO2max: {{ rr.garmin_vo2max }}{% endif %}
-          {% if rr.required_vdot %}{% if rr.race_vdot or rr.garmin_vo2max %} · {% endif %}Target VDOT: {{ rr.required_vdot }}{% if rr.target_time %} (for {{ rr.target_time }}){% endif %}{% endif %}
-        </div>
-      </div>
-      <div style="text-align:right">
-        {% if rr.predicted_time %}
-        <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:700">Predicts</div>
-        <div style="font-size:22px;font-weight:700;font-family:var(--mono);color:var(--accent);line-height:1.2">{{ rr.predicted_time }}</div>
-        {% endif %}
-        {% if rr.target_time and rr.gap_minutes is not none %}
-        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">target {{ rr.target_time }} · <span style="color:{% if rr.gap_minutes <= 0 %}var(--safe){% elif rr.gap_minutes <= 5 %}var(--caution){% else %}var(--danger){% endif %}">{{ '%+d' | format(rr.gap_minutes) }} min</span></div>
-        {% endif %}
-        {% if rr.verdict == 'ready' %}
-        <div class="badge badge-green" style="margin-top:4px">Ready</div>
-        {% elif rr.verdict == 'almost' %}
-        <div class="badge badge-green" style="margin-top:4px">Almost there</div>
-        {% elif rr.verdict == 'on_track' %}
-        <div class="badge badge-blue" style="margin-top:4px">On track{% if rr.predicted_time %} for {{ rr.predicted_time }}{% endif %}</div>
-        {% elif rr.verdict == 'tight' %}
-        <div class="badge badge-yellow" style="margin-top:4px">Tight</div>
-        {% elif rr.verdict == 'at_risk' %}
-        <div class="badge badge-red" style="margin-top:4px">At risk</div>
-        {% elif rr.verdict == 'no_target' %}
-        <div style="font-size:10px;color:var(--text-dim);margin-top:4px">Set a target: <code style="background:var(--surface-hover);padding:2px 6px;border-radius:4px">fit target set</code></div>
-        {% endif %}
-        {% set psg = rr.get('p_sub_goal') %}{% if psg is not none %}<div style="font-size:9px;color:var(--text-dim);margin-top:3px">{{ rr.target_time }} odds: <strong style="color:{% if psg >= 0.6 %}var(--safe){% elif psg >= 0.35 %}var(--caution){% else %}var(--danger){% endif %}">{{ (psg * 100) | round | int }}%</strong></div>{% endif %}
-      </div>
-    </div>
-    {% if rr.rate_per_month %}
-    <div style="font-size:11px;color:var(--text-muted);margin-top:10px;padding-top:8px;border-top:1px solid var(--hairline)">
-      Trend: {{ '%+.1f' | format(rr.rate_per_month) }} VO2max/month
-      {% if rr.vdot_gap and rr.vdot_gap > 0 and rr.rate_per_month > 0 %}
-      · ~{{ (rr.vdot_gap / rr.rate_per_month)|round(0)|int }} months to close gap
-      {% endif %}
-    </div>
-    {% endif %}
-  </div>
-  {% endif %}
+  <!-- Race Readiness hero merged into the race card above (one forecast card; the VDOT
+       anchor detail lives on the Profile tab). race_readiness is still computed and read
+       by the race card for the verdict + sub-goal odds. -->
 
   <!-- In-tab anchor nav: jump between chart sections without scrolling 10 screens -->
   <nav class="anchor-nav" aria-label="Profile sections">
