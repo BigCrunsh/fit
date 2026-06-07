@@ -26,13 +26,14 @@ logger = logging.getLogger(__name__)
 
 
 def _headline(conn):
+    from fit.training_load import compute_rolling_acwr
     latest = conn.execute("SELECT training_readiness FROM daily_health ORDER BY date DESC LIMIT 1").fetchone()
-    acwr_row = conn.execute("SELECT acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
+    acwr_val = compute_rolling_acwr(conn)   # rolling-7d acute (the documented hybrid; matches coaching/CLI/alerts)
     phase = conn.execute("SELECT * FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
     last_ci = conn.execute("SELECT date, sleep_quality FROM checkins ORDER BY date DESC LIMIT 1").fetchone()
     return generate_headline(
         readiness=latest["training_readiness"] if latest else None,
-        acwr=acwr_row["acwr"] if acwr_row else None,
+        acwr=acwr_val,
         phase=dict(phase) if phase else None,
         last_checkin_date=last_ci["date"] if last_ci else None,
         today=date.today().isoformat(),
@@ -154,9 +155,9 @@ def _status_cards(conn):
     cards.append({"label": "Weight", "value": f"{w['weight_kg']:.1f}" if w else "—", "unit": "kg", "color": CAUTION,
                   "sub": " · ".join(w_sub)})
 
-    acwr = conn.execute("SELECT acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
-    if acwr and acwr["acwr"]:
-        v = acwr["acwr"]
+    from fit.training_load import compute_rolling_acwr
+    v = compute_rolling_acwr(conn)   # rolling-7d acute — single source with coaching/CLI/alerts
+    if v:
         cards.append({"label": "ACWR", "value": f"{v:.2f}", "unit": "",
                       "color": SAFE if 0.8 <= v <= 1.3 else CAUTION if v <= 1.5 else DANGER,
                       "sub": "safe" if 0.8 <= v <= 1.3 else "caution" if v <= 1.5 else "DANGER"})
