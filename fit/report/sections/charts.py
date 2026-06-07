@@ -919,113 +919,124 @@ def _all_charts(conn):
         elif len(_tp) == 2:
             target_min = int(_tp[0]) + int(_tp[1]) / 60
 
-    vo2_monthly = conn.execute("""
-        SELECT substr(date, 1, 7) as month, ROUND(AVG(vo2max), 1) as avg_vo2
-        FROM activities WHERE vo2max IS NOT NULL
-        GROUP BY month ORDER BY month
-    """).fetchall()
-
-    # Riegel predictions from actual races (scatter points). Prefer the
-    # official result_time; fall back to the watch-recorded garmin_time so a
-    # race still plots even before its official time is entered. (The dashboard
-    # flags missing official times separately in the attention panel.)
-    race_points = conn.execute("""
-        SELECT date, name, distance_km,
-               COALESCE(result_time, garmin_time) AS race_time
-        FROM race_calendar
-        WHERE status = 'completed' AND distance_km IS NOT NULL
-          AND COALESCE(result_time, garmin_time) IS NOT NULL
-        ORDER BY date
-    """).fetchall()
-
-    def _parse_t(t):
-        p = t.split(":")
-        if len(p) == 3:
-            return int(p[0]) * 3600 + int(p[1]) * 60 + int(p[2])
-        return int(p[0]) * 60 + int(p[1]) if len(p) == 2 else 0
-
+    # Panel B (marathon_v2) — "marathon-equivalent tracks training". The durability model's
+    # median goal-time tracking chronic load over the whole history, its 90% credible band,
+    # every qualifying effort projected to the goal distance (a dot coloured by its OWN
+    # distance, blue→red), and a today error-bar marker. Model-only (D1 Phase 2): no fit →
+    # no Panel B (the forecast section degrades to the anchor elsewhere). Y stays minutes so
+    # the template's H:MM tick formatter applies; lower = faster (reversed axis).
+    TEXT = "#e2e8f0"   # design-system --text (Chart.js can't read the CSS var)
     datasets = []
-    all_labels = set()
-
-    # Build datasets as {x: ISO-date, y: minutes} point objects — Chart.js's
-    # time scale parses x natively and lays each point at the correct date.
-    # This replaces the prior approach of sharing a category label axis with
-    # YYYY-MM strings, which gave even spacing instead of true date spacing.
-
-    # Dataset 1: forecast line. Prefer the durability MODEL (median marathon-equiv at
-    # each month's chronic load — Profile's Panel B, consistent with the Overview trend);
-    # fall back to the retired VDOT table only when the model isn't fit.
+    prof_min, prof_max = _profile_x_range(conn)
+    from datetime import date as _date, timedelta as _timedelta
     from fit.report.sections.cards import _model_week_trend
-    month_dates = [v["month"] + "-15" for v in vo2_monthly]
-    model_line = _model_week_trend(conn, month_dates) if month_dates else None
-    if model_line is not None:
-        pts = [{"x": d, "y": round(model_line[d][0], 1)} for d in month_dates if d in model_line]
-        if pts:
-            datasets.append({
-                "label": "Forecast (durability model)", "data": pts,
-                "borderColor": ACCENT, "backgroundColor": ACCENT + "15", "fill": False,
-                "borderWidth": 2, "pointRadius": 2, "spanGaps": True,
-            })
-    # (No table fallback: the forecast line is model-only — D1 Phase 2. When the model
-    # isn't fit, the chart shows the race anchors without a line.)
+    from fit.marathon.predict import (
+        forecast_context as _fctx, forecast as _run_forecast, marathon_equiv_points,
+    )
+    # Panel B spans the FULL effort history (not the narrow profile-phase window the other
+    # profile charts use): the long-term trend through detraining gaps IS the story here, and
+    # the effort dots reach back to the first race. x = [first effort, race/today].
+    _ctx = _fctx(conn)
+    _bx_min, _bx_max = prof_min, prof_max
+    if _ctx is not None:
+        # Dense biweekly grid from the first effort → today (the line tracks fitness and stops
+        # at today; there is no future data). Reuse the cached per-week trend (median, lo, hi).
+        _today = _date.today()
+        try:
+            _start = _ctx.ds.efforts["date"].min().date()
+        except Exception:
+            _start = _today - _timedelta(days=420)
+        _bx_min = _start.isoformat()
+        _bx_max = max(str(prof_max)[:10], _today.isoformat()) if prof_max else _today.isoformat()
+        grid, _d = [], _start
+        while _d <= _today:
+            grid.append(_d.isoformat())
+            _d += _timedelta(days=14)
+        if grid and grid[-1] != _today.isoformat():
+            grid.append(_today.isoformat())
 
-    # Dataset 2: Riegel scatter (actual race → extrapolated to target distance).
-    if race_points:
-        riegel_points = []
-        for r in race_points:
-            d1 = r["distance_km"]
-            t1 = _parse_t(r["race_time"])
-            if d1 > 0 and t1 > 0 and d1 != target_km:
-                t2 = t1 * (target_km / d1) ** 1.06
-                riegel_points.append({"x": r["date"], "y": round(t2 / 60, 1)})
-        if riegel_points:
-            datasets.append({
-                "label": "Riegel (from races)", "data": riegel_points,
-                "borderColor": Z3, "borderWidth": 0,
-                "pointRadius": 5, "pointBackgroundColor": Z3,
-                "pointBorderColor": Z3 + "80", "pointBorderWidth": 2,
-                "showLine": False, "fill": False,
-            })
+        ml = _model_week_trend(conn, grid)
+        if ml:
+            gd = [g for g in grid if g in ml]
+            hi = [{"x": g, "y": round(ml[g][2], 1)} for g in gd]
+            lo = [{"x": g, "y": round(ml[g][1], 1)} for g in gd]
+            med = [{"x": g, "y": round(ml[g][0], 1)} for g in gd]
+            # 90% band: the "hi" line fills DOWN to the next dataset ("lo").
+            datasets.append({"label": "90% band", "data": hi, "fill": "+1",
+                             "backgroundColor": ACCENT + "22", "borderColor": "rgba(0,0,0,0)",
+                             "pointRadius": 0, "order": 5})
+            datasets.append({"label": "_loband", "data": lo, "fill": False,
+                             "borderColor": "rgba(0,0,0,0)", "pointRadius": 0, "order": 5})
+            datasets.append({"label": "marathon @ max effort (median)", "data": med,
+                             "borderColor": ACCENT, "backgroundColor": ACCENT + "15",
+                             "fill": False, "borderWidth": 2, "pointRadius": 0,
+                             "tension": 0.25, "spanGaps": True, "order": 2})
+
+        # Coloured effort dots — each qualifying effort projected to the goal distance,
+        # coloured by its own distance (RdYlBu_r, same scale as Panel A); carries `d` (km)
+        # for the tooltip.
+        eqp = marathon_equiv_points(_ctx.idata, _ctx.ds)
+        if eqp:
+            dmin = min(p["distance_km"] for p in eqp)
+            dots = [{"x": p["date"], "y": round(p["minutes"], 1), "d": round(p["distance_km"], 1)}
+                    for p in eqp]
+            # Colour domain runs to the GOAL (not just the longest run), so the red end is the
+            # unrun target — the empty red zone past your dots is "what's missing" (durability gap).
+            colors = [_distance_color(p["distance_km"], dmin, _ctx.ds.goal) for p in eqp]
+            datasets.append({"label": "efforts (→ goal-equivalent)", "data": dots,
+                             "showLine": False, "pointBackgroundColor": colors,
+                             "pointBorderColor": "#0008", "pointBorderWidth": 1,
+                             "pointRadius": 5, "order": 1})
+
+        # Today: median diamond + a 90% whisker (the live forecast at current fitness).
+        try:
+            _tf = _run_forecast(conn)
+        except Exception:
+            _tf = None
+        if _tf:
+            t_iso = _today.isoformat()
+            datasets.append({"label": "_todaywhisker",
+                             "data": [{"x": t_iso, "y": round(_tf["lo"] / 60, 1)},
+                                      {"x": t_iso, "y": round(_tf["hi"] / 60, 1)}],
+                             "borderColor": TEXT, "borderWidth": 1.5, "pointRadius": 0,
+                             "showLine": True, "fill": False, "order": 0})
+            datasets.append({"label": "today", "data": [{"x": t_iso, "y": round(_tf["median"] / 60, 1)}],
+                             "showLine": False, "pointStyle": "rectRot", "pointRadius": 8,
+                             "pointBackgroundColor": TEXT, "pointBorderColor": "#000",
+                             "pointBorderWidth": 1, "order": 0})
 
     if datasets:
-        # Target annotation
         pred_annots = {}
         if target_min:
             pred_annots["target"] = {
                 "type": "line", "yMin": target_min, "yMax": target_min,
-                "borderColor": SAFE + "60", "borderDash": [6, 3],
-                "label": {"content": f"Target {target_time_str}", "display": True,
-                           "position": "end", "font": {"size": 8}},
-            }
+                "borderColor": SAFE + "90", "borderWidth": 1.5, "borderDash": [6, 3],
+                "label": {"content": f"goal {target_time_str}", "display": True,
+                          "position": "start", "font": {"size": 8}, "color": SAFE,
+                          "backgroundColor": "rgba(0,0,0,0)"}}
 
-        prof_min, prof_max = _profile_x_range(conn)
         charts.append({"id": "chart-marathon-pred", "config": json.dumps({
             "type": "line",
             "data": {"datasets": datasets},
             "options": {"responsive": True,
                         "plugins": {"legend": {"display": True, "position": "bottom", "labels": {"boxWidth": 12}},
                                     "annotation": {"annotations": pred_annots}},
-                        "scales": {"x": _time_x_scale("month", prof_min, prof_max),
+                        "scales": {"x": _time_x_scale("month", _bx_min, _bx_max),
                                    "y": {"reverse": True, "grid": {"color": "rgba(255,255,255,0.03)"},
-                                         "title": {"display": True, "text": "time (lower = faster)"}}}}
-        })})
+                                         "title": {"display": True, "text": "marathon-equivalent (h:mm, lower = faster)"}}}}
+        }, ensure_ascii=False)})
 
     # Panel A — durability collapse (marathon_v2). Distance×time on log-log; every effort
     # normalised to today's fitness + maximal effort collapses onto one β_d power law,
     # with the grey band fanning out past d_max (the honest extrapolation).
     try:
-        from fit.marathon import model as _M
-        _post = _M.load_posterior()
-        if _post is not None:
-            from fit.marathon.predict import durability_panel, _current_c
-            from fit.marathon.preparedness import extrapolation_prior
-            from fit.marathon.features import extract_efforts
-            _ds = extract_efforts(conn)
-            _pr = extrapolation_prior(conn, _ds.goal)
+        from fit.marathon.predict import durability_panel, _current_c, forecast_context
+        _ctx = forecast_context(conn)       # shared load (posterior + efforts + prior)
+        if _ctx is not None:
+            _post, _ds, _pr = _ctx.idata, _ctx.ds, _ctx.prior
             dp = durability_panel(_post, _ds, c_ref=_current_c(conn),
                                   extrapolation_scale=_pr["scale"], nu=_pr["nu"])
             dmin = min(p["distance_km"] for p in dp["points"])
-            dmax = max(p["distance_km"] for p in dp["points"])
             pts = [{"x": round(p["distance_km"], 2), "y": round(p["minutes"], 1)} for p in dp["points"]]
             pt_colors = [_distance_color(p["distance_km"], dmin, dp["goal"]) for p in dp["points"]]
             curve = [{"x": round(c["distance_km"], 2), "y": round(c["median"], 1)} for c in dp["curve"]]
@@ -1035,10 +1046,11 @@ def _all_charts(conn):
                 "type": "scatter",
                 "data": {"datasets": [
                     {"label": "90% band", "data": hi, "showLine": True, "fill": "+1",
-                     "backgroundColor": ACCENT + "22", "borderColor": "rgba(0,0,0,0)",
-                     "pointRadius": 0, "order": 3},
+                     "backgroundColor": ACCENT + "3a", "borderColor": ACCENT + "66",
+                     "borderWidth": 1, "borderDash": [3, 3], "pointRadius": 0, "order": 3},
                     {"label": "_lo", "data": lo, "showLine": True, "fill": False,
-                     "borderColor": "rgba(0,0,0,0)", "pointRadius": 0, "order": 3},
+                     "borderColor": ACCENT + "66", "borderWidth": 1, "borderDash": [3, 3],
+                     "pointRadius": 0, "order": 3},
                     {"label": "durability curve (β_d=%.3f)" % dp["beta_d"], "data": curve,
                      "showLine": True, "borderColor": ACCENT, "borderWidth": 2,
                      "pointRadius": 0, "tension": 0.1, "order": 2},

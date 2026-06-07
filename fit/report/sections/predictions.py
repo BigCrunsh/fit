@@ -46,22 +46,19 @@ def _marathon_forecast(conn, maximal_hr=None):
                 "interval": None, "goal_km": d, "note": reason}
 
     try:
-        from fit.marathon.predict import forecast as run_forecast, derived_metrics, influence, _current_c
-        from fit.marathon import model as M
-        from fit.marathon.features import extract_efforts
+        from fit.marathon.predict import (
+            forecast as run_forecast, derived_metrics, influence, _current_c, forecast_context,
+        )
     except ImportError:
         return _anchor("durability model extra not installed")
 
-    try:
-        ds = extract_efforts(conn)
-    except ValueError as e:
-        return _anchor(str(e))
-    idata = M.load_posterior()
-    if idata is None:
+    ctx = forecast_context(conn)        # one shared load (posterior + efforts + prior)
+    if ctx is None:
         return _anchor("model not fit yet (run `fit sync` or `fit forecast`)")
+    idata, ds = ctx.idata, ctx.ds
 
     try:
-        fc = run_forecast(conn, avg_hr=maximal_hr, goal_seconds=goal_secs, posterior=idata)
+        fc = run_forecast(conn, avg_hr=maximal_hr, goal_seconds=goal_secs)
         if not fc:
             return _anchor("forecast could not be produced")
         ex = fc["extrapolation"]
@@ -92,6 +89,8 @@ def _marathon_forecast(conn, maximal_hr=None):
             "kappa_dominated": bool(kap["prior_dominated"]),
             "extrap_reason": ex["reason"], "extrap_defaulted": bool(ex["defaulted"]),
             "unvalidated": bool(ds.d_max < ds.goal), "d_max": round(ds.d_max, 1),
+            "dist_min": round(float(ds.efforts["distance_km"].min()), 1),  # distance-colour legend domain
+
             "equiv": [{"label": r["label"], "time": _hms(r["median"])} for r in dm["race_equivalency"]],
             "influential": [{"date": e["date"], "distance_km": e["distance_km"], "k": round(e["pareto_k"], 2)}
                             for e in flagged[:3]],
@@ -233,7 +232,7 @@ def _race_prediction(conn):
     def _section_header(title):
         return (f"<tr><td colspan='4' style='padding:8px 4px 4px;font-size:9px;font-weight:700;"
                 f"color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;"
-                f"border-bottom:1px solid rgba(255,255,255,0.04)'>{title}</td></tr>")
+                f"border-bottom:1px solid var(--hairline-soft)'>{title}</td></tr>")
 
     # VO2max prediction (separate section)
     rows = []
@@ -268,7 +267,7 @@ def _race_prediction(conn):
 
     if rows:
         parts.append("<table style='width:100%;border-collapse:collapse;margin:8px 0'>"
-                     "<thead><tr style='border-bottom:1px solid rgba(255,255,255,0.06)'>"
+                     "<thead><tr style='border-bottom:1px solid var(--hairline)'>"
                      "<th style='text-align:left;font-size:9px;color:var(--text-dim);padding:4px'>Source</th>"
                      "<th style='text-align:left;font-size:9px;color:var(--text-dim);padding:4px'>Time</th>"
                      "<th style='text-align:left;font-size:9px;color:var(--text-dim);padding:4px'>Pace (extrap / ran)</th>"
