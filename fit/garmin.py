@@ -217,17 +217,24 @@ def _fetch_day_health(api: Garmin, d: str) -> dict | None:
     except Exception as e:
         errors.append(f"hrv: {e}")
 
-    # Training readiness
+    # Training readiness — Garmin recalculates it through the day and returns the day's
+    # intraday readings. The LATEST reading crashes after a hard activity (recovery-time
+    # spike), so it answers "how tired are you NOW", not the actionable "how recovered did
+    # you go INTO today". Take the day's PEAK reading (the morning/pre-activity state),
+    # restricted to the target date (the list can include the prior night's reading).
     try:
         tr = api.get_training_readiness(d)
-        if tr:
-            if isinstance(tr, list) and len(tr) > 0:
-                tr = tr[0]
-            if isinstance(tr, dict):
-                m.update({
-                    "training_readiness": tr.get("score"),
-                    "readiness_level": tr.get("level"),
-                })
+        readings = [r for r in (tr if isinstance(tr, list) else [tr])
+                    if isinstance(r, dict) and r.get("score") is not None]
+        same_day = [r for r in readings
+                    if r.get("calendarDate") == d
+                    or str(r.get("timestampLocal") or r.get("timestamp") or "").startswith(d)]
+        best = max(same_day or readings, key=lambda r: r["score"], default=None)
+        if best:
+            m.update({
+                "training_readiness": best.get("score"),
+                "readiness_level": best.get("level"),
+            })
     except Exception as e:
         errors.append(f"readiness: {e}")
 
