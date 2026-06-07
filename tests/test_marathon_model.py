@@ -258,6 +258,22 @@ class TestForecastContext:
         assert forecast_context(db) is None                  # empty db → degrade, not crash
 
 
+class TestPosteriorCache:
+    """Regression: the on-sync refit must OVERWRITE the cached posterior. zarr's default
+    'w-' mode raised FileExistsError on every refit after the first, silently skipping the
+    refit and leaving the forecast stale."""
+
+    def test_save_overwrites_existing_store(self, tmp_path):
+        az = pytest.importorskip("arviz")
+        from fit.marathon.model import _save_posterior, load_posterior
+        idata = az.from_dict({"posterior": {"alpha": np.zeros((2, 10))}})
+        p = tmp_path / "marathon_posterior.zarr"
+        _save_posterior(idata, p)                 # first fit
+        _save_posterior(idata, p)                 # re-fit must overwrite, not raise
+        loaded = load_posterior(p)
+        assert loaded is not None and "alpha" in loaded.posterior
+
+
 class TestForecastDegrade:
     def test_forecast_returns_none_without_posterior(self, db):
         # LTHR + a qualifying effort exist, but no cached posterior and none passed → None

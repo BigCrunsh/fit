@@ -109,9 +109,19 @@ def fit(ds: EffortDataset, *, draws: int = 1000, tune: int = 1000, chains: int =
     if not diag["passed"]:
         logger.warning("marathon model diagnostics did not pass: %s", diag)
     if save:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        idata.to_zarr(str(path))
+        _save_posterior(idata, path)
     return idata
+
+
+def _save_posterior(idata, path: Path = POSTERIOR_PATH) -> None:
+    """Cache the posterior to a zarr store, OVERWRITING any existing one.
+
+    zarr defaults to mode 'w-' (create, fail if the store exists), so every refit after the
+    first one raised ``FileExistsError: Cannot create '' with mode 'w-'`` — which is why the
+    on-sync ``_refit_marathon_forecast`` was silently skipping and the forecast went stale.
+    Mode 'w' overwrites (the error message's own recommendation)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    idata.to_zarr(str(path), mode="w")
 
 
 def load_posterior(path: Path = POSTERIOR_PATH):
