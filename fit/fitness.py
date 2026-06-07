@@ -34,21 +34,11 @@ def get_fitness_profile(conn: sqlite3.Connection) -> dict:
         "resilience": _compute_resilience(conn),
     }
 
-    # VDOT computation
+    # VDOT computation — _effective_vdot is the single trusted aerobic anchor (the Aerobic
+    # dimension reads the same helper, so the bar and the headline never diverge).
     garmin_vo2 = _get_garmin_vo2max(conn)
     race_vdot, race_vdot_date = _get_race_vdot(conn)
-    effective = _compute_effective_vdot(garmin_vo2, race_vdot, race_vdot_date)
-
-    # effective_vdot IS the standardized anchor (the single confirmed/windowed-max
-    # VDOT every consumer reads). Fall back to the legacy blend only when no
-    # anchor exists yet. (Local import: calibration imports fitness lazily.)
-    try:
-        from fit.calibration import get_calibration_anchor
-        anchor = get_calibration_anchor(conn, "vdot")
-        if anchor and anchor.get("value") is not None:
-            effective = anchor["value"]
-    except Exception as e:
-        logger.debug("vdot anchor unavailable, using legacy effective_vdot: %s", e)
+    effective = _effective_vdot(conn)
 
     profile["garmin_vo2max"] = garmin_vo2
     profile["race_vdot"] = race_vdot
@@ -80,29 +70,50 @@ def _median(nums: list[float]) -> float:
     return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
 
 
+def _effective_vdot(conn: sqlite3.Connection):
+    """The single trusted aerobic anchor every consumer reads: confirmed VDOT calibration >
+    recent race VDOT > Garmin VO2max minus its ~5-point overestimate. None if none exist."""
+    try:
+        from fit.calibration import get_calibration_anchor  # local: calibration imports fitness
+        anchor = get_calibration_anchor(conn, "vdot")
+        if anchor and anchor.get("value") is not None:
+            return float(anchor["value"])
+    except Exception as e:
+        logger.debug("vdot anchor unavailable, using legacy effective_vdot: %s", e)
+    race_vdot, race_date = _get_race_vdot(conn)
+    return _compute_effective_vdot(_get_garmin_vo2max(conn), race_vdot, race_date)
+
+
 def _compute_aerobic(conn: sqlite3.Connection) -> dict:
-    """Aerobic capacity: Garmin VO2max, median over the dimension window."""
+    """Aerobic capacity = the trusted effective VDOT (the same value the forecast/headline use,
+    via _effective_vdot), NOT Garmin VO2max — which reads ~5-10 high and is kept only as a
+    reference (the Anchor-vs-Garmin chart). The trend DIRECTION still comes from the Garmin
+    VO2max series (the densest signal), shifted to the anchor level so the sparkline matches."""
+    vdot = _effective_vdot(conn)
+    if vdot is None:
+        return _empty_dimension("No VDOT anchor — confirm a race-effort VDOT")
+
     rows = conn.execute(
         "SELECT date, vo2max FROM activities "
         "WHERE vo2max IS NOT NULL AND date >= date('now', ?) ORDER BY date",
         (f"-{DIMENSION_WINDOW_DAYS} days",),
     ).fetchall()
-
-    if not rows:
-        return _empty_dimension("No VO2max data in last 4 weeks")
-
-    values = [(r["date"], r["vo2max"]) for r in rows]
-    current = _median([v for _, v in values])
-    trend, rate = _compute_trend(values)
+    garmin = [(r["date"], r["vo2max"]) for r in rows]
+    if garmin:
+        trend, rate = _compute_trend(garmin)
+        shift = vdot - garmin[-1][1]                       # anchor the Garmin trend at the VDOT level
+        history = [round(v + shift, 1) for _, v in garmin[-8:]]
+    else:
+        trend, rate, history = "insufficient_data", None, [round(vdot, 1)]
 
     return {
-        "current_value": round(current, 1),
+        "current_value": round(vdot, 1),
         "trend": trend,
         "rate_per_month": rate,
-        "unit": "ml/kg/min",
-        "source": "Garmin VO2max",
-        "data_points": len(values),
-        "history": [v for _, v in values[-8:]],
+        "unit": "VDOT",
+        "source": "VDOT anchor (race-derived)",
+        "data_points": len(garmin),
+        "history": history,
     }
 
 
@@ -711,14 +722,14 @@ def derive_objectives(conn, race_id: int) -> list[dict]:
     # ── Dimension-specific targets (for fitness profile display) ──
 
     if target_secs and required_vdot:
-        # Aerobic target: Garmin VO2max corresponding to required VDOT
-        # Garmin reads ~5 higher than race VDOT
-        aerobic_target = round(required_vdot + 5)
+        # Aerobic target: the VDOT the goal requires. The dimension's current value is now the
+        # calibrated VDOT anchor (race-derived), so compare like-for-like — no +5 Garmin pad.
+        aerobic_target = round(required_vdot)
         objectives.append({
             "name": "_dim_aerobic",
             "type": "metric",
             "target_value": aerobic_target,
-            "target_unit": "VO2max",
+            "target_unit": "VDOT",
             "derivation_source": "auto_daniels",
             "auto_value": aerobic_target,
         })
@@ -728,7 +739,11 @@ def derive_objectives(conn, race_id: int) -> list[dict]:
         # speed_per_bpm at easy pace ≈ (easy_m_per_min / Z2_hr)
         marathon_pace_m_per_min = (distance_km * 1000) / (target_secs / 60)
         easy_pace_m_per_min = marathon_pace_m_per_min * 0.78  # ~78% of marathon pace
-        z2_hr = 134  # Z2 ceiling from config
+        # HRs are LTHR-relative (personalised), not stale textbook absolutes (was 134 / 165).
+        from fit.calibration import get_calibration_anchor as _gca
+        _lthr_a = _gca(conn, "lthr")
+        _lthr = float(_lthr_a["value"]) if _lthr_a and _lthr_a.get("value") else 172.0
+        z2_hr = round(0.89 * _lthr)   # Friel %LTHR Z2 ceiling (≈154 at LTHR 173), was hardcoded 134
         threshold_target = round(easy_pace_m_per_min / z2_hr, 3)
         objectives.append({
             "name": "_dim_threshold",
@@ -739,8 +754,9 @@ def derive_objectives(conn, race_id: int) -> list[dict]:
             "auto_value": threshold_target,
         })
 
-        # Economy target: speed_per_bpm at marathon pace and race HR
-        race_hr = 165  # typical marathon race HR (~86% max HR)
+        # Economy target: speed_per_bpm at marathon pace and race HR (~LTHR-6, the marathon
+        # point of the maximal-effort schedule; LTHR-relative, was hardcoded 165).
+        race_hr = round(_lthr - 6)
         economy_target = round(marathon_pace_m_per_min / race_hr, 3)
         objectives.append({
             "name": "_dim_economy",

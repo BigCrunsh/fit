@@ -2346,8 +2346,8 @@ def _fitness_gap_analysis(conn):
 
         dims = []
         dim_config = [
-            ("aerobic", "VO2max", "var(--z2)", True,
-             "Top-end engine — how much O₂ you can use. Sets the ceiling on race pace."),
+            ("aerobic", "VDOT", "var(--z2)", True,
+             "Aerobic engine — your race-derived VDOT (Daniels). Sets the ceiling on race pace."),
             ("threshold", "spd/bpm", "var(--z3)", True,
              "Sustainable hard pace — how long you can hold ~1h all-out. Marathon pace lives here."),
             ("economy", "spd/bpm", "var(--accent)", True,
@@ -2390,17 +2390,15 @@ def _fitness_gap_analysis(conn):
                 "sowhat": sowhat,
             })
 
-        # Aerobic is sourced from Garmin VO2max, which the forecast/anchor deliberately
-        # DISTRUSTS. When Garmin sits materially above the effective (calibrated) VDOT the rest
-        # of the dashboard headlines, flag the bar as optimistic so it doesn't silently
-        # contradict that anchor (the VDOT-vs-Garmin chart shows the same gap).
+        # Aerobic is now the calibrated VDOT anchor (single source with the forecast). Note the
+        # Garmin VO2max gap for context — Garmin reads high and is reference-only (chart-vo2).
         _vdot = profile.get("effective_vdot")
         _gvo2 = profile.get("garmin_vo2max")
         if _vdot and _gvo2 and (_gvo2 - _vdot) >= 5:
             for d in dims:
                 if d["name"] == "Aerobic":
-                    d["caveat"] = (f"Garmin VO₂max; +{_gvo2 - _vdot:.0f} vs your effective VDOT "
-                                   f"({_vdot:.0f}) — the forecast trusts the anchor, so read as optimistic.")
+                    d["caveat"] = (f"Your calibrated VDOT; Garmin VO₂max reads ~+{_gvo2 - _vdot:.0f} "
+                                   f"({_gvo2:.0f}) and is reference-only (see Anchor vs Garmin).")
 
         # Limiter = the dimension furthest below the goal (lowest % of required).
         # A marathon is paced by the weakest relevant capacity, so flag it.
