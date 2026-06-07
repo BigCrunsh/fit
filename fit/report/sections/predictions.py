@@ -170,13 +170,14 @@ def _race_prediction(conn):
     target_secs = _parse_time_to_seconds(target_str)
 
     # Riegel predictions extrapolated to TARGET distance (not always 42.195)
+    from fit.analysis import RIEGEL_EXPONENT
     race_data = []
     for r in races:
         if r["distance_km"] and r["result_time"]:
             d1 = r["distance_km"]
             t1 = _parse_time_to_seconds(r["result_time"])
             if d1 > 0 and t1 > 0 and d1 != target_km:
-                t2 = t1 * (target_km / d1) ** 1.06
+                t2 = t1 * (target_km / d1) ** RIEGEL_EXPONENT
                 original_pace = t1 / d1
                 race_data.append({
                     "from_race": r["name"], "from_date": r["date"],

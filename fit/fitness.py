@@ -5,7 +5,7 @@ import math
 import sqlite3
 from datetime import date
 
-from fit.analysis import RUNNING_TYPES_SQL
+from fit.analysis import RUNNING_TYPES_SQL, RIEGEL_EXPONENT
 
 logger = logging.getLogger(__name__)
 
@@ -921,7 +921,7 @@ def derive_checkpoint_targets(conn) -> list[dict]:
             continue
 
         # Riegel back-calculation: what time at cp_km corresponds to target_secs at target_km?
-        derived_secs = round(target_secs * (cp_km / target_km) ** 1.06)
+        derived_secs = round(target_secs * (cp_km / target_km) ** RIEGEL_EXPONENT)
         derived_vdot = compute_vdot_from_race(cp_km, derived_secs)
 
         days_to_cp = (date.fromisoformat(cp["date"]) - date.today()).days

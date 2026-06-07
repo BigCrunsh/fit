@@ -596,6 +596,13 @@ def compute_daniels_paces(vo2max: float | None, lthr: int | None = None) -> dict
     }
 
 
+# Riegel power-law endurance-fade exponent: T2 = T1·(D2/D1)^RIEGEL_EXPONENT. The population
+# average (1.06); the durability model fits a per-athlete β_d (~1.07) — this constant is the
+# single source for the population fallback / Daniels-comparison path so it isn't hardcoded
+# in several places (D15).
+RIEGEL_EXPONENT = 1.06
+
+
 def predict_race_time(conn: sqlite3.Connection | None = None,
                       races: list[dict] | None = None,
                       vo2max: float | None = None) -> dict:
@@ -637,7 +644,7 @@ def predict_race_time(conn: sqlite3.Connection | None = None,
         d1 = race.get("distance_km", 0)
         t1 = race.get("time_seconds", 0)
         if d1 > 0 and t1 > 0 and d1 < marathon_km:
-            t2 = t1 * (marathon_km / d1) ** 1.06
+            t2 = t1 * (marathon_km / d1) ** RIEGEL_EXPONENT
             riegel_preds.append({
                 "from_race": race.get("name", f"{d1:.1f}km"),
                 "from_date": race.get("date"),
@@ -696,7 +703,7 @@ def riegel_fallback_secs(conn: sqlite3.Connection, target_km: float) -> int | No
         d1 = r["distance_km"]
         t1 = _parse(r["rt"])
         if d1 and t1 and d1 != target_km:
-            cand.append(t1 * (target_km / d1) ** 1.06)
+            cand.append(t1 * (target_km / d1) ** RIEGEL_EXPONENT)
     return round(max(cand)) if cand else None
 
 

@@ -36,4 +36,4 @@ Spec-first: nothing is implemented until the proposal + design are approved.
 - [x] `CLAUDE.md`: note the maximal-effort schedule is duration-keyed (prior+data), once shipped
 
 ## 6. D15 (separate, mechanical — can land independently)
-- [ ] Route the three hardcoded Riegel `1.06`s (`predict_race_time`, `riegel_fallback_secs`, the inline `**1.06` in `predictions.py`) through one `RIEGEL_EXPONENT` constant so the durability fade is single-sourced
+- [x] Route the three hardcoded Riegel `1.06`s (`predict_race_time`, `riegel_fallback_secs`, the inline `**1.06` in `predictions.py`) through one `RIEGEL_EXPONENT` constant so the durability fade is single-sourced

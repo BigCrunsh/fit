@@ -2091,9 +2091,10 @@ def _prediction_trend_data(conn):
                     continue
 
                 # "Needed" time: Riegel back-calc from target race to this distance
+                from fit.analysis import RIEGEL_EXPONENT
                 needed_secs = 0
                 if target_secs > 0:
-                    needed_secs = target_secs * (r_km / target_km) ** 1.06
+                    needed_secs = target_secs * (r_km / target_km) ** RIEGEL_EXPONENT
 
                 # Actual time (completed) or derived target (upcoming)
                 time_secs = 0
@@ -2106,7 +2107,7 @@ def _prediction_trend_data(conn):
 
                 if time_secs > 0:
                     # Riegel forward: checkpoint time → target race equivalent
-                    marathon_equiv = time_secs * (target_km / r_km) ** 1.06
+                    marathon_equiv = time_secs * (target_km / r_km) ** RIEGEL_EXPONENT
                     me_min = marathon_equiv / 60
 
                     cp_data = {
