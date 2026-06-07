@@ -301,6 +301,35 @@ class TestMigration010:
             conn.close()
 
 
+class TestMigration014:
+    """body_comp `source`-default rebuild drops + renames the table while the
+    v_run_days view references it. The view must be dropped first and recreated,
+    or strict SQLite (>= 3.25.2) fails the RENAME with "error in view v_run_days:
+    no such table: body_comp" — which only surfaces on some SQLite builds (e.g.
+    CI), not all (local 3.51 is lenient). This pins the invariant everywhere."""
+
+    def test_v_run_days_survives_body_comp_rebuild(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = {"sync": {"db_path": f"{tmpdir}/test.db"}}
+            conn = get_db(config, migrations_dir=MIGRATIONS_DIR)  # raises if 014 fails
+            views = [r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='view'").fetchall()]
+            assert "v_run_days" in views
+            # The view LEFT JOINs the rebuilt body_comp — must be queryable, not stale.
+            conn.execute("SELECT weight_kg FROM v_run_days LIMIT 1").fetchall()
+            conn.close()
+
+    def test_body_comp_source_defaults_to_apple_health(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = {"sync": {"db_path": f"{tmpdir}/test.db"}}
+            conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
+            conn.execute("INSERT INTO body_comp (date, weight_kg) VALUES ('2026-01-01', 75)")
+            conn.commit()
+            row = conn.execute("SELECT source FROM body_comp WHERE date='2026-01-01'").fetchone()
+            assert row["source"] == "apple_health"
+            conn.close()
+
+
 class TestSchemaValidation:
     def test_views_created(self):
         """Schema should create expected views."""
