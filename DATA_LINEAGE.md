@@ -158,14 +158,15 @@ flowchart LR
   classDef fn fill:#0c2b1c,stroke:#22c55e,color:#dcfce7
   classDef dup fill:#2c1010,stroke:#ef4444,color:#fecaca
   classDef out fill:#11162a,stroke:#818cf8,color:#c7d2fe
-  SPL["activity_splits<br/>avg_hr · pace_sec_per_km"]:::src
-  SPL -->|"compute_cardiac_drift · HR:pace >5% vs 1st-half"| DO["drift onset km"]:::fn
+  SPL["activity_splits<br/>avg_hr · pace · elevation_gain/loss"]:::src
+  SPL -->|"compute_cardiac_drift · HR : GRADE-ADJ pace >5% vs 1st-half"| DO["drift onset km (canonical)"]:::fn
   DO -->|"_compute_resilience · MAX over 28d ≥8km"| RES["Resilience dim"]:::fn
-  SPL -->|"inline rule (charts) · HR > 1st-half+5bpm"| CDO["chart-drift onset"]:::dup
-  SPB["activities.speed_per_bpm"]:::src
+  DO -->|"chart-drift marker + chart-drift-trend (same fn; raw overlay = pre-grade-adj)"| CDO["drift charts"]:::fn
+  SPL -->|"grade_adjusted_duration_min"| GAD["flat-equiv duration"]:::fn
+  SPB["grade-adj speed/bpm<br/>(stored × raw÷flat-equiv dur)"]:::fn
+  GAD --> SPB
   SPB -->|"_compute_economy · median 28d"| ECO["Economy dim"]:::fn
-  SPBZ["activities.speed_per_bpm_z2"]:::src
-  SPBZ -->|"_compute_threshold · median 28d"| THR["Threshold dim"]:::fn
+  SPB -->|"_compute_threshold · median 28d (Z2)"| THR["Threshold dim"]:::fn
   AHR["activities.avg_hr"]:::src
   CALZ["calibration[lthr·max_hr·aet] + config zones"]:::src
   AHR -->|"compute_hr_zones · %LTHR (AeT Z2 ceiling), %MaxHR fallthrough"| HZ["hr_zone (stamped)"]:::fn
@@ -175,9 +176,11 @@ flowchart LR
   RES --> FG["_fitness_gap_analysis<br/>4 dims vs goal needs"]:::fn
   ECO --> FG
   THR --> FG
-  AE2["Aerobic dim (Garmin)"]:::dup --> FG
+  VAN["_effective_vdot<br/>anchor > race ≤180d > garmin−5"]:::fn --> AE2["Aerobic dim = effective VDOT"]:::fn
+  AE2 --> FG
   FG --> PAN["Fitness Dimensions panel"]:::out
   BD["future beta_d (marathon model)"]:::out -. "durability lens 2" .- RES
+  SPB -.->|"raw vs grade-adj"| GAI["chart-grade-spb (impact)"]:::out
 ```
 
 ### D. Recovery (Readiness tab)
@@ -258,13 +261,14 @@ flowchart LR
 | marathon forecast | `fit.marathon.predict.forecast` + `durability_panel`/`trend_series`/`derived_metrics` | `model.fit` posterior · `preparedness.extrapolation_prior` · `chronic_load` · `maximal_effort_h` | median + 90% interval + P(goal); the single forecast source |
 | chronic load (fitness state) | `fit.training_load.chronic_load[_before]` | daily `training_load` trailing-28d mean | shared with ACWR's chronic denominator |
 | race-time prediction (Riegel) | `analysis.predict_race_time` (`analysis.py`) | Riegel `T·(D₂/D₁)^1.06`; vdot leg via the anchor | per-race extrapolation; the cold-start fallback only |
-| aerobic dim | `fitness._compute_aerobic` (`fitness.py:83`) | activities.vo2max 28d; `_median`,`_compute_trend` | median Garmin VO2max |
-| threshold dim | `fitness._compute_threshold` (`fitness.py:109`) | activities.speed_per_bpm_z2 28d | median Z2 spb |
-| economy dim | `fitness._compute_economy` (`fitness.py:137`) | activities.speed_per_bpm 28d | median spb |
-| resilience dim (durability) | `fitness._compute_resilience` (`fitness.py:165`) | activity_splits via `fit_file.compute_cardiac_drift` | MAX drift-onset over 28d long runs |
-| cardiac drift (primitive) | `fit_file.compute_cardiac_drift` (`fit_file.py:220`) | splits avg_hr,pace | first 2nd-half split >5% over first-half HR:pace ratio |
-| effective VDOT | `fitness._compute_effective_vdot` (`fitness.py:488`) | garmin_vo2, race_vdot | race VDOT ≤180d else garmin−5 |
-| fitness profile (4 dims + effective_vdot) | `fitness.get_fitness_profile` (`fitness.py:17`) | the four dims + `get_calibration_anchor('vdot')` | **overrides effective_vdot with the VDOT anchor when present** |
+| **grade-adjusted pace / duration** | `fit_file.grade_adjusted_pace_sec` / `grade_adjusted_duration_min` | per-split elevation_gain/loss · distance | flat-equivalent (linearised Minetti: +12 s/km per +1% climb, −6 per 1% descent); strips terrain (Anstieg). Falls back to raw when no elevation |
+| aerobic dim | `fitness._compute_aerobic` | **`_effective_vdot`** (NOT Garmin VO2max); Garmin only shapes the trend, shifted to the anchor level | = effective VDOT — the single trusted aerobic value |
+| threshold dim | `fitness._compute_threshold` | **`_ga_spb_series('speed_per_bpm_z2')`** | median Z2 spb, **grade-adjusted** |
+| economy dim | `fitness._compute_economy` | **`_ga_spb_series('speed_per_bpm')`** | median spb, **grade-adjusted** |
+| resilience dim (durability) | `fitness._compute_resilience` | activity_splits via `compute_cardiac_drift` (grade-adj) | MAX drift-onset over 28d long runs |
+| cardiac drift (primitive) | `fit_file.compute_cardiac_drift` | splits avg_hr · **grade-adjusted** pace · elevation | first 2nd-half split >5% over first-half HR:GAP ratio; CV gate on grade-adj pace. **THE single drift source** (was 5 forks) |
+| **effective VDOT (single source)** | `fitness._effective_vdot` | `get_calibration_anchor('vdot')` > race VDOT ≤180d > garmin−5 | every aerobic consumer reads this — dim + headline never diverge |
+| fitness profile (4 dims + effective_vdot) | `fitness.get_fitness_profile` | the four dims + `_effective_vdot` | aerobic dim and effective_vdot share one source |
 | fitness anchors (effort filter) | `fitness.get_fitness_anchors` (`fitness.py:330`) | get_active_calibration(lthr); activities+splits+race_calendar; `compute_vdot_from_race` | 5–25km, HR≥LTHR, CV≤15% → per-effort VDOT |
 | best recent race VDOT | `fitness._get_race_vdot` (`fitness.py:449`) | race_calendar ≤180d | max VDOT |
 | Daniels paces E/M/T/I/R | `analysis.compute_daniels_paces` (`analysis.py:588`) | `fitness.vdot_to_race_time(vo2max,42.195)` | M from formula inverse, others as offsets |
@@ -338,14 +342,16 @@ All builders take `conn`, live in `fit/report/sections/`. Charts in `charts.py:_
 
 The same concept computed by different routes, producing values that can disagree. **Status** ties each to work in flight.
 
+> **2026-06-07 SSOT pass.** Resolved **D2** (Aerobic dim → `_effective_vdot`, the single trusted aerobic source; Garmin VO2max is now reference-only), **D5** (cardiac-drift onset: five algorithms → one **grade-adjusted** `compute_cardiac_drift`), and the dashboard side of **D6** (ACWR card → `compute_rolling_acwr`). Added grade-adjustment (Anstieg) to drift, economy/threshold and the durability model's *time*; effort/HR (`effort_class`, model `h`) deliberately stays raw because HR already reflects real climb effort. New `chart-grade-spb` makes the raw-vs-adjusted difference auditable. **Justified deviations kept:** Riegel race-checkpoints on the Overview trend (`^1.06` ≈ measured β_d 1.07 — a labelled diagnostic) and `weekly_agg.acwr` as the ISO-week *trend* vs the rolling *card*. **Remaining:** D7–D14 (mostly latent dedups + the race-time-parser / zone-helper DRY-ups).
+
 | # | Concept | Competing implementations (`file:line`) | How they differ | Status |
 |---|---|---|---|---|
 | D1 | **VDOT → marathon time** | ~~`_vdot_to_marathon_seconds` table vs `vdot_to_race_time` formula~~ | — | **RESOLVED** — the table + `_VDOT_TABLE` are **deleted**; the forecast is the durability model, training paces use the formula inverse |
-| D2 | **"current VDOT / aerobic capacity"** | raw `activities.vo2max` (predictions, charts, trend-badges, countdown) · `get_calibration_anchor('vdot')` (paces, vdot card, MCP) · `effective_vdot` (readiness hero, capability, dims) · `_compute_aerobic` median Garmin · `get_fitness_anchors` (chart-vo2, attention) | up to 5 "engine" numbers; anchor is canonical but the prediction/chart/badge paths still read raw Garmin (optimistic) | **mostly fixed** — paces/dims/MCP/effective_vdot on the anchor; the forecast/trend/badge paths now read the durability model (off raw Garmin VO2max). `chart-vo2` keeps Garmin VO2max as the engine-trend (correct) |
+| D2 | **"current VDOT / aerobic capacity"** | `_effective_vdot` (single helper: anchor > race ≤180d > garmin−5) read by paces, vdot card, MCP, readiness hero, capability, **and the Aerobic dim** · `get_fitness_anchors` (chart-vo2, attention) | — | **RESOLVED** (2026-06-07) — the Aerobic dim was the last holdout on raw Garmin VO2max; it now reads `_effective_vdot` like everything else (102% vs 38, not 114% vs 43). Garmin VO2max is reference-only (`chart-vo2` trend + a caveat). The forecast is the durability model |
 | D3 | **marathon/race prediction** | `_marathon_forecast`, `_race_countdown`, `_race_readiness_hero`, `_prediction_trend_data`, `chart-marathon-pred`, `chart-durability`, MCP `_ctx_forecast` | — | **RESOLVED** — all read the one durability-model forecast (median+interval+P); Overview hero/block/trend + Profile hero/Panel A/Panel B agree (verified 4:03). Degrade to the anchor, never the table |
 | D4 | **durability** | `_compute_resilience` drift-onset (HR:pace) · long-run **pace-fade** (speed) · model `beta_d` | — | **ADDRESSED** — glossary states the two siblings (Resilience = HR-decoupling, Pace-fade = speed give-back); dashboard leads with the measured signals, `beta_d` as the optimistic bound. Drift-definition consolidation (D5) still open |
-| D5 | **cardiac-drift onset** | `compute_cardiac_drift` library (`fit_file.py:220`) **vs** inline chart rule (`charts.py:622,664`) | two independent onset algorithms on the same splits → different km for the same run | **open** (small) — route charts through the library primitive |
-| D6 | **ACWR** | `compute_rolling_acwr` (live, `analysis.py:530`) **vs** `_compute_acwr` stored in weekly_agg (`:840`) | acute term differs (rolling-7d vs ISO-week); **alert fires on rolling but auto-dismisses on ISO** (`alerts.py:132` vs `:294`) | **open** — pick one acute definition; align fire/dismiss |
+| D5 | **cardiac-drift onset** | ~~`compute_cardiac_drift` vs inline chart rule vs `_compute_drift_onset` vs periodization ×1.05~~ (was FIVE algorithms) | — | **RESOLVED** (2026-06-07) — all routes go through `compute_cardiac_drift`, now **grade-adjusted** (HR : flat-equivalent pace). Resilience dim = Distance Ceiling = chart-drift marker = trend, all one source. chart-drift-trend overlays a "raw (no grade-adj)" series for transparency |
+| D6 | **ACWR** | `compute_rolling_acwr` (live) **vs** `_compute_acwr` stored in weekly_agg | acute term differs (rolling-7d vs ISO-week) | **mostly fixed** (2026-06-07) — the dashboard ACWR **card** now uses `compute_rolling_acwr` (matches coaching/CLI). `weekly_agg.acwr` remains the ISO-week **trend** series (a distinct, labelled view). Alert fire-vs-dismiss alignment (`alerts.py:132`/`:294`) still open |
 | D7 | **weekly volume / objectives** | `_overview_objectives` latest ISO `weekly_agg` (`cards.py:1747`) **vs** `_training_objectives` `compute_rolling_week` (`:3453`) | Overview "Volume" (ISO week) ≠ Training "Volume" (rolling 7d) for the same day; Z2 uses 4-wk-avg vs rolling | **open** — IA change should make Overview summarize the Training number |
 | D8 | **Z2 / easy-% compliance** | 4-wk-avg (`_overview_objectives`) · rolling-week (`_training_objectives`, `_profile_takeaways._zones`) · per-ISO-week (`chart-zones`) | 4 windows for "easy %" | **open** |
 | D9 | **plan adherence** | `compute_plan_adherence` (weekly strip, chart) **vs** hero compliance ring's own COUNT ratio (`cards.py:3645`) | hero ring % ≠ weekly-adherence % (looser definition) | **open** (small) |
