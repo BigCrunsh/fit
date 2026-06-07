@@ -28,6 +28,15 @@ def _set_lthr(db, value=170.0):
     db.commit()
 
 
+def _set_max_hr(db, value=195.0):
+    db.execute(
+        "INSERT INTO calibration (metric, value, method, confidence, date, active) "
+        "VALUES ('max_hr', ?, 'manual', 'high', ?, 1)",
+        (value, _d(1)),
+    )
+    db.commit()
+
+
 def _act(db, aid, days_ago, *, run_type, distance_km, duration_min, avg_hr,
          training_load=None, effort_class=None, type_="running"):
     db.execute(
@@ -61,6 +70,16 @@ class TestExtractEffortsHappy:
         assert hm["logt"] == pytest.approx(math.log(110))
         assert ds.d_max == pytest.approx(21.1)
         assert ds.lthr == pytest.approx(170.0)
+        assert ds.max_hr is None         # no MaxHR anchor set → cap is a no-op downstream
+
+    def test_max_hr_from_anchor(self, db):
+        _set_lthr(db, 170.0)
+        _set_max_hr(db, 192.0)
+        _act(db, "load", 40, run_type="easy", distance_km=8, duration_min=45,
+             avg_hr=140, training_load=80)
+        _act(db, "race", 30, run_type="race", distance_km=10.0, duration_min=50, avg_hr=175)
+        ds = extract_efforts(db)
+        assert ds.max_hr == pytest.approx(192.0)   # MaxHR anchor flows into the dataset
 
     def test_chronic_is_trailing_mean_strictly_before(self, db):
         _set_lthr(db)

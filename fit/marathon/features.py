@@ -54,6 +54,7 @@ class EffortDataset(NamedTuple):
     d_max: float            # longest observed effort distance — the extrapolation boundary
     lthr: float             # LTHR anchor used for h
     goal: float             # D_REF — the goal distance x is centred on
+    max_hr: float | None    # MaxHR anchor — caps the maximal-effort HR (None if uncalibrated)
 
 
 def _lthr(conn: sqlite3.Connection) -> float:
@@ -64,6 +65,14 @@ def _lthr(conn: sqlite3.Connection) -> float:
     if not anchor or not anchor.get("value"):
         raise ValueError("no LTHR calibration anchor — marathon forecast cannot run")
     return float(anchor["value"])
+
+
+def _max_hr(conn: sqlite3.Connection) -> float | None:
+    """MaxHR from the calibration anchor (caps the maximal-effort HR); None if absent."""
+    from fit.calibration import get_calibration_anchor  # local
+
+    anchor = get_calibration_anchor(conn, "max_hr")
+    return float(anchor["value"]) if anchor and anchor.get("value") else None
 
 
 def _goal_distance(conn: sqlite3.Connection) -> float:
@@ -110,4 +119,4 @@ def extract_efforts(conn: sqlite3.Connection) -> EffortDataset:
 
     eff = eff.reset_index(drop=True)
     return EffortDataset(efforts=eff, d_max=float(eff["distance_km"].max()),
-                         lthr=lthr, goal=goal)
+                         lthr=lthr, goal=goal, max_hr=_max_hr(conn))

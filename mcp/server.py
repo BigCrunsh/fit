@@ -556,18 +556,15 @@ def _ctx_forecast(conn) -> list[str]:
     the unvalidated-extrapolation caveat, and the chronic-load lever.
     """
     try:
-        from fit.marathon.predict import forecast as run_forecast, required_chronic_for_goal, _current_c
-        from fit.marathon import model as _M
-        from fit.marathon.features import extract_efforts
+        from fit.marathon.predict import (
+            forecast as run_forecast, required_chronic_for_goal, _current_c, forecast_context,
+        )
     except ImportError:
         return []
-    post = _M.load_posterior()
-    if post is None:
+    ctx = forecast_context(conn)        # shared load (posterior + efforts + prior)
+    if ctx is None:
         return []
-    try:
-        ds = extract_efforts(conn)
-    except ValueError:
-        return []
+    post, ds = ctx.idata, ctx.ds
 
     row = conn.execute("SELECT target_time FROM goals WHERE active = 1 AND target_time IS NOT NULL "
                        "ORDER BY type DESC LIMIT 1").fetchone()
@@ -579,7 +576,7 @@ def _ctx_forecast(conn) -> list[str]:
         except (ValueError, IndexError):
             goal_secs = None
 
-    fc = run_forecast(conn, goal_seconds=goal_secs, posterior=post)
+    fc = run_forecast(conn, goal_seconds=goal_secs)  # cached shared load
     if not fc:
         return []
 

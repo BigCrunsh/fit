@@ -12,6 +12,8 @@ observed range (interpolation), and grows with the goal/d_max gap (goal-adaptive
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import numpy as np
 
 # Maximal sustainable effort vs LTHR by distance, as a bpm offset: you hold ABOVE threshold
@@ -22,10 +24,15 @@ import numpy as np
 _MAXIMAL_HR_OFFSET = [(5.0, 10.0), (10.0, 5.0), (21.0975, 0.0), (42.195, -6.0)]  # (km, bpm vs LTHR)
 
 
-def maximal_effort_h(distance_km):
+def maximal_effort_h(distance_km, hr_reserve=None):
     """The model `h` covariate for a MAXIMAL effort at a distance — LTHR-relative and
     distance-appropriate (≈LTHR+10 for a 5k, ≈LTHR for a half, ≈LTHR−6 for a marathon).
-    Returns h = offset_bpm / H_DIV. Pass to `predict`/`derived_metrics`/`durability_panel`."""
+    Returns h = offset_bpm / H_DIV. Pass to `predict`/`derived_metrics`/`durability_panel`.
+
+    `hr_reserve` (= MaxHR − LTHR, from the MaxHR anchor) caps the offset: you cannot hold
+    above your max heart rate. It is a no-op for a high-reserve athlete (e.g. reserve 22 vs
+    the +10 short-race offset) but protects the short-distance limb for a low-reserve one.
+    Pass `None` to skip the cap (MaxHR uncalibrated)."""
     from fit.marathon.features import H_DIV
     pts = _MAXIMAL_HR_OFFSET
     if distance_km <= pts[0][0]:
@@ -39,7 +46,16 @@ def maximal_effort_h(distance_km):
                 f = (np.log(distance_km) - np.log(d1)) / (np.log(d2) - np.log(d1))
                 off = o1 + (o2 - o1) * f
                 break
+    if hr_reserve is not None:
+        off = min(off, hr_reserve)
     return off / H_DIV
+
+
+def _reserve(ds):
+    """HR reserve (MaxHR − LTHR) for the maximal-effort cap; None when MaxHR is uncalibrated
+    (then `maximal_effort_h` runs uncapped). See `maximal_effort_h`."""
+    mh = getattr(ds, "max_hr", None)
+    return (mh - ds.lthr) if mh else None
 
 
 def _flat(idata, name):
@@ -79,12 +95,38 @@ def predict(idata, *, x, c, h, gap, extrapolation_scale, nu,
     return out
 
 
-def forecast(conn, *, avg_hr=None, goal_seconds=None, seed=0, posterior=None):
-    """End-to-end goal forecast from the DB: features → fit/load → predict with overlay.
+class ForecastContext(NamedTuple):
+    """The three expensive shared inputs every forecast consumer needs: the fitted
+    posterior, the effort dataset, and the extrapolation prior. Built once via
+    `forecast_context` so the dashboard/CLI/MCP don't each re-read the zarr posterior and
+    re-run the feature SQL."""
+    idata: object      # fitted posterior (arviz InferenceData)
+    ds: object         # EffortDataset
+    prior: dict        # extrapolation prior {scale, nu, shrink, reason, defaulted}
 
-    Returns None when the model can't run (no `forecast` extra, no efforts, no posterior)
-    — the caller degrades to the Phase-1 anchor headline (design Decision 7), never crashes.
-    """
+
+# Single-entry cache keyed by CONNECTION IDENTITY (sqlite3.Connection isn't weak-referenceable).
+# One report build shares one open connection across all section builders, so the first call
+# loads and the rest hit the cache (collapsing ~3× posterior reads + feature SQL into one). A
+# fresh connection — a new build, or the MCP's per-call connection after a sync refit — has a
+# different identity, so it recomputes and never serves stale results. We hold a strong ref to
+# the connection (not id()) so identity can never be recycled onto a different object.
+_CTX_CACHE: dict = {"conn": None, "ctx": None}
+
+
+def forecast_context(conn) -> "ForecastContext | None":
+    """Load the shared forecast inputs (posterior + efforts + extrapolation prior) ONCE per
+    connection. Returns None when the model can't run (no `forecast` extra, no efforts, no
+    posterior) — every caller degrades to the Phase-1 anchor headline, never crashes."""
+    if _CTX_CACHE["conn"] is conn:
+        return _CTX_CACHE["ctx"]
+    ctx = _build_forecast_context(conn)
+    _CTX_CACHE["conn"] = conn
+    _CTX_CACHE["ctx"] = ctx
+    return ctx
+
+
+def _build_forecast_context(conn) -> "ForecastContext | None":
     try:
         from fit.marathon.features import extract_efforts
         from fit.marathon.preparedness import extrapolation_prior
@@ -95,19 +137,31 @@ def forecast(conn, *, avg_hr=None, goal_seconds=None, seed=0, posterior=None):
         ds = extract_efforts(conn)
     except ValueError:
         return None
-
-    idata = posterior if posterior is not None else _model.load_posterior()
+    idata = _model.load_posterior()
     if idata is None:
         return None
+    return ForecastContext(idata=idata, ds=ds, prior=extrapolation_prior(conn, ds.goal))
 
-    prior = extrapolation_prior(conn, ds.goal)
+
+def forecast(conn, *, avg_hr=None, goal_seconds=None, seed=0, posterior=None):
+    """End-to-end goal forecast from the DB: features → fit/load → predict with overlay.
+
+    Returns None when the model can't run (no `forecast` extra, no efforts, no posterior)
+    — the caller degrades to the Phase-1 anchor headline (design Decision 7), never crashes.
+    `posterior` overrides the cached/on-disk posterior (the CLI refit path passes a fresh fit).
+    """
+    ctx = forecast_context(conn)
+    if ctx is None:
+        return None
+    ds, prior = ctx.ds, ctx.prior
+    idata = posterior if posterior is not None else ctx.idata
+
     gap = max(0.0, float(np.log(ds.goal / ds.d_max)))
-    # Maximal-goal effort: avg_hr defaults to the LTHR anchor (h=0) unless supplied
-    # (the maximal-marathon-HR input — an open question; re-derive vs the real LTHR).
-    # Default: the maximal, distance-appropriate, LTHR-relative effort for the goal
-    # (e.g. ~LTHR−6 for a marathon, ~LTHR for a half). An explicit avg_hr overrides.
+    # Maximal-goal effort: the distance-appropriate, LTHR-relative maximal HR for the goal
+    # (e.g. ~LTHR−6 for a marathon, ~LTHR for a half), capped at the MaxHR reserve. An
+    # explicit avg_hr overrides.
     from fit.marathon.features import H_DIV
-    h = maximal_effort_h(ds.goal) if avg_hr is None else (avg_hr - ds.lthr) / H_DIV
+    h = maximal_effort_h(ds.goal, _reserve(ds)) if avg_hr is None else (avg_hr - ds.lthr) / H_DIV
     res = predict(idata, x=0.0, c=_current_c(conn), h=h, gap=gap,
                   extrapolation_scale=prior["scale"], nu=prior["nu"],
                   goal_seconds=goal_seconds, seed=seed)
@@ -161,7 +215,7 @@ def derived_metrics(idata, ds, *, c, extrapolation_scale=0.0, nu=4, seed=0):
     for label, d in _STD_DISTANCES:
         x = float(np.log(d / ds.goal))
         gap = max(0.0, float(np.log(d / ds.d_max)))
-        r = predict(idata, x=x, c=c, h=maximal_effort_h(d), gap=gap,
+        r = predict(idata, x=x, c=c, h=maximal_effort_h(d, _reserve(ds)), gap=gap,
                     extrapolation_scale=extrapolation_scale, nu=nu, seed=seed)
         equiv.append({"label": label, "distance_km": d, **r})
 
@@ -180,7 +234,7 @@ def required_chronic_for_goal(idata, ds, *, goal_seconds, target_p=0.80,
     very high fitness can't reach it (within the searched range)."""
     from fit.marathon.features import CHRONIC_REF, CHRONIC_SCALE
     if maximal_h is None:
-        maximal_h = maximal_effort_h(ds.goal)
+        maximal_h = maximal_effort_h(ds.goal, _reserve(ds))
 
     for c in np.linspace(-3.0, 5.0, 81):          # chronic-load c grid (≈ load 20..100)
         r = predict(idata, x=0.0, c=float(c), h=maximal_h, gap=max(0.0, float(np.log(ds.goal / ds.d_max))),
@@ -242,7 +296,7 @@ def durability_panel(idata, ds, *, c_ref=0.0, maximal_h=None, extrapolation_scal
     would disagree with a current-fitness headline.
     """
     if maximal_h is None:
-        maximal_h = maximal_effort_h(ds.goal)
+        maximal_h = maximal_effort_h(ds.goal, _reserve(ds))
     a, b, phi, kappa = (_flat(idata, p) for p in ("alpha", "beta_d", "phi", "kappa"))
     bm, pm, km = (float(np.median(v)) for v in (b, phi, kappa))
     eff = ds.efforts
@@ -289,7 +343,7 @@ def trend_series(conn, idata, ds, *, days=420, step_days=14, maximal_h=None,
     from fit.marathon.features import CHRONIC_REF, CHRONIC_SCALE
 
     if maximal_h is None:
-        maximal_h = maximal_effort_h(ds.goal)
+        maximal_h = maximal_effort_h(ds.goal, _reserve(ds))
 
     gap = max(0.0, float(np.log(ds.goal / ds.d_max)))
     # Load daily loads once; chronic_load_before is pure (no per-step full-table read).
@@ -304,4 +358,25 @@ def trend_series(conn, idata, ds, *, days=420, step_days=14, maximal_h=None,
         r = predict(idata, x=0.0, c=c, h=maximal_h, gap=gap,
                     extrapolation_scale=extrapolation_scale, nu=nu, seed=seed)
         out.append({"date": d.isoformat(), "median": r["median"], "lo": r["lo"], "hi": r["hi"]})
+    return out
+
+
+def marathon_equiv_points(idata, ds, *, maximal_h=None):
+    """Per-effort goal-equivalent over TIME — the coloured dots of Panel B (marathon_v2).
+
+    Each effort is projected to the goal distance at a maximal effort by removing distance
+    (β_d·x) and the effort delta (κ·(h−maximal_h)) but **keeping its fitness-of-the-day**, so
+    the dots scatter around the fitness-tracking median line and reveal which efforts the
+    forecast leans on. Returns `[{date, minutes, distance_km}]` sorted by date; colour each by
+    `distance_km` (RdYlBu_r) to match Panel A. Minutes so it shares Panel B's H:MM axis."""
+    if maximal_h is None:
+        maximal_h = maximal_effort_h(ds.goal, _reserve(ds))
+    b, kappa = (float(np.median(_flat(idata, p))) for p in ("beta_d", "kappa"))
+    eff = ds.efforts
+    out = []
+    for dt, logt, x, h, d in zip(eff["date"], eff["logt"], eff["x"], eff["h"], eff["distance_km"]):
+        mar_min = float(np.exp(logt - b * x - kappa * (h - maximal_h)))
+        date_s = dt.date().isoformat() if hasattr(dt, "date") else str(dt)[:10]
+        out.append({"date": date_s, "minutes": mar_min, "distance_km": float(d)})
+    out.sort(key=lambda r: r["date"])
     return out

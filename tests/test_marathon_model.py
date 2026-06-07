@@ -91,7 +91,8 @@ def _synthetic_ds(n=25, alpha=5.46, beta_d=1.06, seed=0, goal=42.195):
     h = rng.normal(0, 0.5, n)
     logt = alpha + beta_d * x + 0.0 * c + 0.0 * h + rng.normal(0, 0.03, n)
     eff = pd.DataFrame({"distance_km": dist, "x": x, "c": c, "h": h, "logt": logt})
-    return EffortDataset(efforts=eff, d_max=float(dist.max()), lthr=170.0, goal=goal)
+    eff["date"] = pd.date_range("2024-06-01", periods=n, freq="20D")  # Panel B needs a date
+    return EffortDataset(efforts=eff, d_max=float(dist.max()), lthr=170.0, goal=goal, max_hr=190.0)
 
 
 class TestBuildModel:
@@ -176,6 +177,85 @@ class TestResiduals:
         # residual == logt − predicted_logt, exactly
         assert np.allclose(out["residual"], out["logt"] - out["predicted_logt"])
         assert len(out) == len(ds.efforts)
+
+
+class TestMarathonEquivPoints:
+    """Panel B dots — each effort projected to the goal distance, coloured by its distance."""
+
+    def test_distance_removed_points_collapse(self):
+        import math
+        from fit.marathon.predict import marathon_equiv_points
+        # data on a clean β_d power law, kappa=0 → removing distance collapses every effort
+        # (5k…HM) onto ≈ exp(alpha), regardless of its actual distance.
+        ds = _synthetic_ds(n=12, alpha=5.46, beta_d=1.06)
+        pts = marathon_equiv_points(_synthetic_idata(alpha=5.46, beta_d=1.06, kappa=0.0), ds)
+        assert len(pts) == len(ds.efforts)
+        base = math.exp(5.46)
+        for p in pts:
+            assert p["minutes"] == pytest.approx(base, rel=0.15)
+            assert p["distance_km"] > 0          # carried through for colour-coding
+
+    def test_sorted_by_date_and_shaped(self):
+        from fit.marathon.predict import marathon_equiv_points
+        ds = _synthetic_ds(n=8)
+        pts = marathon_equiv_points(_synthetic_idata(), ds)
+        assert [p["date"] for p in pts] == sorted(p["date"] for p in pts)
+        assert all({"date", "minutes", "distance_km"} <= set(p) for p in pts)
+
+
+class TestMaximalEffortCap:
+    """maximal_effort_h is LTHR-relative; hr_reserve (=MaxHR−LTHR) caps the offset so a
+    maximal effort can never exceed MaxHR (matters only for a low-reserve athlete)."""
+
+    def test_uncapped_matches_schedule(self):
+        from fit.marathon.predict import maximal_effort_h
+        from fit.marathon.features import H_DIV
+        assert maximal_effort_h(5.0) == pytest.approx(10.0 / H_DIV)        # 5k → +10 bpm vs LTHR
+        assert maximal_effort_h(21.0975) == pytest.approx(0.0)            # HM → at LTHR
+        assert maximal_effort_h(42.195) == pytest.approx(-6.0 / H_DIV)    # M → −6 bpm vs LTHR
+
+    def test_cap_binds_for_low_reserve(self):
+        from fit.marathon.predict import maximal_effort_h
+        from fit.marathon.features import H_DIV
+        # reserve 5 bpm < the +10 bpm 5k offset → the short-race limb is clamped to reserve
+        assert maximal_effort_h(5.0, hr_reserve=5.0) == pytest.approx(5.0 / H_DIV)
+
+    def test_cap_is_noop_when_reserve_exceeds_offset(self):
+        from fit.marathon.predict import maximal_effort_h
+        # reserve 22 (this athlete) ≥ +10 → unchanged
+        assert maximal_effort_h(5.0, hr_reserve=22.0) == maximal_effort_h(5.0)
+
+    def test_cap_never_raises_a_sub_threshold_offset(self):
+        from fit.marathon.predict import maximal_effort_h
+        # marathon offset is −6 bpm; a tiny reserve must not LIFT it (min, not max)
+        assert maximal_effort_h(42.195, hr_reserve=2.0) == maximal_effort_h(42.195)
+
+
+class TestForecastContext:
+    """forecast_context loads (posterior + efforts + prior) ONCE per connection — the
+    dashboard/CLI/MCP share it instead of each re-reading the zarr posterior + feature SQL."""
+
+    def test_cache_hits_same_conn_recomputes_fresh_conn(self, monkeypatch):
+        import fit.marathon.predict as P
+        calls = {"n": 0}
+        sentinel = object()
+
+        def _fake_build(conn):
+            calls["n"] += 1
+            return sentinel
+
+        monkeypatch.setattr(P, "_build_forecast_context", _fake_build)
+        monkeypatch.setattr(P, "_CTX_CACHE", {"conn": None, "ctx": None})
+        conn_a, conn_b = object(), object()
+        assert P.forecast_context(conn_a) is sentinel        # builds
+        assert P.forecast_context(conn_a) is sentinel        # cache hit — no rebuild
+        assert calls["n"] == 1
+        assert P.forecast_context(conn_b) is sentinel        # different conn → rebuild
+        assert calls["n"] == 2
+
+    def test_none_when_no_efforts(self, db):
+        from fit.marathon.predict import forecast_context
+        assert forecast_context(db) is None                  # empty db → degrade, not crash
 
 
 class TestForecastDegrade:
