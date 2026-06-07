@@ -199,29 +199,16 @@ class TestLthrSuggestion:
         assert "lthr_suggestion" not in {i["tag"] for i in items}
 
 
-class TestVdotDisagreement:
-    """The VDOT disagreement item must read the trusted _effective_vdot (the SSOT
-    shown on the Physiology tile / Aerobic dimension), not the latest raw anchor."""
+class TestVdotNoAnchor:
+    """Only the genuine "no performance anchor at all" case is flagged — never the
+    structural Garmin-reads-higher gap (Garmin's wrist VO2max is optimistic by design)."""
 
-    def _seed(self, db, monkeypatch, effective, latest_vdot, garmin):
-        import fit.fitness as fitness
-        monkeypatch.setattr(fitness, "_effective_vdot", lambda conn: effective)
-        monkeypatch.setattr(fitness, "get_fitness_anchors", lambda conn, days=365: [
-            {"date": "2026-03-22", "name": "Berlin Laufen", "distance_km": 21.15,
-             "avg_hr": 173, "vdot": latest_vdot}])
-        db.execute("INSERT INTO activities (id, date, type, vo2max) VALUES ('a1', ?, 'running', ?)",
-                   (date.today().isoformat(), garmin))
+    def test_flags_when_no_anchor_but_garmin_present(self, db, config):
+        # Garmin VO2max exists, but no qualifying running anchor → prompt a time trial.
+        db.execute("INSERT INTO activities (id, date, type, vo2max) VALUES ('a1', ?, 'running', 49)",
+                   (date.today().isoformat(),))
         db.commit()
-
-    def test_uses_effective_vdot_not_latest_raw_anchor(self, db, config, monkeypatch):
-        # effective 39 (anchor) vs latest raw 35.7 (a sub-maximal long run); Garmin 49.
-        self._seed(db, monkeypatch, effective=39.0, latest_vdot=35.7, garmin=49)
-        vd = next(i for i in _attention_items(db) if i["tag"] == "vdot_anchor_disagreement")
-        assert "anchor 39" in vd["message"]   # SSOT value...
-        assert "35.7" not in vd["message"]     # ...not the raw latest
-        assert "by 10" in vd["message"]        # 49-39, not 49-35.7=13
-
-    def test_no_item_when_effective_close_to_garmin(self, db, config, monkeypatch):
-        # gap = 49-47 = 2 < 3 → no disagreement item, even if the raw latest is far.
-        self._seed(db, monkeypatch, effective=47.0, latest_vdot=35.7, garmin=49)
-        assert "vdot_anchor_disagreement" not in {i["tag"] for i in _attention_items(db)}
+        tags = {i["tag"] for i in _attention_items(db)}
+        assert "vdot_no_anchor" in tags
+        # The retired "anchors disagree" item must never appear.
+        assert "vdot_anchor_disagreement" not in tags

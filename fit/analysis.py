@@ -346,7 +346,7 @@ def _aggregate_date_range(conn: sqlite3.Connection, start_date: date,
     """, (start_iso, end_iso)).fetchall()
 
     cross = conn.execute(f"""
-        SELECT duration_min, training_load
+        SELECT type, duration_min, training_load
         FROM activities
         WHERE type NOT IN {RUNNING_TYPES_SQL} AND date BETWEEN ? AND ?
     """, (start_iso, end_iso)).fetchall()
@@ -395,14 +395,18 @@ def _aggregate_date_range(conn: sqlite3.Connection, start_date: date,
     cross_count = len(cross)
     cross_min = sum(c["duration_min"] or 0 for c in cross)
 
-    # Combined load
-    all_loads = [r["training_load"] or 0 for r in runs] + [c["training_load"] or 0 for c in cross]
-    total_load = sum(all_loads)
-
-    # Training monotony and strain
+    # Combined load. Cycling is cross-training, downweighted by cycling_load_weight
+    # (default 0.3) — applied to BOTH total_load and the daily loads behind
+    # monotony/strain below, so strain (= total_load × monotony) isn't a
+    # weighted/unweighted mix (D11). With no config the weight is 1.0 (unweighted).
     cycling_load_weight = 1.0
     if config:
         cycling_load_weight = config.get("analysis", {}).get("cycling_load_weight", 0.3)
+
+    total_load = sum(r["training_load"] or 0 for r in runs) + sum(
+        (c["training_load"] or 0) * (cycling_load_weight if c["type"] == "cycling" else 1.0)
+        for c in cross
+    )
 
     num_days = (end_date - start_date).days + 1
     daily_loads = []
