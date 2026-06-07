@@ -73,6 +73,7 @@
         <div class="anchor-value">{{ a.value | round(0) | int if a.unit == 'bpm' else a.value }}<span class="anchor-unit">{% if a.unit %} {{ a.unit }}{% endif %}</span></div>
         <div class="anchor-desc">{{ a.description }}</div>
         {% if a.trend %}<div class="anchor-trend">{{ a.trend }}{% if a.days_ago is not none %} · {{ a.days_ago }}d ago{% endif %}</div>{% endif %}
+        {% if a.reference %}<div class="anchor-trend"{% if a.reference_title %} title="{{ a.reference_title }}"{% endif %}>{{ a.reference }} ⓘ</div>{% endif %}
         {% else %}
         <div class="anchor-value" style="color:var(--text-dim)">—</div>
         <div class="anchor-desc">{{ a.description }}</div>
@@ -240,7 +241,7 @@
           <div class="summary-card summary-card-shrink">
             <div class="card-label">Aerobic</div>
             <div class="card-value card-value-md" style="color:var(--z2)">{{ fitness_profile.aerobic.current_value if fitness_profile.aerobic.current_value is not none else '—' }}</div>
-            <div class="card-sub">VO2max{% if fitness_profile.aerobic.rate_per_month %} · <span style="color:{% if fitness_profile.aerobic.trend == 'improving' %}var(--safe){% elif fitness_profile.aerobic.trend == 'declining' %}var(--danger){% else %}var(--text-muted){% endif %}">{{ '%+.1f' % fitness_profile.aerobic.rate_per_month }}/mo</span>{% endif %}</div>
+            <div class="card-sub">VDOT{% if fitness_profile.aerobic.rate_per_month %} · <span style="color:{% if fitness_profile.aerobic.trend == 'improving' %}var(--safe){% elif fitness_profile.aerobic.trend == 'declining' %}var(--danger){% else %}var(--text-muted){% endif %}">{{ '%+.1f' % fitness_profile.aerobic.rate_per_month }}/mo</span>{% endif %}</div>
             <canvas id="spark-fp-aerobic"></canvas>
           </div>
           <div class="summary-card summary-card-shrink">

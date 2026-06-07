@@ -605,17 +605,19 @@ def _attention_items(conn):
         _add(severity=sev, message=headline(days),
              tag=f"stale_{name}", command=cmd, detail=detail, source=source_fn(days))
 
-    # VDOT source disagreement: best fitness anchor vs Garmin VO2max diverge.
-    # The anchor comes from get_fitness_anchors — any training-or-race effort
-    # meeting the criteria (5-25km, avg HR ≥ LTHR, consistent pacing). When
-    # Garmin is materially above the best anchor by ≥3 VDOT, the prediction
-    # is being optimistic and the user needs a fresh max-effort data point.
-    # When there's no anchor at all (LTHR uncalibrated, or no qualifying
-    # efforts), that's a different attention item — "schedule a TT".
+    # VDOT source disagreement: the trusted anchor vs Garmin VO2max diverge.
+    # The anchor is _effective_vdot — the SAME figure the Physiology tile, the
+    # Aerobic dimension and the pace zones read (confirmed VDOT > recent race >
+    # Garmin-minus-overestimate), NOT the latest raw qualifying effort (which can
+    # be a sub-maximal long run and understate fitness). When Garmin is materially
+    # above the trusted anchor by ≥3 VDOT the prediction would be optimistic and
+    # the user needs a fresh max-effort point. When there's no qualifying anchor at
+    # all (LTHR uncalibrated, or no qualifying efforts) that's a different item.
     try:
-        from fit.fitness import get_fitness_anchors
+        from fit.fitness import get_fitness_anchors, _effective_vdot
 
         anchors = get_fitness_anchors(conn, days=365)
+        eff_vdot = _effective_vdot(conn)
         garmin_row = conn.execute(
             "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL "
             "ORDER BY date DESC LIMIT 1"
@@ -636,29 +638,27 @@ def _attention_items(conn):
                 ),
                 source="fit.fitness.get_fitness_anchors returned 0 qualifying activities.",
             )
-        elif anchors and garmin_vo2:
-            # Use most recent qualifying anchor — current evidence, not peak.
-            latest = sorted(anchors, key=lambda a: a["date"], reverse=True)[0]
-            gap = garmin_vo2 - latest["vdot"]
+        elif anchors and garmin_vo2 and eff_vdot is not None:
+            gap = garmin_vo2 - eff_vdot
             if gap >= 3:
+                latest = sorted(anchors, key=lambda a: a["date"], reverse=True)[0]
                 days_old = (date.today() - date.fromisoformat(latest["date"])).days
                 severity = "warning" if gap >= 5 else "info"
                 _add(
                     severity=severity,
-                    message=f"VDOT anchors disagree by {gap:.0f} (anchor {latest['vdot']} vs Garmin {garmin_vo2:.0f})",
+                    message=f"VDOT anchors disagree by {gap:.0f} (anchor {round(eff_vdot)} vs Garmin {garmin_vo2:.0f})",
                     tag="vdot_anchor_disagreement",
                     detail=(
-                        f"Latest anchor: {latest['name'] or 'effort'} on "
+                        f"Your performance-anchored VDOT is {round(eff_vdot)}; Garmin's "
+                        f"wrist estimate reads {gap:.0f} higher (it runs optimistic). Most "
+                        f"recent qualifying effort: {latest['name'] or 'effort'} on "
                         f"{latest['date']} ({days_old}d ago, {latest['distance_km']:g}km "
-                        f"at avg HR {latest['avg_hr']}). Garmin's estimate is "
-                        f"{gap:.0f} VDOT higher. Schedule a fresh 5K/10K at true "
-                        f"max effort (avg HR ≥ LTHR throughout) to verify which "
-                        f"source is right."
+                        f"at avg HR {latest['avg_hr']}). Schedule a fresh 5K/10K at true "
+                        f"max effort (avg HR ≥ LTHR throughout) to re-anchor."
                     ),
                     source=(
-                        f"Latest of {len(anchors)} qualifying anchor(s) from "
-                        f"fit.fitness.get_fitness_anchors; Garmin VO2max from "
-                        "most-recent activity."
+                        "fit.fitness._effective_vdot (the trusted anchor — same as the "
+                        "Aerobic dimension) vs Garmin VO2max from the most-recent activity."
                     ),
                 )
     except Exception as e:
@@ -698,8 +698,15 @@ def _attention_items(conn):
     # avoids non-max efforts (e.g. a steady 12km logged as a race) dragging
     # the suggestion down.
     try:
-        from fit.calibration import get_active_calibration as _gac, extract_lthr_from_race
+        from fit.calibration import (get_active_calibration as _gac,
+                                      extract_lthr_from_race, DEVICE_METHODS)
         active_lthr = _gac(conn, "lthr")
+        # A device-measured LTHR (Garmin auto-detected LT) is the trusted anchor —
+        # it outranks any race-derived estimate (precedence: confirmed > device >
+        # policy), so a race-implied LTHR nudge is noise against it. Skip when the
+        # active value is device-sourced; it re-enables if the device stops feeding it.
+        if active_lthr and active_lthr.get("method") in DEVICE_METHODS:
+            active_lthr = None
         hm = conn.execute(f"""
             SELECT a.date, a.name, a.distance_km, a.avg_hr
             FROM race_calendar rc JOIN activities a ON a.id = rc.activity_id
@@ -787,10 +794,41 @@ def _prediction_confidence(conn):
     return {"level": level, "reason": ", ".join(reasons)}
 
 
+def _vdot_entry(conn):
+    """The aerobic anchor tile = the performance-anchored VDOT (`_effective_vdot` —
+    the same figure the Aerobic dimension and pace zones read), NOT Garmin's wrist
+    VO2max, which reads ~5-10 points high and is shown only as a diagnostic reference.
+    SSOT: the card must lead with the number everything downstream derives from."""
+    from fit.fitness import _effective_vdot, _get_garmin_vo2max
+
+    ev = _effective_vdot(conn)
+    garmin = _get_garmin_vo2max(conn)
+    if ev is None:
+        return {
+            "key": "vdot", "label": "VDOT", "unit": "", "value": None,
+            "description": "Performance-anchored aerobic index (Daniels) — runs your pace zones.",
+            "date": None, "days_ago": None, "trend": None, "is_primary": False,
+            "reference": None, "reference_title": None,
+            "missing_action": {
+                "message": "Confirm a race-effort VDOT to anchor your aerobic capacity.",
+                "link_anchor": "prof-vo2max",
+            },
+        }
+    return {
+        "key": "vdot", "label": "VDOT", "unit": "", "value": round(ev),
+        "description": "Performance-anchored aerobic index (Daniels) — runs your pace zones.",
+        "date": None, "days_ago": None, "trend": None, "is_primary": False,
+        "reference": f"Garmin VO2max {round(garmin)}" if garmin is not None else None,
+        "reference_title": ("Garmin's wrist VO2max reads ~5-10 points high; the race-anchored "
+                            "VDOT is what drives your pace zones and predictions."),
+        "missing_action": None,
+    }
+
+
 def _physiology(conn):
     """Build the "Your Physiology" card data for the Overview tab.
 
-    Returns a list of 4 anchor dicts (LTHR, MaxHR, AeT, VO2max), each with:
+    Returns a list of 4 anchor dicts (LTHR, MaxHR, AeT, VDOT), each with:
       - key: short identifier
       - label: display name
       - value: current value or None
@@ -803,7 +841,7 @@ def _physiology(conn):
       - missing_action: dict {message, link_anchor} when not yet calibrated
 
     Order: primary first, then by physiological hierarchy (LTHR, MaxHR, AeT,
-    VO2max). When AeT is implemented (aet-anchored-zones) it should slide
+    VDOT). When AeT is implemented (aet-anchored-zones) it should slide
     into the primary slot above LTHR.
     """
     from fit.calibration import get_active_calibration
@@ -820,7 +858,7 @@ def _physiology(conn):
                 "key": metric, "label": label, "unit": unit,
                 "value": None, "description": desc,
                 "date": None, "days_ago": None, "trend": None,
-                "is_primary": False,
+                "is_primary": False, "reference": None, "reference_title": None,
                 "missing_action": {
                     "message": missing_msg or f"Calibrate via `fit calibrate {metric} <value>`",
                     "link_anchor": missing_link,
@@ -858,6 +896,7 @@ def _physiology(conn):
             "value": cal["value"], "description": desc,
             "date": cal["date"], "days_ago": days_ago,
             "trend": trend, "is_primary": False,
+            "reference": None, "reference_title": None,
             "missing_action": None,
         }
 
@@ -876,10 +915,7 @@ def _physiology(conn):
             missing_msg="Run a 15+ km steady-pace effort to derive AeT from HR drift.",
             missing_link="aet-instructions",
         ),
-        _entry(
-            "vo2max", "VO2max", "",
-            "Aerobic capacity. Predicts race times via VDOT (Daniels).",
-        ),
+        _vdot_entry(conn),
     ]
 
     # Mark primary anchor per the active zone model. The default (`lthr`) puts

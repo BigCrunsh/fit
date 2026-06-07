@@ -862,6 +862,12 @@ def evaluate_suggestions(conn: sqlite3.Connection, review: dict | None = None) -
         sug = anchor.get("suggestion") if anchor else None
         if not sug or not sug.get("differs"):
             continue
+        # The active value is device-measured (e.g. Garmin's auto-detected LT).
+        # Anchor precedence is confirmed > device > policy, so a policy estimate
+        # can never displace a device reading — nagging to change it would be
+        # self-contradictory. Suppress until the device stops providing the value.
+        if anchor.get("method") in DEVICE_METHODS:
+            continue
         dismissed = review.get(metric)
         if (dismissed and dismissed.get("state") == "dismissed"
                 and abs(dismissed.get("value", 1e9) - sug["value"]) < policy["differs"]):

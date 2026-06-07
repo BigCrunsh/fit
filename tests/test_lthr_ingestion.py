@@ -60,6 +60,33 @@ class TestDeviceAnchorPrecedence:
         assert a["suggestion"]["value"] == 162  # median of the 3 race rows only
         assert a["suggestion"]["differs"] is True
 
+    def test_device_anchor_suppresses_policy_nag(self, db):
+        # evaluate_suggestions must NOT nag toward a policy estimate when the
+        # active anchor is device-measured: precedence already ranks device >
+        # policy, so the suggestion could never win — surfacing it is self-
+        # contradictory. (The suggestion itself still computes + differs.)
+        from fit.calibration import evaluate_suggestions
+        _row(db, 160, "race_observation", "low", 30)
+        _row(db, 162, "race_observation", "low", 20)
+        _row(db, 164, "race_observation", "low", 10)
+        _row(db, 173, "device_lt", "high", 1)
+        assert get_calibration_anchor(db, "lthr")["suggestion"]["differs"] is True
+        assert not any(s["metric"] == "lthr"
+                       for s in evaluate_suggestions(db, review={}))
+
+    def test_policy_nag_present_without_device(self, db):
+        # Contrast: with a human-confirmed (non-device) anchor that differs from
+        # the race-implied median, the suggestion IS surfaced for accept/reject.
+        from fit.calibration import evaluate_suggestions
+        _row(db, 160, "race_observation", "low", 30)
+        _row(db, 162, "race_observation", "low", 20)
+        _row(db, 164, "race_observation", "low", 10)   # median 162
+        _row(db, 172, "manual", "high", 1)             # confirmed, differs from 162
+        a = get_calibration_anchor(db, "lthr")
+        assert a["method"] == "manual" and a["value"] == 172
+        assert any(s["metric"] == "lthr"
+                   for s in evaluate_suggestions(db, review={}))
+
 
 class TestFetchParser:
     def test_parses_lthr_and_speed(self):

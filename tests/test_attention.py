@@ -184,3 +184,45 @@ class TestLthrSuggestion:
                                           garmin_time="1:10:33")
         items = _attention_items(db)
         assert "lthr_suggestion" not in {i["tag"] for i in items}
+
+    def test_no_suggestion_when_active_is_device_measured(self, db):
+        # A device-measured LTHR (Garmin auto-LT) is trusted over any race proxy,
+        # so a race-implied nudge is suppressed even when it differs >=3.
+        db.execute(
+            "INSERT INTO calibration (metric, value, method, confidence, date, active) "
+            "VALUES ('lthr', 171, 'device_lt', 'high', ?, 1)",
+            ((date.today() - timedelta(days=1)).isoformat(),),
+        )
+        db.commit()
+        _add_completed_race_with_activity(db, "2026-03-22", "HM", 21.1, 173,
+                                          garmin_time="2:01:48")  # implies ~175
+        items = _attention_items(db)
+        assert "lthr_suggestion" not in {i["tag"] for i in items}
+
+
+class TestVdotDisagreement:
+    """The VDOT disagreement item must read the trusted _effective_vdot (the SSOT
+    shown on the Physiology tile / Aerobic dimension), not the latest raw anchor."""
+
+    def _seed(self, db, monkeypatch, effective, latest_vdot, garmin):
+        import fit.fitness as fitness
+        monkeypatch.setattr(fitness, "_effective_vdot", lambda conn: effective)
+        monkeypatch.setattr(fitness, "get_fitness_anchors", lambda conn, days=365: [
+            {"date": "2026-03-22", "name": "Berlin Laufen", "distance_km": 21.15,
+             "avg_hr": 173, "vdot": latest_vdot}])
+        db.execute("INSERT INTO activities (id, date, type, vo2max) VALUES ('a1', ?, 'running', ?)",
+                   (date.today().isoformat(), garmin))
+        db.commit()
+
+    def test_uses_effective_vdot_not_latest_raw_anchor(self, db, config, monkeypatch):
+        # effective 39 (anchor) vs latest raw 35.7 (a sub-maximal long run); Garmin 49.
+        self._seed(db, monkeypatch, effective=39.0, latest_vdot=35.7, garmin=49)
+        vd = next(i for i in _attention_items(db) if i["tag"] == "vdot_anchor_disagreement")
+        assert "anchor 39" in vd["message"]   # SSOT value...
+        assert "35.7" not in vd["message"]     # ...not the raw latest
+        assert "by 10" in vd["message"]        # 49-39, not 49-35.7=13
+
+    def test_no_item_when_effective_close_to_garmin(self, db, config, monkeypatch):
+        # gap = 49-47 = 2 < 3 → no disagreement item, even if the raw latest is far.
+        self._seed(db, monkeypatch, effective=47.0, latest_vdot=35.7, garmin=49)
+        assert "vdot_anchor_disagreement" not in {i["tag"] for i in _attention_items(db)}

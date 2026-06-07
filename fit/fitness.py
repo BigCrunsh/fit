@@ -107,7 +107,7 @@ def _compute_aerobic(conn: sqlite3.Connection) -> dict:
         trend, rate, history = "insufficient_data", None, [round(vdot, 1)]
 
     return {
-        "current_value": round(vdot, 1),
+        "current_value": round(vdot),                      # VDOT is an integer index (Daniels)
         "trend": trend,
         "rate_per_month": rate,
         "unit": "VDOT",
