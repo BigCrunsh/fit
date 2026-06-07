@@ -208,7 +208,7 @@ def _journey(conn):
     if not phases:
         return None
 
-    colors = {"completed": "rgba(34,197,94,0.4)", "active": "rgba(129,140,248,0.5)", "planned": "rgba(255,255,255,0.08)"}
+    colors = {"completed": "rgba(34,197,94,0.4)", "active": "rgba(129,140,248,0.5)", "planned": "var(--track)"}
     segments = []
     position = ""
     for p in phases:
@@ -1338,13 +1338,10 @@ def _race_countdown(conn):
                 margin_secs = 0
                 try:
                     from fit.marathon.predict import forecast as _model_forecast
-                    from fit.marathon import model as _marathon_model
-                    _post = _marathon_model.load_posterior()
-                    if _post is not None:
-                        _fc = _model_forecast(conn, goal_seconds=target_secs, posterior=_post)
-                        if _fc:
-                            center_secs = _fc["median"]      # margin 0 → hero == model block
-                            result["confidence_level"] = "model"
+                    _fc = _model_forecast(conn, goal_seconds=target_secs)  # cached shared load
+                    if _fc:
+                        center_secs = _fc["median"]          # margin 0 → hero == model block
+                        result["confidence_level"] = "model"
                 except Exception:
                     pass
 
@@ -1890,23 +1887,19 @@ def _model_week_trend(conn, week_starts):
         from datetime import date as _date
         import numpy as _np
         import pandas as _pd
-        from fit.marathon import model as _M
-        from fit.marathon.predict import predict as _predict, maximal_effort_h
-        from fit.marathon.preparedness import extrapolation_prior
-        from fit.marathon.features import extract_efforts, CHRONIC_REF, CHRONIC_SCALE, H_DIV
+        from fit.marathon.predict import (
+            predict as _predict, maximal_effort_h, _reserve, forecast_context,
+        )
+        from fit.marathon.features import CHRONIC_REF, CHRONIC_SCALE
         from fit.training_load import DAILY_LOAD_SQL, chronic_load_before
     except ImportError:
         return None
-    post = _M.load_posterior()
-    if post is None:
+    ctx = forecast_context(conn)        # shared load (posterior + efforts + prior)
+    if ctx is None:
         return None
-    try:
-        ds = extract_efforts(conn)
-    except ValueError:
-        return None
-    prior = extrapolation_prior(conn, ds.goal)
+    post, ds, prior = ctx.idata, ctx.ds, ctx.prior
     gap = max(0.0, float(_np.log(ds.goal / ds.d_max)))
-    h = maximal_effort_h(ds.goal)
+    h = maximal_effort_h(ds.goal, _reserve(ds))
     # Load daily loads ONCE (chronic_load_before is pure) — not a full-table read per week.
     dl = _pd.read_sql_query(DAILY_LOAD_SQL, conn, parse_dates=["date"])
     day_ord = dl["date"].map(_pd.Timestamp.toordinal).to_numpy() if not dl.empty else _np.array([])
@@ -2206,13 +2199,11 @@ def _race_readiness_hero(conn):
         pred_secs = None
         try:
             from fit.marathon.predict import forecast as _model_forecast
-            from fit.marathon import model as _marathon_model
-            _post = _marathon_model.load_posterior()
-            if _post is not None:
-                _fc = _model_forecast(conn, goal_seconds=target_secs, posterior=_post)
-                if _fc:
-                    pred_secs = _fc["median"]
-                    result["prediction_source"] = "model"
+            _fc = _model_forecast(conn, goal_seconds=target_secs)  # cached shared load
+            if _fc:
+                pred_secs = _fc["median"]
+                result["prediction_source"] = "model"
+                result["p_sub_goal"] = _fc.get("p_ceiling")  # so the verdict can cite goal odds
         except Exception:
             pred_secs = None
         if pred_secs is None and effective_vdot:
@@ -2397,6 +2388,18 @@ def _fitness_gap_analysis(conn):
                 "message": dim.get("message"),
                 "sowhat": sowhat,
             })
+
+        # Aerobic is sourced from Garmin VO2max, which the forecast/anchor deliberately
+        # DISTRUSTS. When Garmin sits materially above the effective (calibrated) VDOT the rest
+        # of the dashboard headlines, flag the bar as optimistic so it doesn't silently
+        # contradict that anchor (the VDOT-vs-Garmin chart shows the same gap).
+        _vdot = profile.get("effective_vdot")
+        _gvo2 = profile.get("garmin_vo2max")
+        if _vdot and _gvo2 and (_gvo2 - _vdot) >= 5:
+            for d in dims:
+                if d["name"] == "Aerobic":
+                    d["caveat"] = (f"Garmin VO₂max; +{_gvo2 - _vdot:.0f} vs your effective VDOT "
+                                   f"({_vdot:.0f}) — the forecast trusts the anchor, so read as optimistic.")
 
         # Limiter = the dimension furthest below the goal (lowest % of required).
         # A marathon is paced by the weakest relevant capacity, so flag it.
@@ -3267,7 +3270,7 @@ def _last_7_days_runs(conn):
                         "x": {"grid": {"display": False},
                                "ticks": {"display": not has_structure,
                                          "font": {"size": 7},
-                                         "color": "rgba(255,255,255,0.4)",
+                                         "color": "#64748b",
                                          "maxRotation": 0, "autoSkip": False,
                                          "__skip_empty": True}},
                         "y": {"position": "left",
