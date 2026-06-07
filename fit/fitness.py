@@ -184,7 +184,8 @@ def _compute_resilience(conn: sqlite3.Connection) -> dict:
     drift_points = []
     for run in splits_runs:
         splits = conn.execute("""
-            SELECT split_num, avg_hr, pace_sec_per_km FROM activity_splits
+            SELECT split_num, avg_hr, pace_sec_per_km, distance_km,
+                   elevation_gain_m, elevation_loss_m FROM activity_splits
             WHERE activity_id = ? ORDER BY split_num
         """, (run["id"],)).fetchall()
 

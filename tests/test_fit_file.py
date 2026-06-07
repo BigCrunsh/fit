@@ -75,6 +75,33 @@ class TestCardiacDrift:
             assert isinstance(result["drift_pct"], (int, float))
 
 
+# ── Grade-adjusted pace (Anstieg) ──
+
+
+class TestGradeAdjustedPace:
+    def test_climb_descent_flat_and_missing(self):
+        from fit.fit_file import grade_adjusted_pace_sec
+        # +30 m over 1 km = 3% climb → ~12 s/% faster flat-equivalent
+        assert grade_adjusted_pace_sec(400, 30, 0, 1.0) == 400 - 12 * 3
+        # 30 m descent (3%) → ~6 s/% slower flat-equivalent
+        assert grade_adjusted_pace_sec(400, 0, 30, 1.0) == 400 + 6 * 3
+        assert grade_adjusted_pace_sec(400, 0, 0, 1.0) == 400          # flat → unchanged
+        assert grade_adjusted_pace_sec(400, None, None, 1.0) == 400    # no elevation → unchanged
+        assert grade_adjusted_pace_sec(400, 30, 0, 0) == 400           # no distance → unchanged
+
+    def test_rolling_terrain_not_dismissed_as_variable_pace(self):
+        # Steady effort over rolling hills: raw pace swings (slow up / fast down), but the
+        # grade-adjusted pace is steady — must NOT be flagged inconclusive_variable_pace.
+        splits = [{"split_num": i, "distance_km": 1.0, "avg_hr": 145,
+                   "pace_sec_per_km": 450 if i % 2 else 300,
+                   "elevation_gain_m": 45 if i % 2 else 0,
+                   "elevation_loss_m": 0 if i % 2 else 45} for i in range(1, 11)]
+        assert compute_cardiac_drift(splits)["status"] != "inconclusive_variable_pace"
+        # Same paces with the terrain stripped → raw pace swings → correctly inconclusive.
+        flat = [{**s, "elevation_gain_m": 0, "elevation_loss_m": 0} for s in splits]
+        assert compute_cardiac_drift(flat)["status"] == "inconclusive_variable_pace"
+
+
 # ── Pace Variability ──
 
 

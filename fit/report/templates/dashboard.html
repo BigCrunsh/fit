@@ -1401,6 +1401,23 @@ const chartInstances = {};
     cfg.options.plugins.tooltip = cfg.options.plugins.tooltip || {};
     cfg.options.plugins.tooltip.callbacks = {label: function(ctx){ return ctx.parsed.x.toFixed(1)+'km · '+fmtT(ctx.parsed.y); }};
   }
+  // Long-Run Resilience: the pace axis holds decimal minutes (6.3) — show it as m:ss (6:18);
+  // tooltip splits the pace axis (min/km) from the HR axis (bpm).
+  if ('{{ chart.id }}' === 'chart-drift' && cfg.options && cfg.options.scales) {
+    var fmtPace = function(v){ var m=Math.floor(v), s=Math.round((v-m)*60); if(s===60){m+=1;s=0;} return m+':'+('0'+s).slice(-2); };
+    if (cfg.options.scales.y) {
+      cfg.options.scales.y.ticks = cfg.options.scales.y.ticks || {};
+      cfg.options.scales.y.ticks.callback = function(v){ return fmtPace(v); };
+    }
+    cfg.options.plugins = cfg.options.plugins || {};
+    cfg.options.plugins.tooltip = cfg.options.plugins.tooltip || {};
+    cfg.options.plugins.tooltip.callbacks = cfg.options.plugins.tooltip.callbacks || {};
+    cfg.options.plugins.tooltip.callbacks.label = function(ctx){
+      var v = ctx.parsed.y;
+      if (ctx.dataset.yAxisID === 'y') return ctx.dataset.label + ': ' + fmtPace(v) + ' /km';
+      return ctx.dataset.label + ': ' + Math.round(v) + ' bpm';
+    };
+  }
   const el = document.getElementById('{{ chart.id }}');
   if (el) {
     const plugins = isPhaseBarChart ? [genericPhaseBandPlugin] : [];

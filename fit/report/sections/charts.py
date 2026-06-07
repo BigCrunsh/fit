@@ -628,21 +628,20 @@ def _all_charts(conn):
                              "borderColor": DANGER + "b3", "borderWidth": 2.5, "pointRadius": 2,
                              "tension": 0.3, "yAxisID": "y1", "fill": False})
 
-            # Drift onset on the average
-            drift_onset = None
-            valid_first_half = [h for h in avg_hr[:max_splits // 2] if h is not None]
-            if valid_first_half:
-                first_half_avg = sum(valid_first_half) / len(valid_first_half)
-                for i in range(max_splits // 2, max_splits):
-                    if avg_hr[i] and avg_hr[i] > first_half_avg + 5:
-                        drift_onset = i
-                        break
+            # Drift-onset marker = the canonical Resilience value (max per-run onset via
+            # compute_cardiac_drift) — the SAME number as the dimension / Distance Ceiling /
+            # trend chart, marked on the average curve as the best recent demonstrated onset.
             drift_annots = {}
-            if drift_onset is not None:
+            try:
+                from fit.fitness import get_fitness_profile as _gfp
+                _onset = (_gfp(conn).get("resilience") or {}).get("current_value")
+            except Exception:
+                _onset = None
+            if _onset and 1 <= _onset <= max_splits:
                 drift_annots["drift"] = {
-                    "type": "line", "xMin": drift_onset, "xMax": drift_onset,
+                    "type": "line", "xMin": _onset - 1, "xMax": _onset - 1,
                     "borderColor": CAUTION + "80", "borderDash": [4, 3], "borderWidth": 1,
-                    "label": {"display": True, "content": "Drift onset", "position": "start",
+                    "label": {"display": True, "content": "best onset %g km" % _onset, "position": "start",
                               "color": CAUTION, "font": {"size": 9}, "backgroundColor": "transparent",
                               "yAdjust": -10},
                 }
@@ -658,7 +657,7 @@ def _all_charts(conn):
                                         "annotation": {"annotations": drift_annots}},
                             "scales": {
                                 "y": {"position": "left", "reverse": True,
-                                      "title": {"display": True, "text": "Pace", "color": "#64748b", "font": {"size": 10}},
+                                      "title": {"display": True, "text": "Pace (min/km)", "color": "#64748b", "font": {"size": 10}},
                                       "grid": {"color": "rgba(255,255,255,0.03)"}},
                                 "y1": {"position": "right",
                                        "title": {"display": True, "text": "HR", "color": "#64748b", "font": {"size": 10}},
@@ -669,22 +668,10 @@ def _all_charts(conn):
                 "n_runs": n_runs})
 
     # Cardiac Drift Over Time — drift onset km per run as time series
-    # Compute drift onset for each run with splits (re-query all history for full timeline)
-    def _compute_drift_onset(hr_vals):
-        """Return km index where drift onset occurs (first split in second half where HR > first-half avg + 5), or None."""
-        n = len(hr_vals)
-        if n < 6:
-            return None
-        mid = n // 2
-        first_half = [h for h in hr_vals[:mid] if h is not None]
-        if not first_half:
-            return None
-        first_avg = sum(first_half) / len(first_half)
-        for i in range(mid, n):
-            if hr_vals[i] is not None and hr_vals[i] > first_avg + 5:
-                return i + 1  # 1-indexed km
-        return n + 1  # No drift detected — onset beyond run distance (good)
-
+    # Per-run drift onset over all history — via the canonical compute_cardiac_drift (the SAME
+    # grade-adjusted function the Resilience dimension aggregates). Single source of truth, so
+    # the trend, the dimension/Distance-Ceiling, and the top-chart marker all agree.
+    from fit.fit_file import compute_cardiac_drift
     drift_onset_data = []
     all_drift_runs = conn.execute("""
         SELECT a.id, a.date, a.distance_km FROM activities a
@@ -694,14 +681,19 @@ def _all_charts(conn):
         ORDER BY a.date
     """).fetchall()
     for run in all_drift_runs:
-        hr_vals = [s["avg_hr"] for s in conn.execute(
-            "SELECT avg_hr FROM activity_splits WHERE activity_id = ? ORDER BY split_num",
-            (run["id"],)
-        ).fetchall()]
-        onset = _compute_drift_onset(hr_vals)
-        if onset is not None:
-            drift_onset_data.append({"date": run["date"], "onset_km": onset,
-                                     "dist": round(run["distance_km"] or 0, 1)})
+        sp = conn.execute(
+            "SELECT split_num, avg_hr, pace_sec_per_km, distance_km, elevation_gain_m, "
+            "elevation_loss_m FROM activity_splits WHERE activity_id = ? ORDER BY split_num",
+            (run["id"],)).fetchall()
+        d = compute_cardiac_drift([dict(s) for s in sp])
+        if d.get("status") == "detected" and d.get("drift_onset_km"):
+            onset = d["drift_onset_km"]
+        elif d.get("status") == "none":
+            onset = round(run["distance_km"] or 0, 1)   # held the full distance → no drift
+        else:
+            continue                                     # inconclusive / insufficient → skip
+        drift_onset_data.append({"date": run["date"], "onset_km": onset,
+                                 "dist": round(run["distance_km"] or 0, 1)})
     if drift_onset_data:
         max_onset = max(d["onset_km"] for d in drift_onset_data)
         charts.append({"id": "chart-drift-trend", "config": json.dumps({
