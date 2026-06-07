@@ -265,7 +265,7 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
                 cal_date,
                 source_activity_id=a["id"],
                 notes=(f"drift {result['drift_pct']}% ({classification}) "
-                       f"from {a.get('name', '?')} ({a['distance_km']}km)"),
+                       f"from {a['name'] or '?'} ({a['distance_km']}km)"),
                 flags=flags,
             )
 
