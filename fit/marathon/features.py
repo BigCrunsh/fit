@@ -29,15 +29,25 @@ MARATHON_KM = 42.195         # fallback D_REF when no goal race is set
 CHRONIC_REF = 50.0           # fitness centre (chronic-load units) — cosmetic, like D_REF
 CHRONIC_SCALE = 10.0         # c is per-10 chronic-load units
 H_DIV = 5.0                  # bpm per effort unit
+# A run this long is a durability anchor regardless of pace — the most informative point
+# about the time/distance frontier (matches QUALITY_MIN_KM in preparedness and the project's
+# "long run" notion). Its sub-maximal HR is handled by the h (effort) covariate, not excluded.
+LONG_RUN_MIN_KM = 15.0
 
-# Continuous, intensity-bearing efforts only. Intervals excluded (their distance_km
-# includes recoveries). run_type is NOT used for maximality — the h (HR) covariate is.
-EFFORT_SQL = """
+# Qualifying efforts = continuous, time-for-distance runs. Three ways to qualify:
+#   (1) any race; (2) a Hard/Very-Hard tempo or progression (a quality effort); or
+#   (3) a LONG run (>= LONG_RUN_MIN_KM) of any pace — long runs are the durability signal,
+#       and the h (HR) covariate normalises their lower effort rather than dropping them.
+# Intervals are always excluded (their distance_km/time spans recoveries, so the time isn't
+# a meaningful continuous effort). `IS NOT 'interval'` is NULL-safe — an unlabelled long run
+# still counts; only an explicit interval session is dropped.
+EFFORT_SQL = f"""
 SELECT id, date, run_type, distance_km, duration_min, avg_hr
 FROM activities
 WHERE type IN ('running', 'track_running')
   AND ( run_type = 'race'
-        OR (run_type IN ('tempo', 'progression') AND effort_class IN ('Hard', 'Very Hard')) )
+        OR (run_type IN ('tempo', 'progression') AND effort_class IN ('Hard', 'Very Hard'))
+        OR (distance_km >= {LONG_RUN_MIN_KM} AND run_type IS NOT 'interval') )
   AND distance_km > 0 AND duration_min > 0 AND avg_hr > 0
 ORDER BY date
 """

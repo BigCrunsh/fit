@@ -81,6 +81,19 @@ class TestExtractEffortsHappy:
         ds = extract_efforts(db)
         assert ds.max_hr == pytest.approx(192.0)   # MaxHR anchor flows into the dataset
 
+    def test_long_run_qualifies_regardless_of_class(self, db):
+        _set_lthr(db, 170.0)
+        _act(db, "load", 40, run_type="easy", distance_km=8, duration_min=45,
+             avg_hr=140, training_load=80)
+        # an EASY 18 km long run — not a race, not a Hard tempo, but a durability anchor
+        _act(db, "longrun", 20, run_type="long", distance_km=18.0, duration_min=110,
+             avg_hr=150, effort_class="Easy", training_load=200)
+        ds = extract_efforts(db)
+        eff = ds.efforts
+        assert "longrun" in set(eff["id"])              # admitted by the >=15km rule
+        lr = eff[eff["id"] == "longrun"].iloc[0]
+        assert lr["h"] == pytest.approx((150 - 170.0) / 5.0)   # sub-maximal HR kept via h, not dropped
+
     def test_chronic_is_trailing_mean_strictly_before(self, db):
         _set_lthr(db)
         # one prior load 7 days before the effort; a big SAME-DAY load must be excluded
@@ -120,6 +133,31 @@ class TestExtractEffortsUnhappy:
         ds = extract_efforts(db)
         eff = ds.efforts
         assert set(eff["id"]) == {"race"}
+
+    def test_long_interval_excluded_but_long_run_kept(self, db):
+        _set_lthr(db)
+        _act(db, "load", 40, run_type="easy", distance_km=8, duration_min=45,
+             avg_hr=140, training_load=80)
+        _act(db, "longrun", 25, run_type="long", distance_km=16.0, duration_min=95,
+             avg_hr=150, training_load=180)
+        # a 16 km interval session — long, but its time spans recoveries → not a continuous effort
+        _act(db, "longint", 20, run_type="interval", distance_km=16.0, duration_min=80,
+             avg_hr=160, effort_class="Very Hard", training_load=200)
+        ds = extract_efforts(db)
+        ids = set(ds.efforts["id"])
+        assert "longrun" in ids and "longint" not in ids
+
+    def test_short_moderate_tempo_still_excluded(self, db):
+        _set_lthr(db)
+        _act(db, "load", 40, run_type="easy", distance_km=8, duration_min=45,
+             avg_hr=140, training_load=80)
+        _act(db, "race", 30, run_type="race", distance_km=10, duration_min=50, avg_hr=175)
+        # a <15km Moderate tempo still needs Hard/Very-Hard to qualify
+        _act(db, "modtempo", 20, run_type="tempo", distance_km=10, duration_min=50,
+             avg_hr=155, effort_class="Moderate")
+        ds = extract_efforts(db)
+        ids = set(ds.efforts["id"])
+        assert "race" in ids and "modtempo" not in ids
 
     def test_drops_effort_without_prior_history(self, db):
         _set_lthr(db)
