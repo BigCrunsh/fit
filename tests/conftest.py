@@ -1,9 +1,25 @@
 """Shared test fixtures for the fit test suite."""
 
+import os
 import tempfile
 from pathlib import Path
 
 import pytest
+
+# Resolve config.yaml's ${FIT_*} placeholders with test defaults at import time.
+# config.yaml is a template normally filled by config.local.yaml or the environment;
+# tests that load the real config (CLI, report, and the module-scoped MCP server
+# fixture, which loads config at *import* time) would otherwise raise on a fresh
+# checkout with neither present (e.g. CI). Set at module level — before any fixture
+# of any scope or collection runs — so even import-time config loads resolve.
+# `setdefault` respects a real env var if the developer has one, and the
+# placeholder-raising tests use their own distinct var names, so they're unaffected.
+# This keeps the suite hermetic without weakening the production "raise on unset" guard.
+os.environ.setdefault("FIT_USER_NAME", "Test Athlete")
+os.environ.setdefault("FIT_USER_AGE", "35")
+os.environ.setdefault("FIT_USER_MAX_HR", "190")
+os.environ.setdefault("FIT_LAT", "52.52")
+os.environ.setdefault("FIT_LON", "13.40")
 
 
 @pytest.fixture
