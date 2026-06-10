@@ -8,11 +8,7 @@ from pathlib import Path
 from fit.report.generator import (
     generate_dashboard,
     _headline,
-    _status_cards,
     _checkin,
-    _journey,
-    _week_over_week,
-    _run_timeline,
 )
 
 
@@ -39,11 +35,6 @@ class TestGeneratorEmptyDB:
         assert isinstance(result, str)
         assert len(result) > 0
 
-    def test_status_cards_empty_db(self, db):
-        """Status cards with no health data returns empty list."""
-        result = _status_cards(db)
-        assert result == []
-
     def test_checkin_empty_db(self, db):
         """With no user checkins (or backfill data), result should be None or a dict."""
         # Backfill migrations may have populated checkins, so clear them
@@ -51,18 +42,6 @@ class TestGeneratorEmptyDB:
         db.commit()
         result = _checkin(db)
         assert result is None
-
-    def test_journey_empty_db(self, db):
-        result = _journey(db)
-        assert result is None
-
-    def test_week_over_week_empty_db(self, db):
-        result = _week_over_week(db)
-        assert result is None
-
-    def test_run_timeline_empty_db(self, db):
-        result = _run_timeline(db)
-        assert result == []
 
 
 # ════════════════════════════════════════════════════════════════
@@ -104,46 +83,12 @@ class TestGeneratorNullFields:
         result = _headline(db)
         assert isinstance(result, str)
 
-    def test_status_cards_with_null_fields(self, db):
-        """Health row with all NULLs should not crash."""
-        self._insert_health(db, date.today().isoformat())
-        result = _status_cards(db)
-        assert isinstance(result, list)
-
     def test_checkin_with_null_fields(self, db):
         db.execute("INSERT INTO checkins (date) VALUES (?)", (date.today().isoformat(),))
         db.commit()
         result = _checkin(db)
         assert result is not None
         assert result["date"] == date.today().isoformat()
-
-    def test_run_timeline_with_null_fields(self, db):
-        self._insert_activity(db, date.today().isoformat(),
-                              distance_km=None, hr_zone=None, run_type=None, rpe=None)
-        result = _run_timeline(db)
-        assert len(result) == 1
-        assert result[0]["distance_km"] == "0.0"
-
-    def test_week_over_week_with_null_fields(self, db):
-        self._insert_weekly(db, "2026-W13", run_km=None, run_count=None, z12_pct=None, acwr=None)
-        self._insert_weekly(db, "2026-W14", run_km=None, run_count=None, z12_pct=None, acwr=None)
-        result = _week_over_week(db)
-        assert result is not None
-
-    def test_journey_with_goal_no_phases(self, db):
-        db.execute("INSERT INTO goals (id, name, type, target_date, active) VALUES (1, 'Marathon', 'marathon', '2026-10-25', 1)")
-        db.commit()
-        result = _journey(db)
-        assert result is None
-
-    def test_journey_with_goal_and_phases(self, db):
-        db.execute("INSERT INTO goals (id, name, type, target_date, active) VALUES (1, 'Marathon', 'marathon', '2026-10-25', 1)")
-        db.execute("""INSERT INTO training_phases (id, goal_id, phase, name, start_date, end_date, status)
-                      VALUES (1, 1, 'P1', 'Base', '2026-04-01', '2026-06-01', 'active')""")
-        db.commit()
-        result = _journey(db)
-        assert result is not None
-        assert "Marathon" in result["goal_name"]
 
     def test_generate_full_dashboard_with_data(self, db):
         """Full dashboard with some data should not crash."""
@@ -168,38 +113,3 @@ class TestGeneratorNullFields:
             output = Path(tmpdir) / "a" / "b" / "dashboard.html"
             generate_dashboard(db, output)
             assert output.exists()
-
-
-# ════════════════════════════════════════════════════════════════
-# Week-over-Week
-# ════════════════════════════════════════════════════════════════
-
-
-class TestWeekOverWeek:
-    def _insert_weekly(self, db, week, **kwargs):
-        defaults = {"week": week}
-        defaults.update(kwargs)
-        cols = ", ".join(defaults.keys())
-        placeholders = ", ".join(["?"] * len(defaults))
-        db.execute(f"INSERT INTO weekly_agg ({cols}) VALUES ({placeholders})",
-                   list(defaults.values()))
-        db.commit()
-
-    # Happy
-    def test_two_weeks_comparison(self, db):
-        self._insert_weekly(db, "2026-W13", run_km=22, run_count=3, z12_pct=85, acwr=0.95)
-        self._insert_weekly(db, "2026-W14", run_km=28, run_count=4, z12_pct=88, acwr=1.1)
-        result = _week_over_week(db)
-        assert result is not None
-        assert "28km" in result or "28" in result
-        assert "W" not in result or "ACWR" in result
-
-    # Unhappy
-    def test_only_one_week(self, db):
-        self._insert_weekly(db, "2026-W14", run_km=25)
-        result = _week_over_week(db)
-        assert result is None
-
-    def test_zero_weeks(self, db):
-        result = _week_over_week(db)
-        assert result is None

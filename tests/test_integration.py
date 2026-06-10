@@ -214,11 +214,8 @@ def _populate_data(db):
 
 class TestFullPipeline:
     def test_narratives_with_race_data(self, db):
-        from fit.narratives import generate_trend_badges, generate_race_countdown
+        from fit.narratives import generate_race_countdown
         _populate_data(db)
-
-        badges = generate_trend_badges(db)
-        assert isinstance(badges, (list, dict))
 
         countdown = generate_race_countdown(db)
         assert countdown is not None
@@ -241,13 +238,6 @@ class TestFullPipeline:
 
         results = compute_all_correlations(db)
         assert isinstance(results, list)
-
-    def test_milestone_detection(self, db):
-        from fit.milestones import detect_milestones
-        _populate_data(db)
-
-        milestones = detect_milestones(db)
-        assert isinstance(milestones, list)
 
     def test_periodization_evaluation(self, db):
         from fit.periodization import evaluate_phase_readiness
@@ -273,13 +263,6 @@ class TestFullPipeline:
         assert race is not None
         assert race["name"] == "Berlin Marathon"
         assert race["distance_km"] == 42.195
-
-    def test_wow_context(self, db):
-        from fit.narratives import generate_wow_context
-        _populate_data(db)
-
-        wow = generate_wow_context(db)
-        assert wow is not None
 
     def test_all_tables_populated(self, db):
         _populate_data(db)

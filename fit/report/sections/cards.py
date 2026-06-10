@@ -8,18 +8,12 @@ from pathlib import Path
 from fit.analysis import RUNNING_TYPES_SQL
 from fit.report.headline import generate_headline
 from fit.narratives import (
-    generate_trend_badges,
-    generate_why_connectors,
     generate_race_countdown,
-    detect_walk_break_need,
-    generate_z2_remediation,
-    generate_wow_sentence,
     generate_body_summary,
-    generate_volume_story,
     generate_checkin_progress,
 )
 
-from fit.report.sections import SAFE, CAUTION, DANGER, Z1, Z2, Z3, Z4, Z5, ACCENT
+from fit.report.sections import SAFE, DANGER, Z1, Z2, Z3, Z4, Z5
 
 logger = logging.getLogger(__name__)
 
@@ -91,84 +85,6 @@ def _prediction_summary(conn):
 
 
 
-def _status_cards(conn):
-    cards = []
-    h = conn.execute("SELECT * FROM daily_health ORDER BY date DESC LIMIT 1").fetchone()
-    h4 = conn.execute("SELECT * FROM daily_health WHERE date <= date('now', '-28 days') ORDER BY date DESC LIMIT 1").fetchone()
-    if not h:
-        return cards
-
-    def delta(current, prev, invert=False):
-        if current is None or prev is None:
-            return ""
-        d = current - prev
-        if d == 0:
-            return "="
-        arrow = "↓" if d < 0 else "↑"
-        return f"{arrow}{abs(d):.0f}"
-
-    r = h["training_readiness"]
-    cards.append({"label": "Readiness", "value": r or "—", "unit": "",
-                  "color": SAFE if r and r >= 75 else CAUTION if r and r >= 50 else DANGER,
-                  "sub": delta(r, h4["training_readiness"] if h4 else None) + " 4wk" if h4 else "",
-                  "tooltip": "Garmin composite score (0-100). ≥75 = ready for quality sessions. 50-74 = easy day. <50 = rest. Based on sleep, HRV, stress, and recent training load."})
-
-    rhr = h["resting_heart_rate"]
-    cards.append({"label": "RHR", "value": rhr or "—", "unit": "bpm",
-                  "color": SAFE if rhr and rhr <= 58 else CAUTION,
-                  "sub": delta(rhr, h4["resting_heart_rate"] if h4 else None, invert=True) + " 4wk" if h4 else "",
-                  "tooltip": "Resting heart rate. Lower = fitter. Rising RHR signals fatigue, illness, or overtraining. Watch for trends, not single days."})
-
-    sleep_sub = []
-    if h["deep_sleep_hours"]:
-        sleep_sub.append(f"D{h['deep_sleep_hours']:.1f}")
-    try:
-        if h["rem_sleep_hours"]:
-            sleep_sub.append(f"R{h['rem_sleep_hours']:.1f}")
-    except (IndexError, KeyError):
-        pass
-    cards.append({"label": "Sleep", "value": f"{h['sleep_duration_hours']:.1f}" if h["sleep_duration_hours"] else "—",
-                  "unit": "h", "color": SAFE, "sub": " ".join(sleep_sub),
-                  "tooltip": "Total sleep last night. D=deep (physical recovery), R=REM (cognitive). Target: ≥7.5h total, ≥1h deep, ≥1.5h REM."})
-
-    hrv = h["hrv_last_night"]
-    cards.append({"label": "HRV", "value": hrv or "—", "unit": "ms", "color": ACCENT,
-                  "sub": delta(hrv, h4["hrv_last_night"] if h4 else None) + " 4wk" if h4 else "",
-                  "tooltip": "Heart rate variability (last night). Higher = more recovered. Drops after hard efforts, alcohol, poor sleep. Trends matter more than single values."})
-
-    vo2 = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
-    vo2_peak = conn.execute("SELECT MAX(vo2max) as peak FROM activities WHERE vo2max IS NOT NULL").fetchone()
-    vo2_4wk = conn.execute("SELECT vo2max FROM activities WHERE vo2max IS NOT NULL AND date <= date('now', '-28 days') ORDER BY date DESC LIMIT 1").fetchone()
-    vo2_sub = []
-    if vo2_peak and vo2_peak["peak"]:
-        vo2_sub.append(f"peak {vo2_peak['peak']}")
-    if vo2 and vo2_4wk:
-        vo2_sub.append(delta(vo2["vo2max"], vo2_4wk["vo2max"]) + " 4wk")
-    cards.append({"label": "VO2max", "value": vo2["vo2max"] if vo2 else "—", "unit": "", "color": ACCENT,
-                  "sub": " · ".join(vo2_sub)})
-
-    w = conn.execute("SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1").fetchone()
-    w_target = _weight_target(conn)
-    w_sub = []
-    if w_target:
-        w_sub.append(f"→ {w_target}kg")
-    cards.append({"label": "Weight", "value": f"{w['weight_kg']:.1f}" if w else "—", "unit": "kg", "color": CAUTION,
-                  "sub": " · ".join(w_sub)})
-
-    from fit.training_load import compute_rolling_acwr
-    v = compute_rolling_acwr(conn)   # rolling-7d acute — single source with coaching/CLI/alerts
-    if v:
-        cards.append({"label": "ACWR", "value": f"{v:.2f}", "unit": "",
-                      "color": SAFE if 0.8 <= v <= 1.3 else CAUTION if v <= 1.5 else DANGER,
-                      "sub": "safe" if 0.8 <= v <= 1.3 else "caution" if v <= 1.5 else "DANGER"})
-
-    streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
-    if streak and streak[0]:
-        cards.append({"label": "Streak", "value": streak[0], "unit": "wk", "color": SAFE if streak[0] >= 4 else CAUTION, "sub": "3+ runs"})
-
-    return cards
-
-
 # ── Check-in ──
 
 def _checkin(conn):
@@ -196,86 +112,6 @@ def _checkin(conn):
     if row["notes"]:
         fields.append(row["notes"])
     return {"date": row["date"], "fields": fields}
-
-
-# ── Journey Timeline ──
-
-def _journey(conn):
-    goal = conn.execute("SELECT * FROM goals WHERE active = 1 AND type = 'marathon' LIMIT 1").fetchone()
-    if not goal:
-        return None
-    phases = conn.execute("SELECT * FROM training_phases WHERE goal_id = ? AND status != 'revised' ORDER BY start_date",
-                          (goal["id"],)).fetchall()
-    if not phases:
-        return None
-
-    colors = {"completed": "rgba(34,197,94,0.4)", "active": "rgba(129,140,248,0.5)", "planned": "var(--track)"}
-    segments = []
-    position = ""
-    for p in phases:
-        # Build metric subtitle for each phase
-        metric = ""
-        if p["status"] == "completed" and p["actuals"]:
-            import json as _json
-            actuals = _json.loads(p["actuals"]) if isinstance(p["actuals"], str) else (p["actuals"] or {})
-            metric = f" ({actuals.get('weekly_km_avg', '?')}km/wk)" if actuals else ""
-        elif p["status"] == "active":
-            metric = f" ({p['weekly_km_min'] or '?'}-{p['weekly_km_max'] or '?'}km)"
-            position = f"You are here — {p['phase']}: {p['name']}"
-        elif p["status"] == "planned":
-            metric = f" ({p['weekly_km_min'] or '?'}-{p['weekly_km_max'] or '?'}km)"
-        seg = {"label": f"{p['name'][:10]}{metric}", "width": 1, "color": colors.get(p["status"], colors["planned"])}
-        segments.append(seg)
-
-    return {"goal_name": f"{goal['name']} → {goal['target_date']}", "segments": segments, "position": position or "No active phase"}
-
-
-# ── Week over Week ──
-
-def _week_over_week(conn):
-    """Narrative WoW sentence instead of raw numbers."""
-    try:
-        return generate_wow_sentence(conn)
-    except Exception:
-        return None
-
-
-# ── Run Timeline ──
-
-def _run_timeline(conn):
-    runs = conn.execute(f"""
-        SELECT date, distance_km, hr_zone, run_type, rpe FROM activities
-        WHERE type IN {RUNNING_TYPES_SQL} ORDER BY date DESC LIMIT 12
-    """).fetchall()
-    max_km = max((r["distance_km"] or 0 for r in runs), default=1) or 1
-    result = []
-    prev_date = None
-    for r in runs:
-        km = r["distance_km"] or 0
-        zone = r["hr_zone"] or "Z2"
-        _zone_colors = {"Z1": Z1, "Z2": Z2, "Z3": Z3, "Z4": Z4, "Z5": Z5}
-        color = _zone_colors.get(zone, Z2)
-        # Detect gap from previous run (list is DESC, so prev_date is more recent)
-        gap_days = None
-        if prev_date:
-            d1 = date.fromisoformat(r["date"])
-            d2 = date.fromisoformat(prev_date)
-            gap = (d2 - d1).days
-            if gap > 14:
-                gap_days = gap
-        prev_date = r["date"]
-        result.append({
-            "date": r["date"][5:],  # MM-DD
-            "distance_km": f"{km:.1f}",
-            "gap_days": gap_days,
-            "width": max(10, int(km / max_km * 100)),
-            "color": color,
-            "zone": zone,
-            "run_type": r["run_type"] or "",
-            "rpe": r["rpe"],
-        })
-    return result
-
 
 
 _DENSE_THRESHOLD = 3  # ≥ this many distinct readings → render as scatter chart
@@ -1066,121 +902,6 @@ def _coaching(conn):
     }
 
 
-# ── Milestones ──
-
-def _milestones(conn):
-    try:
-        from fit.milestones import detect_milestones
-        return detect_milestones(conn)
-    except Exception:
-        return []
-
-
-# ── Goal Progress ──
-
-def _goal_progress(conn):
-    """Build goal progress cards from the goals table — no hardcoded targets."""
-    results = []
-
-    goals = conn.execute("SELECT * FROM goals WHERE active = 1 ORDER BY id").fetchall()
-
-    for g in goals:
-        name = g["name"]
-        goal_type = g["type"]
-        target_value = g["target_value"]
-        target_unit = g["target_unit"] or ""
-
-        current = None
-        pct = None
-        icon = "🎯"
-        color = CAUTION
-        tooltip = ""
-
-        if goal_type == "metric" and target_value:
-            name_lower = name.lower()
-            if "vo2" in name_lower:
-                icon = "📈"
-                row = conn.execute(
-                    "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1"
-                ).fetchone()
-                if row:
-                    current = row["vo2max"]
-                    pct = min(current / target_value * 100, 100)
-                    color = SAFE if current >= target_value * 0.98 else CAUTION
-                    tooltip = (f"Maximum oxygen uptake. Current: {current:.0f} {target_unit}. "
-                               f"Target: {target_value:.0f}. Improves ~1/month with consistent training.")
-                    results.append({
-                        "icon": icon, "label": "VO2max",
-                        "current": f"{current:.0f}", "target": f"{target_value:.0f}",
-                        "unit": "", "pct": pct, "color": color, "tooltip": tooltip,
-                    })
-            elif "weight" in name_lower:
-                icon = "⚖️"
-                row = conn.execute(
-                    "SELECT weight_kg FROM body_comp ORDER BY date DESC LIMIT 1"
-                ).fetchone()
-                if row:
-                    current = row["weight_kg"]
-                    # Progress: how close to target. Simple: if at/below target = 100%,
-                    # otherwise show how far above target as a ratio (closer to target = higher %).
-                    # E.g. 78.3/75 → need to lose 3.3kg. If max reasonable excess is 10kg, pct = (10-3.3)/10 = 67%.
-                    max_excess = 10.0  # kg above target considered "start"
-                    excess = max(0, current - target_value)
-                    pct = max(0, min((max_excess - excess) / max_excess * 100, 100))
-                    color = SAFE if current <= target_value * 1.01 else CAUTION if current <= target_value * 1.04 else DANGER
-                    tooltip = (f"Current: {current:.1f}kg. Target: {target_value:.0f}kg. "
-                               f"Each kg lost saves ~2-3 sec/km over 42km.")
-                    results.append({
-                        "icon": icon, "label": "Weight",
-                        "current": f"{current:.1f}", "target": f"{target_value:.0f}",
-                        "unit": "kg", "pct": pct, "color": color, "tooltip": tooltip,
-                    })
-            else:
-                # Generic metric goal — show as-is
-                results.append({
-                    "icon": icon, "label": name[:15],
-                    "current": "—", "target": f"{target_value:.0f}",
-                    "unit": target_unit, "pct": None, "color": CAUTION,
-                    "tooltip": f"Target: {target_value} {target_unit}",
-                })
-
-        elif goal_type == "habit" and target_value:
-            icon = "🔥"
-            row = conn.execute(
-                "SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1"
-            ).fetchone()
-            s = row[0] if row and row[0] else 0
-            pct = min(s / target_value * 100, 100)
-            color = SAFE if s >= target_value * 0.75 else CAUTION if s >= target_value * 0.375 else DANGER
-            tooltip = (f"Consecutive weeks with 3+ runs. Current: {s}. "
-                       f"Target: {int(target_value)} weeks. The #1 predictor of marathon readiness.")
-            results.append({
-                "icon": icon, "label": "Streak",
-                "current": str(s), "target": str(int(target_value)),
-                "unit": "wk", "pct": pct, "color": color, "tooltip": tooltip,
-            })
-
-        elif goal_type in ("race", "marathon"):
-            # Race-type goals are waypoints in the race calendar, not objectives.
-            # They're shown in the race calendar section, not as objective cards.
-            # Exception: the main marathon goal (type='marathon') shows target time.
-            if goal_type == "marathon":
-                icon = "🏁"
-                target_time = g["target_time"] or ""
-                tooltip = f"{name}. Target: {target_time}."
-                results.append({
-                    "icon": icon, "label": name[:15],
-                    "current": target_time or "—", "target": "",
-                    "unit": "", "pct": None, "color": ACCENT, "tooltip": tooltip,
-                })
-            # type='race' goals (stepping stones) are intentionally NOT shown as objectives
-
-    # Next race countdown is shown in the upcoming races strip, not in objectives.
-    # Objectives section only contains training objectives serving the target race.
-
-    return results
-
-
 # ── Recent Alerts ──
 
 def _recent_alerts(conn):
@@ -1274,24 +995,6 @@ def _sleep_mismatches(conn):
             mismatches.append({"date": r["date"], "hours": f"{hours:.1f}", "quality": quality,
                                "msg": f"Only {hours:.1f}h but felt Good — monitor for cumulative deficit"})
     return mismatches
-
-
-# ── Trend Badges (3.2) ──
-
-def _trend_badges(conn):
-    try:
-        return generate_trend_badges(conn)
-    except Exception:
-        return []
-
-
-# ── Why Connectors (3.3) ──
-
-def _why_connectors(conn):
-    try:
-        return generate_why_connectors(conn)
-    except Exception:
-        return []
 
 
 # ── Race Countdown (3.6) ──
@@ -1408,29 +1111,6 @@ def _race_countdown(conn):
         return None
 
 
-# ── Walk Break (3.7) ──
-
-def _walk_break(conn):
-    try:
-        return detect_walk_break_need(conn)
-    except Exception:
-        return None
-
-
-# ── Z2 Remediation (3.10) ──
-
-def _z2_remediation(conn):
-    try:
-        from fit.config import get_config
-        config = get_config()
-    except Exception:
-        config = {"profile": {"zones_max_hr": {"z2": [115, 134]}}}
-    try:
-        return generate_z2_remediation(conn, config)
-    except Exception:
-        return None
-
-
 # ── Rolling Correlations (3.5) ──
 
 def _rolling_correlations(conn):
@@ -1473,37 +1153,6 @@ def _split_data(conn):
         return None
 
 
-def _upcoming_races(conn):
-    """Get upcoming races as waypoint pills for the Today tab."""
-    try:
-        from fit.goals import get_target_race, get_race_calendar_upcoming
-        target = get_target_race(conn)
-        target_id = target["id"] if target else None
-        upcoming = get_race_calendar_upcoming(conn)
-        result = []
-        for r in upcoming:
-            days = (date.fromisoformat(r["date"]) - date.today()).days
-            result.append({
-                "name": r["name"],
-                "distance": r["distance"],
-                "days": days,
-                "date": r["date"],
-                "is_target": r["id"] == target_id,
-            })
-        return result
-    except Exception:
-        return []
-
-
-def _plan_adherence(conn):
-    """Get plan adherence data for the current week."""
-    try:
-        from fit.plan import compute_plan_adherence
-        return compute_plan_adherence(conn)
-    except Exception:
-        return None
-
-
 # ── Helpers ──
 
 def _subtitle(conn):
@@ -1530,51 +1179,12 @@ def _body_summary(conn):
         return None
 
 
-def _volume_story(conn):
-    """Gap and milestone annotations for volume/timeline charts."""
-    try:
-        return generate_volume_story(conn)
-    except Exception:
-        return None
-
-
 def _checkin_progress(conn):
     """Progress toward correlation unlock thresholds."""
     try:
         return generate_checkin_progress(conn)
     except Exception:
         return {"total": 0, "target": 20, "pct": 0, "remaining": 20}
-
-
-def _status_cards_with_actions(conn):
-    """Status cards with actionable recommendation text."""
-    cards = _status_cards(conn)
-    for card in cards:
-        label = card.get("label", "")
-        value = card.get("value")
-        if label == "Readiness" and value and isinstance(value, (int, float)):
-            if value >= 75:
-                card["action"] = "Ready for quality session"
-            elif value >= 50:
-                card["action"] = "Easy run or rest"
-            else:
-                card["action"] = "Rest day"
-        elif label == "ACWR" and value and value != "—":
-            try:
-                v = float(value)
-                if 0.8 <= v <= 1.3:
-                    card["action"] = "Safe zone"
-                elif v < 0.6:
-                    card["action"] = "Build volume"
-                elif v <= 1.5:
-                    card["action"] = "Reduce load"
-                else:
-                    card["action"] = "Rest immediately"
-            except (ValueError, TypeError):
-                pass
-        elif label == "HRV":
-            card["action"] = "Trends > single values"
-    return cards
 
 
 def _fitness_profile_data(conn):
@@ -1634,34 +1244,6 @@ def _weight_card_data(conn):
             "change_span": change_span,
             "history": history,
         }
-    except Exception:
-        return None
-
-
-def _derived_objectives_data(conn):
-    """Derived objectives with achievability — same computation as CLI."""
-    try:
-        from fit.goals import get_target_race
-        from fit.fitness import derive_objectives, compute_achievability
-
-        target = get_target_race(conn)
-        if not target:
-            return None
-
-        days_left = (date.fromisoformat(target["date"]) - date.today()).days
-        derived = derive_objectives(conn, target["id"])
-        derived = compute_achievability(conn, derived, days_left)
-
-        # Filter out internal _dim_ objectives
-        visible = [o for o in derived if not o["name"].startswith("_dim_")]
-
-        # Add sparkline history from weekly_agg
-        history = _objective_history(conn)
-        for obj in visible:
-            key = obj["name"].lower().replace(" ", "_")
-            obj["history"] = history.get(key, [])
-
-        return {"objectives": visible, "race_name": target["name"], "target_time": target.get("target_time")}
     except Exception:
         return None
 

@@ -1,4 +1,4 @@
-"""Tests for race-anchored model: migration 007, get_target_race, milestones, goal progress."""
+"""Tests for race-anchored model: migration 007, get_target_race, goal progress."""
 
 import sqlite3
 from datetime import date, timedelta
@@ -6,7 +6,6 @@ from datetime import date, timedelta
 import pytest
 
 from fit.goals import get_target_race
-from fit.milestones import detect_milestones
 
 
 @pytest.fixture
@@ -140,49 +139,3 @@ class TestGetTargetRace:
 
 
 # ── Milestone Detection ──
-
-
-class TestMilestones:
-    def test_new_longest_run(self, db):
-        old_date = (date.today() - timedelta(days=30)).isoformat()
-        recent_date = (date.today() - timedelta(days=2)).isoformat()
-        db.execute("INSERT INTO activities (id, date, type, distance_km, run_type) VALUES ('r1', ?, 'running', 15.0, 'long')", (old_date,))
-        db.execute("INSERT INTO activities (id, date, type, distance_km, run_type) VALUES ('r2', ?, 'running', 18.0, 'long')", (recent_date,))
-        db.commit()
-
-        milestones = detect_milestones(db)
-        longest = [m for m in milestones if m["type"] == "longest_run"]
-        assert len(longest) >= 1
-        assert longest[0]["new_value"] == 18.0
-
-    def test_streak_milestone(self, db):
-        # Streak = 8 (exact milestone)
-        iso = date.today().isocalendar()
-        week = f"{iso.year}-W{iso.week:02d}"
-        db.execute("INSERT INTO weekly_agg (week, run_count, consecutive_weeks_3plus) VALUES (?, 4, 8)", (week,))
-        db.commit()
-
-        milestones = detect_milestones(db)
-        streaks = [m for m in milestones if m["type"] == "streak_milestone"]
-        assert len(streaks) >= 1
-
-    def test_no_milestones_single_run(self, db):
-        recent = (date.today() - timedelta(days=1)).isoformat()
-        db.execute("INSERT INTO activities (id, date, type, distance_km, run_type) VALUES ('r1', ?, 'running', 10.0, 'easy')", (recent,))
-        db.commit()
-
-        milestones = detect_milestones(db)
-        longest = [m for m in milestones if m["type"] == "longest_run"]
-        # Single run can't be a "new" longest since there's no previous
-        assert len(longest) == 0
-
-    def test_vo2max_peak(self, db):
-        old = (date.today() - timedelta(days=60)).isoformat()
-        recent = (date.today() - timedelta(days=3)).isoformat()
-        db.execute("INSERT INTO activities (id, date, type, vo2max, run_type) VALUES ('r1', ?, 'running', 48.0, 'easy')", (old,))
-        db.execute("INSERT INTO activities (id, date, type, vo2max, run_type) VALUES ('r3', ?, 'running', 51.0, 'easy')", (recent,))
-        db.commit()
-
-        milestones = detect_milestones(db)
-        vo2 = [m for m in milestones if m["type"] == "vo2max_peak"]
-        assert len(vo2) >= 1
