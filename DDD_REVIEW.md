@@ -66,8 +66,9 @@ Load-bearing concepts:
 3. **`inverse_vdot()` ≡ `compute_vdot_from_race()`** — the docstring admits "This is
    simply compute_vdot_from_race" (`fitness.py:356`; glossary D15). → **N3**.
 4. **`vo2max` the column = Garmin VO2max**, but the name drops "Garmin." The glossary is
-   emphatic that Garmin VO2max ≠ VDOT and is reference-only — yet `milestones.py:64`
-   surfaces a "VO2max peak" headline straight from it. → **N4**.
+   emphatic that Garmin VO2max ≠ VDOT and is reference-only. `detect_milestones`
+   (`milestones.py:64`) would build a "VO2max peak" from it — but that builder's output is
+   currently **unrendered** (a dead context key, §5 below), so it's latent, not live. → **N4**.
 5. **`checkins.rpe` vs `activities.rpe`** — the view aliases them `daily_rpe`/`activity_rpe`,
    but RPE's SSOT is now `activities.rpe` (Garmin) and is no longer collected via checkin
    (CLAUDE.md). `checkins.rpe` is a stale second home. → **P4**.
@@ -108,13 +109,26 @@ reasons about separately; one word makes the model ambiguous in code and convers
 intent "VDOT required for a target" is worth a name — call it
 `required_vdot_for_target(target_time, distance)`. Either way, kill the synonym.
 
-### N4 — `vo2max` column hides its provenance · *low–medium*
+### N4 — `vo2max` column hides its provenance · *low*
 **Location:** `activities.vo2max`, `_get_garmin_vo2max`, `milestones.py:64`.
-The column *is* Garmin VO2max, but the name omits it — and the SSOT contract says this
-value must never be a headline, yet `detect_milestones` emits a "VO2max peak" achievement
-from it. Renaming the column is expensive, so: (a) document it
-(`vo2max -- Garmin device estimate (reference-only; NOT VDOT)`), and (b) drop or relabel
-the VO2max-peak milestone, which contradicts the contract.
+The column *is* Garmin VO2max, but the name omits it. The documented SSOT contract
+(`CLAUDE.md`) says Garmin VO2max is reference-only — "never a headline number … don't
+reintroduce [it] as a displayed value" — and enumerates its allowed surfaces (the
+Anchor-vs-Garmin chart, the small sub-line). `detect_milestones` (`milestones.py:64`)
+would build a "VO2max peak" from the raw column, which is **not** one of those allowed
+surfaces.
+
+**Caveat — this is latent, not live:** the contract never names milestones (so the
+conflict is inference, not a documented violation), **and** the `milestones` builder is a
+dead context key — `generator.py:134` computes it every render but `dashboard.html` never
+references it (`DATA_LINEAGE.md §5`; re-verified by grep). So nothing reaches the user
+today.
+
+**Recommendation:** (a) document the column (`vo2max -- Garmin device estimate
+(reference-only; NOT VDOT)`); (b) don't treat the milestone as a standalone fix — fold it
+into the §5 dead-context-key cleanup. If the `milestones` builder is ever re-wired into
+the template, *then* the VO2max-peak entry must be dropped or relabelled to honour the
+contract.
 
 ---
 
