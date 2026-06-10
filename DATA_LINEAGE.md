@@ -361,6 +361,45 @@ The same concept computed by different routes, producing values that can disagre
 | D13 | **deload / build-streak** | one `_count_consecutive_build_weeks` | — | **RESOLVED** (2026-06-07) — `_check_deload_overdue` routes to the periodization helper (the 30%-drop rule); phase-local 4 / global 6 window bounds kept as intentional |
 | D14 | **next workouts** | one `_next_workouts_base` loader | — | **RESOLVED** (2026-06-07) — `_next_workouts` + `_next_workouts_enriched` share `_next_workouts_base` (query + name-cleaning); enriched only adds zone/HR |
 | D15 | **inverse_vdot** alias | `fitness.inverse_vdot` (`:313`) just calls `compute_vdot_from_race` | redundant name, no divergence | **open** (cosmetic) |
+| D16 | **time window** (rolling-7d vs ISO-week) | see §4.1 below | the recurring "which 7 days?" question behind D6–D9 | **policy stated** (2026-06-10) — rolling-7d for fitness-state; ISO-week for plan-cadence + history; monotony/strain converge still open |
+
+### 4.1 Window policy — rolling-7d vs ISO-week
+
+Both windows run through one aggregation core (`_aggregate_date_range`); only the
+boundary differs (`compute_rolling_week` = today-6→today; `compute_weekly_agg` =
+Mon→Sun, persisted in `weekly_agg`). **The rule:**
+
+- **Fitness-state "how am I right now" → rolling-7d.** A rolling window never lies on a
+  Tuesday the way a 2-day-old ISO week does. Volume, zone %, ACWR acute already follow
+  this (D6/D7/D8).
+- **Plan-cadence → ISO-week.** Training plans are *authored per calendar week* ("this
+  week: Mon easy, Wed tempo…"), so plan adherence is intrinsically a week question, not
+  a rolling one (D9). Keeping it ISO-week is deliberate, **not** an inconsistency.
+- **History / trend / streaks → ISO-week.** The `weekly_agg` store, the weekly bar
+  charts, and `consecutive_weeks_3plus` are weekly by nature — rolling them would be
+  wrong, not just different.
+
+| surface | window | source |
+|---|---|---|
+| volume (km / runs) — "now" | rolling-7d | `compute_rolling_week` |
+| zone compliance (Z1+Z2 %) — "now" | rolling-7d | `compute_rolling_week` |
+| ACWR acute — "now" | rolling-7d | `compute_rolling_acwr` (chronic = prior 4 ISO wk) |
+| plan adherence / compliance ring | **ISO-week** | `compute_plan_adherence` (plan cadence) |
+| monotony / strain (read by alerts) | **ISO-week** | `weekly_agg` ← `compute_weekly_agg` |
+| streak (`consecutive_weeks_3plus`) | ISO-week | `_compute_streak` |
+| historical series (volume/zone/ACWR charts) | ISO-week | `weekly_agg` |
+
+**Honest-labelling corollary:** a surface that shows an ISO-week figure must not sit
+under a rolling-7d frame unqualified. The Overview hero card pairs a `LAST 7 DAYS`
+rolling volume with a current-ISO-week compliance ring, so the ring is labelled
+"% plan **this week**" (not relabelling it would imply rolling-7d).
+
+**Still open (not an inconsistency the policy forbids, just not yet converged):**
+monotony/strain are only ever computed as ISO-week (`weekly_agg`) yet are read on the
+*live* alert path — candidate to add a rolling-7d form for "now" reads while keeping
+the ISO-week copy as the trend. And **chronic load** has two formulas for one concept
+(prior-4-ISO-weeks for the ACWR denominator vs the 28-day rolling
+`training_load.chronic_load`) — the separate `TODO(load-unification)`.
 
 ---
 
