@@ -33,10 +33,17 @@ class TestLast7DaysHero:
         assert hero["compliance_pct"] is None
 
     def test_compliance_with_plan(self, db, config):
-        """Compliance ring shows planned vs completed."""
+        """Compliance ring shows planned vs completed (current ISO week).
+
+        Anchored to this week's Monday so all three planned days fall inside the
+        compliance window — compute_plan_adherence is current-ISO-week (D9), so
+        the previous today-1/2/3 seeding straddled the week boundary and failed
+        when the suite ran early in the week (Mon-Wed).
+        """
         today = date.today()
+        monday = today - timedelta(days=today.weekday())
         for i in range(3):
-            d = (today - timedelta(days=i + 1)).isoformat()
+            d = (monday + timedelta(days=i)).isoformat()
             db.execute(
                 "INSERT INTO planned_workouts (date, workout_name, workout_type, status) "
                 "VALUES (?, 'Easy Run', 'easy', 'active')",
