@@ -138,7 +138,7 @@ flowchart LR
   classDef out fill:#11162a,stroke:#818cf8,color:#c7d2fe
   TL["activities.training_load"]:::src
   TL -->|"_aggregate_date_range · Σ daily (cycling UNWEIGHTED)"| TOT["weekly_agg.total_load"]:::dup
-  TL -->|"monotony=mean/stdev; strain=load×monotony (cycling ×0.3)"| STR["weekly_agg.monotony · strain"]:::dup
+  TL -->|"monotony=mean/stdev daily RUNNING load; strain=running load×monotony"| STR["weekly_agg.monotony · strain"]:::dup
   TOT -->|"_compute_acwr · ISO-week / mean prior 4wk"| ACS["weekly_agg.acwr (stored)"]:::dup
   TL -->|"compute_rolling_acwr · running-only · rolling-7d acute / trailing-28d chronic"| ACL["live ACWR"]:::fn
   ACL -->|"alert FIRE + auto-DISMISS (undertraining)"| ALR["alerts"]:::out
@@ -250,7 +250,7 @@ flowchart LR
 | speed_per_bpm_z2 (helper) | `analysis.compute_speed_per_bpm_z2` (`analysis.py:190`) | + z2_range default [115,134] | spb if avg_hr in Z2 — **but stored value is gated on active zone model in `enrich_activity`** |
 | run-type | `analysis.classify_run_type` (`analysis.py:203`) | type,name,distance,hr_zone,weekly_km | keywords + long-run rule; never 'race' |
 | enrich (orchestrator) | `analysis.enrich_activity` (`analysis.py:259`) | calls zones/spb/run-type | stamps zones, effort, spb, spb_z2 (=spb if hr_zone=='Z2'), lthr_used/max_hr_used |
-| date-range aggregate (km, zone-time, monotony, strain, load) | `analysis._aggregate_date_range` (`analysis.py:317`) | activities, daily_health, body_comp; config cycling_load_weight | sums + monotony=mean/stdev daily load, strain=load×monotony |
+| date-range aggregate (km, zone-time, monotony, strain, load) | `analysis._aggregate_date_range` (`analysis.py:317`) | activities, daily_health, body_comp; config cycling_load_weight | sums + monotony=mean/stdev daily RUNNING load, strain=running load×monotony (total_load stays all-activity) |
 | weekly agg (ISO) | `analysis.compute_weekly_agg` (`analysis.py:474`) | `_aggregate_date_range`+`_compute_acwr`+`_compute_streak` | ISO Mon–Sun |
 | rolling 7-day agg | `analysis.compute_rolling_week` (`analysis.py:500`) | `_aggregate_date_range` | today-6→today |
 | ACWR (rolling acute) | `analysis.compute_rolling_acwr` (`analysis.py:530`) | rolling-7d acute / 4 ISO-week chronic | live ACWR |
@@ -385,8 +385,8 @@ Mon→Sun, persisted in `weekly_agg`). **The rule:**
 | zone compliance (Z1+Z2 %) — "now" | rolling-7d | `compute_rolling_week` |
 | ACWR acute — "now" | rolling-7d, **running only** | `compute_rolling_acwr` (chronic = trailing-28d running-load primitive) |
 | plan adherence / compliance ring | **ISO-week** | `compute_plan_adherence` (plan cadence) |
-| monotony / strain — "now" (alerts + coaching) | rolling-7d | `compute_rolling_week` |
-| monotony sparkline (8-wk history) | ISO-week | `weekly_agg` |
+| monotony / strain — "now" (alerts + coaching) | rolling-7d, **running only** | `compute_rolling_week` |
+| monotony sparkline (8-wk history) | ISO-week, **running only** | `weekly_agg` |
 | streak (`consecutive_weeks_3plus`) | ISO-week | `_compute_streak` |
 | historical series (volume/zone/ACWR charts) | ISO-week | `weekly_agg` |
 
@@ -400,7 +400,10 @@ auto-dismiss) and the MCP coaching context now read rolling-7d monotony via
 `compute_rolling_week` — config-free so fire and dismiss compute the identical value
 (no weighted/unweighted split that would fire-then-instantly-dismiss). `weekly_agg`
 keeps the ISO-week copy as the 8-week sparkline/trend. `fit status` (CLI) already read
-rolling.
+rolling. Both are now computed over **running load only** (`_aggregate_date_range`:
+monotony = mean/stdev of daily running load, strain = weekly running load × monotony) —
+consistent with the running-only ACWR; cross-training is excluded. `total_load` itself
+stays all-activity (it feeds the ISO ACWR trend).
 
 **Chronic load (resolved 2026-06-10 — load-unification):** `compute_rolling_acwr`'s
 chronic denominator now reads the shared daily-load windowing primitive

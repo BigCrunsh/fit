@@ -196,6 +196,23 @@ class TestMonotonyStrain:
         assert result["monotony"] is None
         assert result["strain"] is None
 
+    def test_cross_training_excluded(self, db):
+        """Monotony/strain count RUNNING only — a big cycling block must not move
+        them (consistent with the running-only ACWR)."""
+        # 7 running days, one heavier → defined (non-None) monotony/strain.
+        days = ["2026-03-30", "2026-03-31", "2026-04-01", "2026-04-02",
+                "2026-04-03", "2026-04-04", "2026-04-05"]
+        for i, day in enumerate(days):
+            self._insert_run(db, day, training_load=120 if i == 0 else 100, id=f"run-{i}")
+        base = compute_weekly_agg(db, "2026-W14")
+        assert base["monotony"] is not None and base["strain"] is not None
+        # Add large cycling loads inside the week — excluded from monotony/strain.
+        self._insert_run(db, "2026-04-02", id="bike1", type="cycling", training_load=900)
+        self._insert_run(db, "2026-04-04", id="bike2", type="cycling", training_load=900)
+        after = compute_weekly_agg(db, "2026-W14")
+        assert after["monotony"] == base["monotony"]
+        assert after["strain"] == base["strain"]
+
 
 # ════════════════════════════════════════════════════════════════
 # 4.5 Cycling Volume Aggregation
