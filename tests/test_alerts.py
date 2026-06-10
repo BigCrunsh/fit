@@ -255,3 +255,47 @@ class TestACWRRollingAlert:
         alerts = run_alerts(db, config)
         types = [a["type"] for a in alerts]
         assert "undertraining" not in types
+
+
+class TestMonotonyRollingAlert:
+    """high_monotony reads rolling-7d monotony (window policy §4.1), not weekly_agg."""
+
+    def _insert_daily_runs(self, db, loads):
+        """One run per day across the rolling 7-day window (today-6..today)."""
+        today = date.today()
+        for i, load in enumerate(loads):
+            d = (today - timedelta(days=i)).isoformat()
+            db.execute(
+                "INSERT INTO activities (id, date, type, distance_km, duration_min, avg_hr, training_load) "
+                "VALUES (?, ?, 'running', 8, 50, 140, ?)",
+                (f"mono-{i}", d, load),
+            )
+        db.commit()
+
+    def test_fires_from_rolling_when_uniform_load(self, db, config):
+        # Near-uniform load across all 7 days → high monotony (>2.0). No weekly_agg row
+        # is inserted, so a fire proves the rule reads compute_rolling_week, not the store.
+        self._insert_daily_runs(db, [50, 50, 50, 50, 50, 50, 55])
+        types = [a["type"] for a in run_alerts(db, config)]
+        assert "high_monotony" in types
+
+    def test_not_fire_when_varied(self, db, config):
+        # Hard/rest mix → high day-to-day variance → low monotony (<2.0).
+        self._insert_daily_runs(db, [100, 0, 0, 80, 0, 0, 30])
+        types = [a["type"] for a in run_alerts(db, config)]
+        assert "high_monotony" not in types
+
+    def test_no_fire_on_empty_window(self, db, config):
+        # No activities → monotony undefined (stdev 0) → no alert, no crash.
+        types = [a["type"] for a in run_alerts(db, config)]
+        assert "high_monotony" not in types
+
+    def test_auto_dismiss_when_monotony_drops(self, db, config):
+        # A stale high_monotony alert is dismissed once the rolling window varies —
+        # fire and dismiss share the same rolling source, so they stay aligned.
+        db.execute("INSERT INTO alerts (date, type, message) VALUES (date('now'), 'high_monotony', 'Monotony is 2.6')")
+        self._insert_daily_runs(db, [100, 0, 0, 80, 0, 0, 30])
+        alerts = get_recent_alerts(db)
+        assert "high_monotony" not in [a["type"] for a in alerts]
+        ack = db.execute("SELECT acknowledged FROM alerts WHERE type = 'high_monotony'").fetchone()
+        assert ack["acknowledged"] == 1

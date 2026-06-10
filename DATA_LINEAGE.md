@@ -140,9 +140,9 @@ flowchart LR
   TL -->|"_aggregate_date_range · Σ daily (cycling UNWEIGHTED)"| TOT["weekly_agg.total_load"]:::dup
   TL -->|"monotony=mean/stdev; strain=load×monotony (cycling ×0.3)"| STR["weekly_agg.monotony · strain"]:::dup
   TOT -->|"_compute_acwr · ISO-week / mean prior 4wk"| ACS["weekly_agg.acwr (stored)"]:::dup
-  TL -->|"compute_rolling_acwr · rolling-7d / mean prior 4wk"| ACL["live ACWR"]:::fn
-  ACL -->|"alert FIRE (undertraining)"| ALR["alerts"]:::out
-  ACS -->|"auto-DISMISS · phase compliance"| ALR
+  TL -->|"compute_rolling_acwr · running-only · rolling-7d acute / trailing-28d chronic"| ACL["live ACWR"]:::fn
+  ACL -->|"alert FIRE + auto-DISMISS (undertraining)"| ALR["alerts"]:::out
+  ACS -->|"phase compliance"| ALR
   ACS --> CHA["chart-acwr"]:::out
   RK["weekly_agg.run_km"]:::src
   RK -->|"latest ISO row"| OV["Overview 'Volume'"]:::dup
@@ -351,7 +351,7 @@ The same concept computed by different routes, producing values that can disagre
 | D3 | **marathon/race prediction** | `_marathon_forecast`, `_race_countdown`, `_race_readiness_hero`, `_prediction_trend_data`, `chart-marathon-pred`, `chart-durability`, MCP `_ctx_forecast` | — | **RESOLVED** — all read the one durability-model forecast (median+interval+P); Overview hero/block/trend + Profile hero/Panel A/Panel B agree (verified 4:03). Degrade to the anchor, never the table |
 | D4 | **durability** | `_compute_resilience` drift-onset (HR:pace) · long-run **pace-fade** (speed) · model `beta_d` | — | **ADDRESSED** — glossary states the two siblings (Resilience = HR-decoupling, Pace-fade = speed give-back); dashboard leads with the measured signals, `beta_d` as the optimistic bound. Drift-definition consolidation (D5) still open |
 | D5 | **cardiac-drift onset** | ~~`compute_cardiac_drift` vs inline chart rule vs `_compute_drift_onset` vs periodization ×1.05~~ (was FIVE algorithms) | — | **RESOLVED** (2026-06-07) — all routes go through `compute_cardiac_drift`, now **grade-adjusted** (HR : flat-equivalent pace). Resilience dim = Distance Ceiling = chart-drift marker = trend, all one source. chart-drift-trend overlays a "raw (no grade-adj)" series for transparency |
-| D6 | **ACWR** | `compute_rolling_acwr` (live) **vs** `_compute_acwr` stored in weekly_agg | acute term differs (rolling-7d vs ISO-week) | **mostly fixed** (2026-06-07) — the dashboard ACWR **card** now uses `compute_rolling_acwr` (matches coaching/CLI). `weekly_agg.acwr` remains the ISO-week **trend** series (a distinct, labelled view). Alert fire-vs-dismiss alignment (`alerts.py:132`/`:294`) still open |
+| D6 | **ACWR** | `compute_rolling_acwr` (live) **vs** `_compute_acwr` stored in weekly_agg | acute term differs (rolling-7d vs ISO-week) | **RESOLVED** (2026-06-10) — card/coaching/CLI use `compute_rolling_acwr`, whose chronic now reads the shared daily-load primitive (load-unification, §4.1). `undertraining` fire **and** auto-dismiss both route through it (the fire-vs-dismiss gap is closed). `weekly_agg.acwr` stays the ISO-week **trend** (chart-acwr) by design |
 | D7 | **weekly volume / objectives** | one rolling-7d source | — | **RESOLVED** (2026-06-07) — `_overview_objectives` reads `compute_rolling_week` for volume/long-run/Z2 (matches the Training tab); only the streak stays ISO-week (CLAUDE.md) |
 | D8 | **Z2 / easy-% compliance** | rolling-7d on the dashboard; `chart-zones` per-ISO-week (historical) | — | **RESOLVED** (2026-06-07) — Overview Z2 joined `_training_objectives`/`_profile_takeaways` on `compute_rolling_week`; `chart-zones` stays per-ISO-week by design. **Justified deviation:** MCP `_ctx_training` keeps a 4-wk coaching *trend* (labelled, deliberately debugged) |
 | D9 | **plan adherence** | one `compute_plan_adherence` | — | **RESOLVED** (2026-06-07) — the hero compliance ring now calls `compute_plan_adherence` (current week, rest-excluded, distance/zone match), same as the weekly strip; the bespoke COUNT ratio is gone |
@@ -361,6 +361,58 @@ The same concept computed by different routes, producing values that can disagre
 | D13 | **deload / build-streak** | one `_count_consecutive_build_weeks` | — | **RESOLVED** (2026-06-07) — `_check_deload_overdue` routes to the periodization helper (the 30%-drop rule); phase-local 4 / global 6 window bounds kept as intentional |
 | D14 | **next workouts** | one `_next_workouts_base` loader | — | **RESOLVED** (2026-06-07) — `_next_workouts` + `_next_workouts_enriched` share `_next_workouts_base` (query + name-cleaning); enriched only adds zone/HR |
 | D15 | **inverse_vdot** alias | `fitness.inverse_vdot` (`:313`) just calls `compute_vdot_from_race` | redundant name, no divergence | **open** (cosmetic) |
+| D16 | **time window** (rolling-7d vs ISO-week) | see §4.1 below | the recurring "which 7 days?" question behind D6–D9 | **RESOLVED** (2026-06-10) — policy in §4.1: rolling-7d for fitness-state, ISO-week for plan-cadence + history. monotony/strain "now" reads (alerts + coaching) moved to rolling-7d; only chronic-load's dual formula (`TODO(load-unification)`) remains |
+
+### 4.1 Window policy — rolling-7d vs ISO-week
+
+Both windows run through one aggregation core (`_aggregate_date_range`); only the
+boundary differs (`compute_rolling_week` = today-6→today; `compute_weekly_agg` =
+Mon→Sun, persisted in `weekly_agg`). **The rule:**
+
+- **Fitness-state "how am I right now" → rolling-7d.** A rolling window never lies on a
+  Tuesday the way a 2-day-old ISO week does. Volume, zone %, ACWR acute already follow
+  this (D6/D7/D8).
+- **Plan-cadence → ISO-week.** Training plans are *authored per calendar week* ("this
+  week: Mon easy, Wed tempo…"), so plan adherence is intrinsically a week question, not
+  a rolling one (D9). Keeping it ISO-week is deliberate, **not** an inconsistency.
+- **History / trend / streaks → ISO-week.** The `weekly_agg` store, the weekly bar
+  charts, and `consecutive_weeks_3plus` are weekly by nature — rolling them would be
+  wrong, not just different.
+
+| surface | window | source |
+|---|---|---|
+| volume (km / runs) — "now" | rolling-7d | `compute_rolling_week` |
+| zone compliance (Z1+Z2 %) — "now" | rolling-7d | `compute_rolling_week` |
+| ACWR acute — "now" | rolling-7d, **running only** | `compute_rolling_acwr` (chronic = trailing-28d running-load primitive) |
+| plan adherence / compliance ring | **ISO-week** | `compute_plan_adherence` (plan cadence) |
+| monotony / strain — "now" (alerts + coaching) | rolling-7d | `compute_rolling_week` |
+| monotony sparkline (8-wk history) | ISO-week | `weekly_agg` |
+| streak (`consecutive_weeks_3plus`) | ISO-week | `_compute_streak` |
+| historical series (volume/zone/ACWR charts) | ISO-week | `weekly_agg` |
+
+**Honest-labelling corollary:** a surface that shows an ISO-week figure must not sit
+under a rolling-7d frame unqualified. The Overview hero card pairs a `LAST 7 DAYS`
+rolling volume with a current-ISO-week compliance ring, so the ring is labelled
+"% plan **this week**" (not relabelling it would imply rolling-7d).
+
+**Monotony/strain (resolved 2026-06-10):** the `high_monotony` alert (fire **and**
+auto-dismiss) and the MCP coaching context now read rolling-7d monotony via
+`compute_rolling_week` — config-free so fire and dismiss compute the identical value
+(no weighted/unweighted split that would fire-then-instantly-dismiss). `weekly_agg`
+keeps the ISO-week copy as the 8-week sparkline/trend. `fit status` (CLI) already read
+rolling.
+
+**Chronic load (resolved 2026-06-10 — load-unification):** `compute_rolling_acwr`'s
+chronic denominator now reads the shared daily-load windowing primitive
+(`chronic_load_before`, trailing 28 days before the acute window, uncoupled) instead of
+the prior-4-ISO-week `weekly_agg` totals — no ISO boundary, no weighted/unweighted split.
+ACWR and the marathon model share that primitive but **filter activities to suit their
+question**: ACWR counts **running only** (injury = running mechanical load — a hard bike
+week must not mask a running spike), the model counts **all activities** (fitness = total
+aerobic load, Decision 6). The `undertraining` alert's auto-dismiss was realigned to the
+same `compute_rolling_acwr` (was the stored `weekly_agg.acwr` ISO trend — the D6
+fire-vs-dismiss gap). `weekly_agg.acwr` remains the ISO-week **trend** (chart-acwr). All
+window-policy items are now closed.
 
 ---
 
@@ -391,9 +443,11 @@ these meanings; a name that contradicts the glossary is a bug.
   *(Renamed in migration 016 — formerly `garmin_lt`, `garmin_estimate`,
   `race_estimate`/`effort_estimate`, `race_extract`.)*
 - **Chronic load** — THE fitness-state primitive: trailing mean of daily
-  `training_load` (`fit.training_load.chronic_load`). ACWR's chronic denominator and
-  the forecast's fitness covariate both resolve to this one concept (one load model,
-  not two).
+  `training_load` over a window (`fit.training_load.chronic_load_before`). One windowing
+  model, not two. The forecast's fitness covariate counts **all** activities (aerobic
+  fitness, Decision 6); ACWR's chronic counts **running only** (running mechanical-load
+  injury risk). Same primitive, activity filter chosen per question — never two
+  ISO-vs-rolling formulas.
 - **ACWR** — acute(rolling 7d) ÷ chronic load: the *injury-risk ratio*. Not a fitness
   trend — that's the chronic level itself.
 - **Resilience** — aerobic-decoupling onset: the km where HR:pace decouples >5% within

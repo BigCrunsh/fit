@@ -758,7 +758,7 @@
       </div>
       {% if hero_card.compliance_pct is not none %}
       <div style="font-size:11px;color:var(--text-muted)">
-        <span style="font-weight:700;color:{% if hero_card.compliance_pct >= 80 %}var(--safe){% elif hero_card.compliance_pct >= 50 %}var(--caution){% else %}var(--danger){% endif %}">{{ hero_card.compliance_pct }}%</span> plan
+        <span style="font-weight:700;color:{% if hero_card.compliance_pct >= 80 %}var(--safe){% elif hero_card.compliance_pct >= 50 %}var(--caution){% else %}var(--danger){% endif %}">{{ hero_card.compliance_pct }}%</span> plan this week
         <span style="font-size:9px;color:var(--text-dim)">({{ hero_card.compliance_completed }}/{{ hero_card.compliance_total }})</span>
       </div>
       {% endif %}

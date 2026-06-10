@@ -353,11 +353,11 @@ def _ctx_health(conn) -> list[str]:
     streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
     if streak:
         s.append(f"Consistency streak: {streak['consecutive_weeks_3plus']} weeks with 3+ runs")
-    # Monotony/strain — leading overtraining indicators
-    ms_row = conn.execute("SELECT monotony, strain FROM weekly_agg WHERE monotony IS NOT NULL ORDER BY week DESC LIMIT 1").fetchone()
-    if ms_row:
-        m, st = ms_row["monotony"], ms_row["strain"]
-        m_flag = " (HIGH — overtraining risk)" if m and m > 2.0 else ""
+    # Monotony/strain — leading overtraining indicators. Rolling-7d "now" read
+    # (window policy §4.1), reusing `rolling` above; weekly_agg stays the ISO-week trend.
+    m, st = rolling.get("monotony"), rolling.get("strain")
+    if m is not None:
+        m_flag = " (HIGH — overtraining risk)" if m > 2.0 else ""
         s.append(f"Monotony: {m}{m_flag}, Strain: {st}")
     return s
 
