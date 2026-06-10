@@ -339,7 +339,7 @@ def _aggregate_date_range(conn: sqlite3.Connection, start_date: date,
     end_iso = end_date.isoformat()
 
     runs = conn.execute(f"""
-        SELECT distance_km, duration_min, pace_sec_per_km, avg_hr, avg_cadence,
+        SELECT date, distance_km, duration_min, pace_sec_per_km, avg_hr, avg_cadence,
                training_load, hr_zone, run_type
         FROM activities
         WHERE type IN {RUNNING_TYPES_SQL} AND date BETWEEN ? AND ?
@@ -395,10 +395,10 @@ def _aggregate_date_range(conn: sqlite3.Connection, start_date: date,
     cross_count = len(cross)
     cross_min = sum(c["duration_min"] or 0 for c in cross)
 
-    # Combined load. Cycling is cross-training, downweighted by cycling_load_weight
-    # (default 0.3) — applied to BOTH total_load and the daily loads behind
-    # monotony/strain below, so strain (= total_load × monotony) isn't a
-    # weighted/unweighted mix (D11). With no config the weight is 1.0 (unweighted).
+    # Combined load (all activities). Cycling is cross-training, downweighted by
+    # cycling_load_weight (default 0.3); with no config the weight is 1.0. This
+    # all-activity total is stored as weekly_agg.total_load and feeds the ISO-week
+    # ACWR trend (_compute_acwr).
     cycling_load_weight = 1.0
     if config:
         cycling_load_weight = config.get("analysis", {}).get("cycling_load_weight", 0.3)
@@ -408,22 +408,23 @@ def _aggregate_date_range(conn: sqlite3.Connection, start_date: date,
         for c in cross
     )
 
+    # Monotony / strain are RUNNING-only — a running training-variation / fatigue
+    # signal, consistent with the running-only ACWR (cross-training doesn't belong in a
+    # running overtraining metric). monotony = mean/stdev of daily RUNNING load;
+    # strain = weekly RUNNING load × monotony (Foster). Both exclude cross-training, so
+    # neither is a running/cross mix.
+    running_load = sum(r["training_load"] or 0 for r in runs)
+    # Per-day running load from the `runs` already fetched (which is filtered to
+    # RUNNING_TYPES) — no extra per-day query, and the daily series stays purely
+    # running, matching running_load.
+    load_by_day: dict[str, float] = {}
+    for r in runs:
+        load_by_day[r["date"]] = load_by_day.get(r["date"], 0.0) + (r["training_load"] or 0)
     num_days = (end_date - start_date).days + 1
-    daily_loads = []
-    for day_offset in range(num_days):
-        d = (start_date + timedelta(days=day_offset)).isoformat()
-        day_activities = conn.execute("""
-            SELECT training_load, duration_min, type FROM activities
-            WHERE date = ?
-        """, (d,)).fetchall()
-        day_load = 0.0
-        for act in day_activities:
-            load = act["training_load"] or 0
-            if act["type"] == "cycling":
-                day_load += load * cycling_load_weight
-            else:
-                day_load += load
-        daily_loads.append(day_load)
+    daily_loads = [
+        load_by_day.get((start_date + timedelta(days=o)).isoformat(), 0.0)
+        for o in range(num_days)
+    ]
 
     n_days = len(daily_loads)
     mean_load = sum(daily_loads) / n_days if n_days > 0 else 0
@@ -436,7 +437,7 @@ def _aggregate_date_range(conn: sqlite3.Connection, start_date: date,
 
     if stdev_load > 0:
         monotony = round(mean_load / stdev_load, 2)
-        strain = round(total_load * monotony, 1)
+        strain = round(running_load * monotony, 1)
     else:
         monotony = None
         strain = None
