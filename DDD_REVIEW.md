@@ -324,7 +324,7 @@ class PhaseRepository:
 instead of an ad-hoc dict re-shaped in several builders.
 
 ### E5 — `Activity`: stop mutating a dict in place · *highest value, largest lift — stage it*
-**Location:** `analysis.py:270 enrich_activity` and its derivers (`classify_run_type`,
+**Location:** `analysis.py:270 enrich_activity` and its callers (`classify_run_type`,
 `compute_speed_per_bpm*`, `compute_effort_class`).
 **What's wrong:** the platform's central entity is a bare dict, and enrichment is
 *side-effecting*:
@@ -385,3 +385,79 @@ clean aggregate refactor. E5 is the big one — real, but stage it.
 Suggested first change: **E1+E2 together** (the `CalibrationAnchor` value object plus the
 `CalibrationMethod`/`Confidence` enums), as a single OpenSpec change with the consumer
 migration list and tests.
+
+---
+
+## Appendix A — Physio Calibration: ubiquitous language (deep-dive)
+
+A focused Phase-1 pass over **one bounded context** (`calibration.py`), reconciling its code
+against the agreed glossary (`DATA_LINEAGE.md §6`). The package-level review above names the
+high-impact tactical fixes (E1, E2, N4); this appendix adds the **per-concept glossary** §6
+doesn't yet carry, and surfaces **two language tangles** the broad pass didn't: the `active`
+homonym and the `fitness anchor` synonym. The overlapping findings cross-reference rather than
+restate (K1→E1, K2→E2, K3→N4).
+
+**Already matching §6:** the trust precedence (`confirmed > device > policy > legacy`), the
+method names renamed by migration `016` (`device_lt`, `device_vo2max`, `race_observation`,
+`effort_observation`, `race_candidate`), the VDOT≠Garmin-VO2max split, and
+`get_calibration_anchor` as the single read path. The strategic vocabulary holds.
+
+### A.1 — Glossary (calibration concepts)
+
+`status`: **agreed** (in §6, code matches) · **code-only** (real concept, absent from §6 —
+candidate to promote) · **conflict** (contradicts/ambiguous vs §6 — see A.3). SSOT for every
+term is `calibration.py`.
+
+| term | definition | role | grain / lifecycle | status |
+|------|------------|------|-------------------|--------|
+| **Calibration** (reading) | One recorded value of a metric, with method, confidence, date, flags | Entity | one observation; inserted `active=1`, prior rows flip to `0`; never updated, only superseded | code-only |
+| **Calibration anchor** | The single canonical value per metric, resolved by precedence | Value object (from a domain service) | one per metric, recomputed every read | agreed *(K1)* |
+| **Metric** | Quantity calibrated: `max_hr`, `lthr`, `aet`, `vdot`, `vo2max`, `weight` | Value object / enum | string key | conflict *(K3)* |
+| **Method** | Reading provenance (`manual`, `confirmed`, `device_lt`, `device_vo2max`, `race_observation`, `effort_observation`, `race_candidate`, `activity_max`, `drift_test`, `scale`) | Value object / enum | persisted string (migration 016) | agreed *(K2)* |
+| **Trust tier / method taxonomy** | `CONFIRMED > DEVICE > REFERENCE > INFORMATIONAL` (+ auto candidates) — which source wins | Classification VO | intrinsic to method | agreed (impl. as 4 string-sets, not a type — E2) |
+| **Confidence** | `high / medium / low` quality of a reading | Value object (ordered) | per reading; `stale → low` applied at query time | agreed |
+| **Aggregation policy** | Per-metric estimator — `max` (one-sided: VDOT, MaxHR) vs `median` (two-sided: LTHR, AeT) + window, min_samples, `differs` tol | Domain policy | one per anchored metric | code-only |
+| **Suggestion (policy estimate)** | Windowed aggregate of observation rows + `differs` flag + reason + confidence | Value object | one per metric per read; `None` if no in-window obs | code-only |
+| **Flag taxonomy** | Per-reading tags: `implausible_value`, `agrees_with_prior`, `unexpected_direction`, `new_peak`, `weak_context` (`spike`) | Value object (set) | per reading | code-only |
+| **Staleness** | Value older than the metric's threshold → prompt a re-test | Domain rule | per metric | code-only |
+| **Suggest→confirm governance** | `evaluate_suggestions` → accept (writes a `confirmed` anchor) / reject (ledger suppresses re-nag) | Domain service + JSON ledger | `calibration_review.json` sidecar | code-only |
+
+### A.2 — Synonyms & homonyms (net-new)
+
+- **`active` has three referents** — the kind of overload that makes "which value is live?"
+  ambiguous in both code and conversation:
+  1. the `active` **DB column** = *last-inserted* bookkeeping (`add_calibration` flips it);
+  2. `get_active_calibration()` = the *confidence-aware currently-selected row*;
+  3. the **anchor value** = *what consumers actually use* — which may be the policy estimate,
+     not any single active row.
+  `add_calibration`'s own docstring (`calibration.py:424`) warns the column "reflects last
+  inserted, not currently used." §6 doesn't define "active" at all. → Name the three distinctly.
+- **`anchor` / `fitness anchor` is a synonym *and* a homonym.** `get_calibration_anchor`
+  returns the *canonical value*; `get_fitness_anchors` (`fitness.py`, consumed by
+  `cards.py`/`charts.py`) returns the *qualifying efforts* that feed VDOT. Yet `calibration.py`
+  comments (`:214`, `:309`) call the canonical value a **"fitness anchor"** — so "fitness
+  anchor" is at once a synonym for *calibration anchor* and a homonym with the *effort rows*.
+  → Reserve **"calibration anchor"** for the value; call the efforts **"anchor candidates."**
+  (Straddles the calibration↔performance context seam.)
+- **`candidate` vs `suggestion`** — `race_candidate` (a stored method/row) and the policy
+  *suggestion* (a computed estimate) both connote "proposed, not yet active" but are different
+  mechanisms. Keep distinct.
+
+### A.3 — Conflicts for the owner (no winner picked)
+
+- **K1 — an anchor with `value=None` contradicts §6** *(= E1).* §6 defines the anchor as "the
+  single canonical **value**," but `calibration.py:399` returns `{value: None, …}`, and 5+
+  consumers defensively re-check it (`marathon/features.py:75`, `fitness.py:79/351`,
+  `report/sections/cards.py:319/922`, `mcp/server.py:297`). A valueless anchor is a non-anchor
+  wearing the name. This is **in-memory payload, not persisted data** — safe to bind "anchor ⇒
+  has value" and return `None`.
+- **K2 — `policy` and `legacy` are trust *tiers* with no method-vocabulary home** *(relates
+  to E2).* §6's precedence reads "… > policy estimate > legacy," yet `policy` is injected as a
+  synthesized `method` string (`:392`) absent from the taxonomy, and "legacy" names only the
+  catch-all branch (`:393`) with no method string at all. Are they methods or tiers? → Decide:
+  pin both as tiers; stop overloading the `method` field with a synthesized `"policy"`.
+- **K3 — the `vo2max` metric key drops its Garmin provenance** *(= N4, at the metric level).*
+  Migration `016` fixed the *method* (`garmin_estimate` → `device_vo2max`) but the stored
+  *metric* key is still `vo2max`. Within calibration it's unambiguous (no policy,
+  reference-only). **This is persisted data — not recommending a mutation;** decision is
+  doc/display-label only (annotate the column), or leave as-is.
