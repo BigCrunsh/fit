@@ -1312,6 +1312,17 @@ class TestRollingACWR:
             self._insert_run(db, day, id=f"a{i}", training_load=100)  # acute only
         assert compute_rolling_acwr(db, end_date=self.END) is None
 
+    def test_rolling_acwr_excludes_cycling(self, db):
+        """Cross-training is ignored — ACWR is a RUNNING-load ratio. A huge bike block
+        in either window must not move it (vs the 1.5 of test_rolling_acwr_with_history)."""
+        self._chronic(db, 200)  # running chronic → weekly 200
+        for i, day in enumerate(["2026-04-20", "2026-04-22", "2026-04-24"]):
+            self._insert_run(db, day, id=f"a{i}", training_load=100)  # running acute = 300
+        # Big cycling loads in the acute AND chronic windows — must be excluded.
+        self._insert_run(db, "2026-04-21", id="bike-a", type="cycling", training_load=1000)
+        self._insert_run(db, "2026-04-10", id="bike-c", type="cycling", training_load=1000)
+        assert compute_rolling_acwr(db, end_date=self.END) == pytest.approx(1.5, abs=0.01)
+
 
 # ════════════════════════════════════════════════════════════════
 # Daniels training paces

@@ -1,9 +1,11 @@
 """Training-Load context — the shared load primitives.
 
 Bounded context (DDD review): everything derived from `training_load` lives here so
-load concepts cannot silently fork. The CHRONIC-LOAD primitive below is the single
-fitness-state concept platform-wide (marathon-durability-model Decision 6): ACWR's
-chronic denominator and the forecast's fitness covariate must both resolve to it (F2).
+load concepts cannot silently fork. The CHRONIC-LOAD windowing primitive below
+(`chronic_load_before`) is the single fitness-state model platform-wide
+(marathon-durability-model Decision 6): ACWR's chronic denominator and the forecast's
+fitness covariate both resolve to it (F2) — they differ only by activity filter (ACWR =
+running only; the forecast = all activities), never by a second ISO-vs-rolling formula.
 
 Incremental context split: functions move here from `fit/analysis.py` with re-export
 shims left behind; new load code lands here directly. Still in `fit/analysis.py`
@@ -11,9 +13,11 @@ shims left behind; new load code lands here directly. Still in `fit/analysis.py`
 coupled to weekly_agg writes), monotony/strain, sRPE.
 
 load-unification (DONE 2026-06-10): the live `compute_rolling_acwr` chronic denominator
-now reads the daily-load primitive (`chronic_load_before`), not the prior-4-ISO-week
-`weekly_agg` totals — one chronic-load concept platform-wide (ACWR + marathon model).
-Only `weekly_agg.acwr` keeps an ISO-week form, deliberately, as the chart-acwr trend.
+now reads the daily-load windowing primitive (`chronic_load_before`), not the
+prior-4-ISO-week `weekly_agg` totals. ACWR and the marathon model share that primitive
+but filter activities to suit their question: ACWR counts RUNNING only (injury = running
+mechanical load), the model counts all activities (fitness = total aerobic load, Decision
+6). `weekly_agg.acwr` keeps an ISO-week form, deliberately, as the chart-acwr trend.
 """
 
 from __future__ import annotations
@@ -68,28 +72,38 @@ def chronic_load(conn: sqlite3.Connection, asof: date | None = None,
 
 def compute_rolling_acwr(conn: sqlite3.Connection, end_date: date | None = None,
                          config: dict | None = None) -> float | None:
-    """Rolling ACWR from the one shared daily-load primitive (no weekly_agg / ISO week).
+    """Rolling ACWR over RUNNING load only — the injury-risk ratio for running.
 
-    acute   = total load over the last 7 days (``end_date-6 .. end_date``).
-    chronic = mean WEEKLY load over the 28 days BEFORE that window (uncoupled) — the
-              shared ``chronic_load_before`` primitive evaluated at the acute-window
-              start, scaled ×7 so it is comparable to the 7-day acute sum.
+    acute   = total running load over the last 7 days (``end_date-6 .. end_date``).
+    chronic = mean WEEKLY running load over the 28 days BEFORE that window (uncoupled) —
+              the shared ``chronic_load_before`` windowing primitive evaluated at the
+              acute-window start, scaled ×7 so it is comparable to the 7-day acute sum.
 
-    Both terms read ``DAILY_LOAD_SQL`` (raw daily load), so there is no weighted /
-    unweighted split and no ISO-week boundary: the live ACWR and the marathon model now
-    resolve chronic load the *same* way (load-unification — was: acute from
-    ``compute_rolling_week`` vs chronic from the cycling-weighted ``weekly_agg`` ISO
-    totals). The stored ``weekly_agg.acwr`` stays the ISO-week **trend** series
-    (chart-acwr); this is the live "now" read. ``config`` is accepted for signature
-    stability but unused (raw load only). Returns None without ≥3 weeks of history or a
-    positive chronic base; spikes >3.0 are capped to None.
+    Cross-training (cycling, etc.) is **excluded**: ACWR is a *running* mechanical-load
+    ratio, so a hard bike week must not mask a running spike (nor a bike block prop the
+    chronic baseline). This differs from the marathon model's *fitness* covariate
+    (``chronic_load``), which counts all activities (cross-training is aerobic fitness —
+    marathon-durability-model Decision 6); the two share the windowing primitive but
+    filter activities to suit their question.
+
+    There is no ISO-week boundary and no weighted/unweighted split (the old chronic read
+    cycling-weighted ``weekly_agg`` ISO totals). The stored ``weekly_agg.acwr`` stays the
+    ISO-week **trend** series (chart-acwr); this is the live "now" read. ``config`` is
+    accepted for signature stability but unused. Returns None without ≥3 weeks of history
+    or a positive chronic base; spikes >3.0 are capped to None.
     """
     import pandas as pd
+    from fit.analysis import RUNNING_TYPES_SQL  # local: avoid import cycle
 
     if end_date is None:
         end_date = date.today()
 
-    dl = pd.read_sql_query(DAILY_LOAD_SQL, conn, parse_dates=["date"])
+    running_daily_load_sql = (
+        "SELECT date, SUM(training_load) AS load FROM activities "
+        f"WHERE training_load IS NOT NULL AND type IN {RUNNING_TYPES_SQL} "
+        "GROUP BY date ORDER BY date"
+    )
+    dl = pd.read_sql_query(running_daily_load_sql, conn, parse_dates=["date"])
     if dl.empty:
         return None
     day_ord = dl["date"].map(pd.Timestamp.toordinal).to_numpy()
@@ -97,13 +111,13 @@ def compute_rolling_acwr(conn: sqlite3.Connection, end_date: date | None = None,
 
     ref = end_date.toordinal()
     acute_start = ref - 6
-    # Need ≥3 weeks of history before "now" (mirrors the old ≥3-of-4-prior-weeks guard).
+    # Need ≥3 weeks of running history before "now" (mirrors the old ≥3-of-4-weeks guard).
     if int(day_ord.min()) > ref - 21:
         return None
 
     acute = float(day_load[(day_ord >= acute_start) & (day_ord <= ref)].sum())
-    # Uncoupled chronic: daily-mean load over the 28 days before the acute window,
-    # scaled to a weekly total. Same primitive the marathon model reads.
+    # Uncoupled chronic: daily-mean running load over the 28 days before the acute
+    # window, scaled to a weekly total (same windowing primitive as the model).
     chronic_weekly = chronic_load_before(acute_start, day_ord, day_load, CHRONIC_WINDOW_DAYS) * 7.0
     if chronic_weekly <= 0:
         return None

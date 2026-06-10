@@ -140,7 +140,7 @@ flowchart LR
   TL -->|"_aggregate_date_range · Σ daily (cycling UNWEIGHTED)"| TOT["weekly_agg.total_load"]:::dup
   TL -->|"monotony=mean/stdev; strain=load×monotony (cycling ×0.3)"| STR["weekly_agg.monotony · strain"]:::dup
   TOT -->|"_compute_acwr · ISO-week / mean prior 4wk"| ACS["weekly_agg.acwr (stored)"]:::dup
-  TL -->|"compute_rolling_acwr · rolling-7d acute / trailing-28d daily chronic"| ACL["live ACWR"]:::fn
+  TL -->|"compute_rolling_acwr · running-only · rolling-7d acute / trailing-28d chronic"| ACL["live ACWR"]:::fn
   ACL -->|"alert FIRE + auto-DISMISS (undertraining)"| ALR["alerts"]:::out
   ACS -->|"phase compliance"| ALR
   ACS --> CHA["chart-acwr"]:::out
@@ -383,7 +383,7 @@ Mon→Sun, persisted in `weekly_agg`). **The rule:**
 |---|---|---|
 | volume (km / runs) — "now" | rolling-7d | `compute_rolling_week` |
 | zone compliance (Z1+Z2 %) — "now" | rolling-7d | `compute_rolling_week` |
-| ACWR acute — "now" | rolling-7d | `compute_rolling_acwr` (chronic = trailing-28d daily-load primitive) |
+| ACWR acute — "now" | rolling-7d, **running only** | `compute_rolling_acwr` (chronic = trailing-28d running-load primitive) |
 | plan adherence / compliance ring | **ISO-week** | `compute_plan_adherence` (plan cadence) |
 | monotony / strain — "now" (alerts + coaching) | rolling-7d | `compute_rolling_week` |
 | monotony sparkline (8-wk history) | ISO-week | `weekly_agg` |
@@ -403,13 +403,16 @@ keeps the ISO-week copy as the 8-week sparkline/trend. `fit status` (CLI) alread
 rolling.
 
 **Chronic load (resolved 2026-06-10 — load-unification):** `compute_rolling_acwr`'s
-chronic denominator now reads the shared daily-load primitive (`chronic_load_before`,
-trailing 28 days before the acute window, uncoupled) instead of the prior-4-ISO-week
-`weekly_agg` totals — so the live ACWR and the marathon model resolve chronic load the
-*same* way (one concept, raw daily load, no cycling weighted/unweighted split). The
-`undertraining` alert's auto-dismiss was realigned to the same `compute_rolling_acwr`
-(was the stored `weekly_agg.acwr` ISO trend — the D6 fire-vs-dismiss gap). `weekly_agg.acwr`
-remains the ISO-week **trend** (chart-acwr). All window-policy items are now closed.
+chronic denominator now reads the shared daily-load windowing primitive
+(`chronic_load_before`, trailing 28 days before the acute window, uncoupled) instead of
+the prior-4-ISO-week `weekly_agg` totals — no ISO boundary, no weighted/unweighted split.
+ACWR and the marathon model share that primitive but **filter activities to suit their
+question**: ACWR counts **running only** (injury = running mechanical load — a hard bike
+week must not mask a running spike), the model counts **all activities** (fitness = total
+aerobic load, Decision 6). The `undertraining` alert's auto-dismiss was realigned to the
+same `compute_rolling_acwr` (was the stored `weekly_agg.acwr` ISO trend — the D6
+fire-vs-dismiss gap). `weekly_agg.acwr` remains the ISO-week **trend** (chart-acwr). All
+window-policy items are now closed.
 
 ---
 
@@ -440,9 +443,11 @@ these meanings; a name that contradicts the glossary is a bug.
   *(Renamed in migration 016 — formerly `garmin_lt`, `garmin_estimate`,
   `race_estimate`/`effort_estimate`, `race_extract`.)*
 - **Chronic load** — THE fitness-state primitive: trailing mean of daily
-  `training_load` (`fit.training_load.chronic_load`). ACWR's chronic denominator and
-  the forecast's fitness covariate both resolve to this one concept (one load model,
-  not two).
+  `training_load` over a window (`fit.training_load.chronic_load_before`). One windowing
+  model, not two. The forecast's fitness covariate counts **all** activities (aerobic
+  fitness, Decision 6); ACWR's chronic counts **running only** (running mechanical-load
+  injury risk). Same primitive, activity filter chosen per question — never two
+  ISO-vs-rolling formulas.
 - **ACWR** — acute(rolling 7d) ÷ chronic load: the *injury-risk ratio*. Not a fitness
   trend — that's the chronic level itself.
 - **Resilience** — aerobic-decoupling onset: the km where HR:pace decouples >5% within
