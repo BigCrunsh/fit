@@ -361,7 +361,7 @@ The same concept computed by different routes, producing values that can disagre
 | D13 | **deload / build-streak** | one `_count_consecutive_build_weeks` | — | **RESOLVED** (2026-06-07) — `_check_deload_overdue` routes to the periodization helper (the 30%-drop rule); phase-local 4 / global 6 window bounds kept as intentional |
 | D14 | **next workouts** | one `_next_workouts_base` loader | — | **RESOLVED** (2026-06-07) — `_next_workouts` + `_next_workouts_enriched` share `_next_workouts_base` (query + name-cleaning); enriched only adds zone/HR |
 | D15 | **inverse_vdot** alias | `fitness.inverse_vdot` (`:313`) just calls `compute_vdot_from_race` | redundant name, no divergence | **open** (cosmetic) |
-| D16 | **time window** (rolling-7d vs ISO-week) | see §4.1 below | the recurring "which 7 days?" question behind D6–D9 | **policy stated** (2026-06-10) — rolling-7d for fitness-state; ISO-week for plan-cadence + history; monotony/strain converge still open |
+| D16 | **time window** (rolling-7d vs ISO-week) | see §4.1 below | the recurring "which 7 days?" question behind D6–D9 | **RESOLVED** (2026-06-10) — policy in §4.1: rolling-7d for fitness-state, ISO-week for plan-cadence + history. monotony/strain "now" reads (alerts + coaching) moved to rolling-7d; only chronic-load's dual formula (`TODO(load-unification)`) remains |
 
 ### 4.1 Window policy — rolling-7d vs ISO-week
 
@@ -385,7 +385,8 @@ Mon→Sun, persisted in `weekly_agg`). **The rule:**
 | zone compliance (Z1+Z2 %) — "now" | rolling-7d | `compute_rolling_week` |
 | ACWR acute — "now" | rolling-7d | `compute_rolling_acwr` (chronic = prior 4 ISO wk) |
 | plan adherence / compliance ring | **ISO-week** | `compute_plan_adherence` (plan cadence) |
-| monotony / strain (read by alerts) | **ISO-week** | `weekly_agg` ← `compute_weekly_agg` |
+| monotony / strain — "now" (alerts + coaching) | rolling-7d | `compute_rolling_week` |
+| monotony sparkline (8-wk history) | ISO-week | `weekly_agg` |
 | streak (`consecutive_weeks_3plus`) | ISO-week | `_compute_streak` |
 | historical series (volume/zone/ACWR charts) | ISO-week | `weekly_agg` |
 
@@ -394,12 +395,16 @@ under a rolling-7d frame unqualified. The Overview hero card pairs a `LAST 7 DAY
 rolling volume with a current-ISO-week compliance ring, so the ring is labelled
 "% plan **this week**" (not relabelling it would imply rolling-7d).
 
-**Still open (not an inconsistency the policy forbids, just not yet converged):**
-monotony/strain are only ever computed as ISO-week (`weekly_agg`) yet are read on the
-*live* alert path — candidate to add a rolling-7d form for "now" reads while keeping
-the ISO-week copy as the trend. And **chronic load** has two formulas for one concept
-(prior-4-ISO-weeks for the ACWR denominator vs the 28-day rolling
-`training_load.chronic_load`) — the separate `TODO(load-unification)`.
+**Monotony/strain (resolved 2026-06-10):** the `high_monotony` alert (fire **and**
+auto-dismiss) and the MCP coaching context now read rolling-7d monotony via
+`compute_rolling_week` — config-free so fire and dismiss compute the identical value
+(no weighted/unweighted split that would fire-then-instantly-dismiss). `weekly_agg`
+keeps the ISO-week copy as the 8-week sparkline/trend. `fit status` (CLI) already read
+rolling.
+
+**Still open:** **chronic load** has two formulas for one concept (prior-4-ISO-weeks for
+the ACWR denominator vs the 28-day rolling `training_load.chronic_load`) — the separate
+`TODO(load-unification)`.
 
 ---
 

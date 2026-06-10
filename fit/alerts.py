@@ -116,15 +116,18 @@ def run_alerts(conn: sqlite3.Connection, config: dict) -> list[dict]:
                                {"avg_spo2": avg_spo2, "consecutive_days": consecutive_low,
                                 "threshold": spo2_threshold}))
 
-    # Rule: Monotony >2.0 — overtraining risk (Foster's guideline)
-    mono_row = conn.execute(
-        "SELECT monotony FROM weekly_agg WHERE monotony IS NOT NULL ORDER BY week DESC LIMIT 1"
-    ).fetchone()
-    if mono_row and mono_row["monotony"] and mono_row["monotony"] > 2.0:
+    # Rule: Monotony >2.0 — overtraining risk (Foster's guideline).
+    # Rolling-7d "now" read (window policy §4.1), matching CLI status and coaching;
+    # weekly_agg.monotony stays the ISO-week trend. Config-free so this fire and the
+    # auto-dismiss in _condition_still_holds compute the identical value (no
+    # weighted/unweighted split → no fire-then-instant-dismiss), as compute_rolling_acwr.
+    from fit.analysis import compute_rolling_week
+    monotony = compute_rolling_week(conn).get("monotony")
+    if monotony and monotony > 2.0:
         fired.append(_fire(conn, today, "high_monotony",
-                           f"Training monotony is {mono_row['monotony']:.1f} (threshold: 2.0). "
+                           f"Training monotony is {monotony:.1f} (threshold: 2.0). "
                            f"Vary your sessions — mix easy, tempo, and long runs to reduce overtraining risk.",
-                           {"monotony": mono_row["monotony"]}))
+                           {"monotony": monotony}))
 
     # Rule: ACWR <0.6 — undertraining / detraining risk
     # Uses rolling 7-day window — no partial-week suppression needed
@@ -282,10 +285,11 @@ def _condition_still_holds(conn: sqlite3.Connection, alert_type: str) -> bool:
             return all(r["avg_spo2"] < 95 for r in rows)
 
         if alert_type == "high_monotony":
-            row = conn.execute(
-                "SELECT monotony FROM weekly_agg WHERE monotony IS NOT NULL ORDER BY week DESC LIMIT 1"
-            ).fetchone()
-            return bool(row and row["monotony"] and row["monotony"] > 2.0)
+            # Same rolling-7d, config-free source as the fire rule above — so an alert
+            # never fires and instantly self-dismisses on a window/weighting mismatch.
+            from fit.analysis import compute_rolling_week
+            monotony = compute_rolling_week(conn).get("monotony")
+            return bool(monotony and monotony > 2.0)
 
         if alert_type == "undertraining":
             row = conn.execute(
