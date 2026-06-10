@@ -339,7 +339,7 @@ def _aggregate_date_range(conn: sqlite3.Connection, start_date: date,
     end_iso = end_date.isoformat()
 
     runs = conn.execute(f"""
-        SELECT distance_km, duration_min, pace_sec_per_km, avg_hr, avg_cadence,
+        SELECT date, distance_km, duration_min, pace_sec_per_km, avg_hr, avg_cadence,
                training_load, hr_zone, run_type
         FROM activities
         WHERE type IN {RUNNING_TYPES_SQL} AND date BETWEEN ? AND ?
@@ -414,15 +414,17 @@ def _aggregate_date_range(conn: sqlite3.Connection, start_date: date,
     # strain = weekly RUNNING load × monotony (Foster). Both exclude cross-training, so
     # neither is a running/cross mix.
     running_load = sum(r["training_load"] or 0 for r in runs)
+    # Per-day running load from the `runs` already fetched (which is filtered to
+    # RUNNING_TYPES) — no extra per-day query, and the daily series stays purely
+    # running, matching running_load.
+    load_by_day: dict[str, float] = {}
+    for r in runs:
+        load_by_day[r["date"]] = load_by_day.get(r["date"], 0.0) + (r["training_load"] or 0)
     num_days = (end_date - start_date).days + 1
-    daily_loads = []
-    for day_offset in range(num_days):
-        d = (start_date + timedelta(days=day_offset)).isoformat()
-        row = conn.execute(f"""
-            SELECT SUM(training_load) AS load FROM activities
-            WHERE date = ? AND type IN {RUNNING_TYPES_SQL}
-        """, (d,)).fetchone()
-        daily_loads.append(row["load"] or 0.0)
+    daily_loads = [
+        load_by_day.get((start_date + timedelta(days=o)).isoformat(), 0.0)
+        for o in range(num_days)
+    ]
 
     n_days = len(daily_loads)
     mean_load = sum(daily_loads) / n_days if n_days > 0 else 0
