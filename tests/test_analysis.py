@@ -1243,7 +1243,14 @@ class TestRollingWeek:
 
 
 class TestRollingACWR:
-    """Tests for compute_rolling_acwr — rolling acute vs ISO chronic."""
+    """compute_rolling_acwr — 7-day acute vs trailing-28d chronic, both from the shared
+    daily-load primitive (load-unification: no weekly_agg / ISO-week chronic).
+
+    For end_date 2026-04-25: acute window = [04-19, 04-25]; chronic window (uncoupled,
+    the 28 days before it) = [03-22, 04-18]. chronic_weekly = Σ(chronic window)/4.
+    """
+
+    END = date(2026, 4, 25)
 
     def _insert_run(self, conn, day, **kwargs):
         defaults = {
@@ -1264,32 +1271,46 @@ class TestRollingACWR:
             (week, total_load, 3))
         conn.commit()
 
-    def test_rolling_acwr_with_history(self, db):
-        """Rolling ACWR: acute from rolling 7d, chronic from weekly_agg."""
-        # Chronic: 4 weeks at 200 load each
-        for wk in ["2026-W12", "2026-W13", "2026-W14", "2026-W15"]:
-            self._insert_weekly_agg(db, wk, 200)
-        # Acute: 3 runs in last 7 days = 300 load
-        for i, day in enumerate(["2026-04-20", "2026-04-22", "2026-04-24"]):
-            self._insert_run(db, day, id=f"r{i}")
-        result = compute_rolling_acwr(db, end_date=date(2026, 4, 25))
-        assert result == pytest.approx(1.5, abs=0.01)
+    def _chronic(self, db, load):
+        # One run per prior week inside the chronic window [03-22, 04-18].
+        for i, day in enumerate(["2026-03-28", "2026-04-04", "2026-04-11", "2026-04-18"]):
+            self._insert_run(db, day, id=f"c{i}", training_load=load)
 
-    def test_rolling_acwr_no_chronic(self, db):
-        """No chronic data → None."""
+    def test_rolling_acwr_with_history(self, db):
+        """Chronic Σ=800 → chronic_weekly=200; acute=300 → ACWR 1.5."""
+        self._chronic(db, 200)  # 4 × 200 = 800 → weekly 200
+        for i, day in enumerate(["2026-04-20", "2026-04-22", "2026-04-24"]):
+            self._insert_run(db, day, id=f"a{i}", training_load=100)  # acute = 300
+        assert compute_rolling_acwr(db, end_date=self.END) == pytest.approx(1.5, abs=0.01)
+
+    def test_rolling_acwr_steady_about_one(self, db):
+        """Acute matching the chronic weekly baseline → ACWR ≈ 1.0."""
+        self._chronic(db, 200)  # chronic_weekly 200
+        for i, day in enumerate(["2026-04-21", "2026-04-23"]):
+            self._insert_run(db, day, id=f"a{i}", training_load=100)  # acute = 200
+        assert compute_rolling_acwr(db, end_date=self.END) == pytest.approx(1.0, abs=0.01)
+
+    def test_rolling_acwr_no_history_returns_none(self, db):
+        """Only an acute run (no ≥3-week history) → None."""
         self._insert_run(db, "2026-04-20", id="r1")
-        result = compute_rolling_acwr(db, end_date=date(2026, 4, 25))
-        assert result is None
+        assert compute_rolling_acwr(db, end_date=self.END) is None
 
     def test_rolling_acwr_spike_capped(self, db):
-        """Very high spike (>3.0) returns None."""
-        for wk in ["2026-W12", "2026-W13", "2026-W14", "2026-W15"]:
-            self._insert_weekly_agg(db, wk, 100)
-        # 5 runs = 500 load, chronic 100 → ACWR 5.0 → capped to None
+        """Huge acute vs small chronic (ACWR 5.0) → capped to None."""
+        self._chronic(db, 100)  # chronic_weekly 100
         for i in range(5):
-            self._insert_run(db, f"2026-04-{20+i}", id=f"r{i}", training_load=100)
-        result = compute_rolling_acwr(db, end_date=date(2026, 4, 25))
-        assert result is None
+            self._insert_run(db, f"2026-04-2{i}", id=f"a{i}", training_load=100)  # acute 500
+        assert compute_rolling_acwr(db, end_date=self.END) is None
+
+    def test_rolling_acwr_ignores_weekly_agg(self, db):
+        """Regression: chronic no longer comes from weekly_agg. With chronic ISO rows
+        present but NO chronic-window activities, there is no daily chronic base → None
+        (the old impl would have computed an ACWR off weekly_agg.total_load)."""
+        for wk in ["2026-W12", "2026-W13", "2026-W14", "2026-W15"]:
+            self._insert_weekly_agg(db, wk, 200)
+        for i, day in enumerate(["2026-04-20", "2026-04-22", "2026-04-24"]):
+            self._insert_run(db, day, id=f"a{i}", training_load=100)  # acute only
+        assert compute_rolling_acwr(db, end_date=self.END) is None
 
 
 # ════════════════════════════════════════════════════════════════

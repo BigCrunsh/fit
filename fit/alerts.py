@@ -292,10 +292,11 @@ def _condition_still_holds(conn: sqlite3.Connection, alert_type: str) -> bool:
             return bool(monotony and monotony > 2.0)
 
         if alert_type == "undertraining":
-            row = conn.execute(
-                "SELECT acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1"
-            ).fetchone()
-            return bool(row and row["acwr"] is not None and row["acwr"] < 0.6)
+            # Same rolling source as the fire rule (compute_rolling_acwr) so fire and
+            # dismiss agree — was the stored weekly_agg.acwr ISO trend, a mismatch (D6).
+            from fit.analysis import compute_rolling_acwr
+            acwr = compute_rolling_acwr(conn)
+            return bool(acwr is not None and acwr < 0.6)
 
         if alert_type == "deload_overdue":
             weeks = conn.execute(

@@ -10,16 +10,16 @@ shims left behind; new load code lands here directly. Still in `fit/analysis.py`
 (queued): `compute_weekly_agg`, `compute_rolling_week`, `_compute_acwr` (per-week,
 coupled to weekly_agg writes), monotony/strain, sRPE.
 
-TODO(load-unification): ACWR's chronic denominator (avg of prior 4 ISO weeks from
-weekly_agg) and `chronic_load` here (trailing 28-day mean of daily load) are the same
-concept computed two ways. Unifying ACWR onto `chronic_load` is a deliberate,
-slightly behavior-changing step — do it consciously, with its own tests.
+load-unification (DONE 2026-06-10): the live `compute_rolling_acwr` chronic denominator
+now reads the daily-load primitive (`chronic_load_before`), not the prior-4-ISO-week
+`weekly_agg` totals — one chronic-load concept platform-wide (ACWR + marathon model).
+Only `weekly_agg.acwr` keeps an ISO-week form, deliberately, as the chart-acwr trend.
 """
 
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, timedelta
+from datetime import date
 
 import numpy as np
 
@@ -68,43 +68,45 @@ def chronic_load(conn: sqlite3.Connection, asof: date | None = None,
 
 def compute_rolling_acwr(conn: sqlite3.Connection, end_date: date | None = None,
                          config: dict | None = None) -> float | None:
-    """Compute ACWR using rolling 7-day acute load vs ISO-week chronic baseline.
+    """Rolling ACWR from the one shared daily-load primitive (no weekly_agg / ISO week).
 
-    Acute load: from compute_rolling_week() (last 7 days).
-    Chronic load: average of prior 4 ISO weeks from weekly_agg.
-    (Moved from fit/analysis.py — Training Load context. See the module TODO on
-    unifying the chronic denominator with `chronic_load`.)
+    acute   = total load over the last 7 days (``end_date-6 .. end_date``).
+    chronic = mean WEEKLY load over the 28 days BEFORE that window (uncoupled) — the
+              shared ``chronic_load_before`` primitive evaluated at the acute-window
+              start, scaled ×7 so it is comparable to the 7-day acute sum.
+
+    Both terms read ``DAILY_LOAD_SQL`` (raw daily load), so there is no weighted /
+    unweighted split and no ISO-week boundary: the live ACWR and the marathon model now
+    resolve chronic load the *same* way (load-unification — was: acute from
+    ``compute_rolling_week`` vs chronic from the cycling-weighted ``weekly_agg`` ISO
+    totals). The stored ``weekly_agg.acwr`` stays the ISO-week **trend** series
+    (chart-acwr); this is the live "now" read. ``config`` is accepted for signature
+    stability but unused (raw load only). Returns None without ≥3 weeks of history or a
+    positive chronic base; spikes >3.0 are capped to None.
     """
-    from fit.analysis import compute_rolling_week  # local: avoid import cycle
+    import pandas as pd
 
     if end_date is None:
         end_date = date.today()
 
-    rolling = compute_rolling_week(conn, end_date, config=config)
-    acute_load = rolling["total_load"]
+    dl = pd.read_sql_query(DAILY_LOAD_SQL, conn, parse_dates=["date"])
+    if dl.empty:
+        return None
+    day_ord = dl["date"].map(pd.Timestamp.toordinal).to_numpy()
+    day_load = dl["load"].fillna(0.0).to_numpy()
 
-    # Chronic: prior 4 ISO weeks from weekly_agg
-    prev_loads = []
-    ref_date = end_date - timedelta(days=7)
-    for _ in range(4):
-        ref_iso = ref_date.isocalendar()
-        pw_str = f"{ref_iso[0]}-W{ref_iso[1]:02d}"
-        row = conn.execute(
-            "SELECT total_load FROM weekly_agg WHERE week = ?", (pw_str,)
-        ).fetchone()
-        if row and row["total_load"] is not None:
-            prev_loads.append(row["total_load"])
-        ref_date -= timedelta(weeks=1)
-
-    if len(prev_loads) < 3:
+    ref = end_date.toordinal()
+    acute_start = ref - 6
+    # Need ≥3 weeks of history before "now" (mirrors the old ≥3-of-4-prior-weeks guard).
+    if int(day_ord.min()) > ref - 21:
         return None
 
-    chronic = sum(prev_loads) / len(prev_loads)
-    if chronic <= 0:
+    acute = float(day_load[(day_ord >= acute_start) & (day_ord <= ref)].sum())
+    # Uncoupled chronic: daily-mean load over the 28 days before the acute window,
+    # scaled to a weekly total. Same primitive the marathon model reads.
+    chronic_weekly = chronic_load_before(acute_start, day_ord, day_load, CHRONIC_WINDOW_DAYS) * 7.0
+    if chronic_weekly <= 0:
         return None
 
-    acwr = round(acute_load / chronic, 2)
-    if acwr > 3.0:
-        return None
-
-    return acwr
+    acwr = round(acute / chronic_weekly, 2)
+    return acwr if acwr <= 3.0 else None
