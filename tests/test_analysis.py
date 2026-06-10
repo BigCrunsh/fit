@@ -1323,6 +1323,30 @@ class TestRollingACWR:
         self._insert_run(db, "2026-04-10", id="bike-c", type="cycling", training_load=1000)
         assert compute_rolling_acwr(db, end_date=self.END) == pytest.approx(1.5, abs=0.01)
 
+    def test_rolling_acwr_insufficient_history_returns_none(self, db):
+        """History exists but doesn't reach back 3 weeks (oldest run > END-21) → None.
+        Locks the `day_ord.min() > ref - 21` minimum-history guard."""
+        # All runs within the last ~18 days (oldest 2026-04-07 > END-21 = 2026-04-04).
+        for i, day in enumerate(["2026-04-07", "2026-04-10", "2026-04-14", "2026-04-18"]):
+            self._insert_run(db, day, id=f"c{i}", training_load=50)
+        for i, day in enumerate(["2026-04-21", "2026-04-23"]):
+            self._insert_run(db, day, id=f"a{i}", training_load=100)
+        assert compute_rolling_acwr(db, end_date=self.END) is None
+
+    def test_rolling_acwr_zero_chronic_baseline_returns_none(self, db):
+        """≥3-week history (guard passes) but the chronic window [03-22, 04-18] is empty
+        → chronic_weekly == 0 → None. Locks the `chronic_weekly <= 0` branch."""
+        self._insert_run(db, "2026-03-01", id="old", training_load=100)  # old enough to pass guard, outside chronic window
+        for i, day in enumerate(["2026-04-20", "2026-04-22"]):
+            self._insert_run(db, day, id=f"a{i}", training_load=100)  # acute only
+        assert compute_rolling_acwr(db, end_date=self.END) is None
+
+    def test_rolling_acwr_rest_week_zero_acute(self, db):
+        """Valid chronic history, zero running in the last 7 days → ACWR 0.0 (a rest week
+        — what feeds the `undertraining` alert, threshold 0.6)."""
+        self._chronic(db, 200)  # chronic_weekly 200, no acute load
+        assert compute_rolling_acwr(db, end_date=self.END) == pytest.approx(0.0, abs=0.01)
+
 
 # ════════════════════════════════════════════════════════════════
 # Daniels training paces
