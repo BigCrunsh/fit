@@ -22,10 +22,17 @@ This is the coaching triage order (recovery → consistency → physiology/perfo
 
 ### Overview becomes a hub (summary + drill-in links), not a detail page
 
-- **Headline** = the goal verdict: predicted time + interval + P(goal) + countdown on the phase timeline (the `marathon-durability-model` output — one source of truth).
-- **Limiter** = the current bottleneck (e.g. durability) → links to Profile.
-- **Next action + attention** = the single highest-priority item (safety/consistency first) + the next workout → link to Readiness / Training.
-- **Domain summary strip** — one card each for **Fitness** (CTL/volume), **Recovery** (readiness/ACWR), **Physiology** (VDOT/limiter), **Coach's take** — each a 1–2-number summary with an **explicit `→ <Tab>` link** that switches to that tab *and scrolls to the relevant section*.
+Readability of this tab is the priority — it answers *am I on track?* and *what's the one thing to do?* in its first two lines, and carries nothing else.
+
+**Primary glance (the two-line answer):**
+- **Goal verdict** = predicted time + interval + P(goal) + countdown on the phase timeline (the `marathon-durability-model` output — one source of truth), **plus a one-line plain-language reading**: on track, or the projected gap and the lever.
+- **The limiter** = the lever in that verdict, named once: the domain with the largest gap *relative to its phase-target / goal-required level* (fitness / durability / effort-efficiency / recovery) → links to the owning tab. **Verdict and limiter are one reconciled story — a single "one thing to do", never two.**
+
+**Below it (secondary):**
+- **The single next action** — by fixed precedence: safety > consistency > the limiter's lever (deterministic).
+- **A secondary status strip** — four cards (**Fitness** → Training, **Recovery** → Readiness, **Physiology** → Profile, **Coach** → Coach), each value + compact trend + a shared `safe`/`caution`/`danger` status (coloured only against a defensible reference, else neutral) + a `→ <Tab>` link. Compact summaries, never detail panels.
+
+When there's no goal / unfit model / thin history, the Overview degrades to the anchor estimate + a "set a goal / log runs" prompt — never blanks.
 
 ### Detail moves out of Overview to the tab that owns it
 
@@ -55,8 +62,8 @@ CTL is one canonical load signal (Readiness freshness, Training build, model spe
 - **Deep-link + hidden-tab charts.** Activating a tab via a link must use the same path as the tab buttons (charts already init while revealed); a link that bypasses it would hit the 0×0-chart bug we fixed. Mitigation: route links through `showTab`.
 - **Over-summarizing.** Too terse an Overview hides things people relied on. Mitigation: keep the attention panel and next-workout prominent; summaries carry the one number that matters + the link.
 
-## Open Questions
-1. Does Overview keep one chart (the phase-timeline countdown) or go fully card-based with the timeline as the headline?
-2. Exact domain-card set — 4 (Fitness/Recovery/Physiology/Coach) or also a Training-execution card separate from Fitness?
-3. Link mechanism — pure in-page anchor + `showTab`, or also update the URL hash for shareable deep links?
-4. Should the per-tab "job" be shown as a one-line subtitle under each tab (orienting the reader), or stay implicit?
+## Resolved decisions (2026-06-11)
+1. **Overview headline = the phase-timeline countdown chart** (goal verdict — predicted time + interval + P(goal) — on it); the domain summaries sit as cards below. One chart, the rest cards.
+2. **Domain-summary strip = four cards** — Fitness · Recovery · Physiology · Coach (each one number + a `→ <Tab>` link); Training-execution folds into the Fitness card / next-action, not a fifth card.
+3. **Drill-in links route through `showTab` AND update the URL hash** — deep links are shareable/bookmarkable and survive reload (charts still init via the reveal-all pass).
+4. **Tabs reorder to the triage order** — Overview · Readiness · Training · Profile · Coach (recovery → consistency → physiology → synthesis) — and each tab shows its one-line job as a subtitle.
