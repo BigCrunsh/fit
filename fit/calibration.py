@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 # tier — an "untiered method" is unrepresentable — and `resolve` degrades an
 # unknown/legacy string to TrustTier.LEGACY rather than raising, so historical
 # rows keep loading. `CalibrationAnchor` makes "an anchor with no value"
-# unrepresentable. See DATA_LINEAGE.md §6 and the typed-calibration-anchor change.
+# unrepresentable. See docs/GLOSSARY.md (trust taxonomy) and the archived
+# typed-calibration-anchor OpenSpec change.
 
 
 class TrustTier(IntEnum):

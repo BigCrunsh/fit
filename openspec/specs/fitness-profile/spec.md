@@ -221,15 +221,19 @@ Wait — example: 4.3% drift is < 5% → lower bound. Per the rubric value = avg
 - **THEN** a new row is inserted with `confidence = 'high'`, `method = 'manual'`; `get_active_calibration('aet')` returns the manual row (high beats medium per the confidence-aware selection rule)
 
 ### Requirement: A single standardizing anchor layer for all fitness metrics
-The system SHALL expose one function, `get_calibration_anchor(conn, metric)`, that is the canonical way any consumer obtains the active value of a fitness anchor (`vdot`, `lthr`, `max_hr`, `aet`). It SHALL apply the metric's declared aggregation policy over that metric's observation rows and return a payload `{value, confidence, method, inputs, suggestion}` where `inputs` are the rows that contributed and `suggestion` is the heuristic-proposed value with its reasoning. No consumer SHALL re-derive an anchor by its own ad-hoc rule.
+The system SHALL expose one function, `get_calibration_anchor(conn, metric)`, that is the canonical way any consumer obtains the active value of a calibration anchor (`vdot`, `lthr`, `max_hr`, `aet`). It SHALL apply the metric's declared aggregation policy over that metric's observation rows and SHALL return a typed `CalibrationAnchor` value object carrying `{metric, value, confidence, method, source_date, stale, inputs, suggestion}` — where `value` is ALWAYS a real number, `inputs` are the rows that contributed, and `suggestion` is the heuristic-proposed value with its reasoning. When no anchor-eligible value exists for the metric, the function SHALL return `None`. The system SHALL NOT return an anchor whose `value` is `None` — a valueless anchor is not an anchor. No consumer SHALL re-derive an anchor by its own ad-hoc rule, and no consumer SHALL need to re-check whether the returned anchor has a value.
 
 #### Scenario: All consumers read through the shared layer
 - **WHEN** the dashboard VDOT Trend, Pace Zones, the marathon forecast, Fitness Dimensions, CLI `fit status`, and the MCP coaching context each need "current VDOT"
-- **THEN** each calls `get_calibration_anchor(conn, 'vdot')` and receives the same `value` — there is exactly one current VDOT across the app
+- **THEN** each calls `get_calibration_anchor(conn, 'vdot')` and receives the same `CalibrationAnchor` (or `None`) — there is exactly one current VDOT across the app
 
-#### Scenario: Payload carries the suggestion and inputs for display/audit
+#### Scenario: Anchor object carries the suggestion and inputs for display/audit
 - **WHEN** `get_calibration_anchor(conn, 'aet')` is called with four drift-test rows in window
-- **THEN** the payload's `value` is the policy output, `inputs` lists the contributing rows, and `suggestion` describes the heuristic (e.g. "median of 4 drift tests in 90d = 152")
+- **THEN** the returned `CalibrationAnchor`'s `value` is the policy output, `inputs` lists the contributing rows, and `suggestion` describes the heuristic (e.g. "median of 4 drift tests in 90d = 152")
+
+#### Scenario: No anchor-eligible value returns None, never a valueless anchor
+- **WHEN** a metric's only rows are reference-only (e.g. a Garmin VO2max `device_vo2max` row) — excluded from the estimator and not anchor-eligible — with no confirmed, device, policy, or legacy value
+- **THEN** `get_calibration_anchor` returns `None` — not an object with `value=None` — and consumers treat `None` as "no anchor" with a single `anchor is None` check
 
 ### Requirement: Per-metric aggregation policy matched to the metric's statistics
 Each metric SHALL declare an aggregation policy. Performance and ceiling metrics (one-sided / bounded) SHALL use a **max** estimator; noisy central-threshold metrics (two-sided) SHALL use a **robust center** (median or trimmed mean). Each policy SHALL declare a window/memory model and a `min_samples` below which it falls back to the single best-confidence row at `confidence='low'`.
@@ -290,3 +294,31 @@ A calibration change SHALL NOT retroactively alter past derived classifications.
 #### Scenario: A strong older confirmed value persists but is flagged stale
 - **WHEN** the confirmed VDOT (41) is from a race ~7.5 months old and the only in-window effort is a slow trail 35.8
 - **THEN** `value` stays 41 (sticky), `stale` is True, and the suggestion (35.8) is offered for accept/reject — the anchor neither drops to 35.8 nor pretends 41 is fresh
+
+### Requirement: Method trust precedence is a typed total order
+Every calibration `method` SHALL resolve to a `TrustTier` forming a total order: `INFORMATIONAL < REFERENCE < LEGACY < POLICY < DEVICE < CONFIRMED`. The anchor's active value SHALL be chosen by trust tier (higher wins), ties broken by the more recent source date — preserving the documented precedence `confirmed > device > policy > legacy` (`DATA_LINEAGE.md §6`). `INFORMATIONAL` and `REFERENCE` methods SHALL NOT be anchor-eligible (history / reference-only). `Confidence` SHALL likewise be an ordered type (`LOW < MEDIUM < HIGH`). A method that declares no tier SHALL be unrepresentable in code; an unrecognised stored method string SHALL resolve to `TrustTier.LEGACY` and SHALL NOT raise, so historical rows keep loading. This requirement changes representation only — it SHALL NOT rewrite any persisted `method` value and SHALL NOT change which value is selected for existing data.
+
+#### Scenario: Confirmed beats device
+- **WHEN** both a human `confirmed` (or `manual`) LTHR row and a `device_lt` row are active candidates for `lthr`
+- **THEN** the confirmed value is the anchor (CONFIRMED outranks DEVICE)
+
+#### Scenario: Device beats the policy estimate
+- **WHEN** no confirmed row exists but a `device_lt` row and a windowed policy suggestion both exist
+- **THEN** the device-measured value is the anchor (DEVICE outranks POLICY), and the policy suggestion is still carried for cross-check
+
+#### Scenario: Tie broken by recency
+- **WHEN** two anchor-eligible candidates resolve to the same `TrustTier`
+- **THEN** the candidate with the more recent `source_date` is selected
+
+#### Scenario: A reference-only metric has no anchor
+- **WHEN** a `vdot` metric's only row is a `device_vo2max` (reference) reading
+- **THEN** `get_calibration_anchor(conn, 'vdot')` returns `None` — reference rows are excluded from the estimator and are not anchor-eligible
+
+#### Scenario: Informational rows feed the policy but are never the active row
+- **WHEN** a `vdot` metric has only `race_observation` (informational) rows and no confirmed/device value
+- **THEN** they are excluded from direct active-row selection but DO feed the windowed estimator, so the anchor's value is the resulting `policy` suggestion — not one of the rows, and not `None`
+
+#### Scenario: An unknown legacy method degrades, it does not crash
+- **WHEN** a historical calibration row carries a `method` string outside the taxonomy
+- **THEN** it resolves to `TrustTier.LEGACY`, remains selectable only as a last resort, and no error is raised
+

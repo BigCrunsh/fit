@@ -8,12 +8,12 @@
 
 ## 2. `CalibrationAnchor | None` return + consumer migration (one commit)
 
-- [ ] 2.1 Change `get_calibration_anchor` to construct and return a `CalibrationAnchor`; replace the `{"value": None, …}` branch (`:399`) with `return None`. Keep the existing `if/elif` precedence control flow for now (D-migration step 2, not yet collapsed).
-- [ ] 2.2 Migrate `fit/marathon/features.py:75/85` to `anchor is None` + `anchor.value`.
-- [ ] 2.3 Migrate `fit/fitness.py:79/351` to the typed anchor.
-- [ ] 2.4 Migrate `fit/report/sections/predictions.py:196` and `fit/report/sections/cards.py:319/324/922/2737` (incl. the diagnostics card reading `inputs`).
-- [ ] 2.5 Migrate `mcp/server.py:297/302` (VDOT/Garmin gap); confirm emitted coaching context is unchanged.
-- [ ] 2.6 Run the full suite — must be green with the existing scenarios (selection unchanged).
+- [x] 2.1 Change `get_calibration_anchor` to construct and return a `CalibrationAnchor`; replace the `{"value": None, …}` branch (`:399`) with `return None`. Keep the existing `if/elif` precedence control flow for now (D-migration step 2, not yet collapsed).
+- [x] 2.2 Migrate `fit/marathon/features.py:75/85` to `anchor is None` + `anchor.value`.
+- [x] 2.3 Migrate `fit/fitness.py:79/351` to the typed anchor.
+- [x] 2.4 Migrate `fit/report/sections/predictions.py:196` and `fit/report/sections/cards.py:319/324/922/2737` (incl. the diagnostics card reading `inputs`).
+- [x] 2.5 Migrate `mcp/server.py:297/302` (VDOT/Garmin gap); confirm emitted coaching context is unchanged.
+- [x] 2.6 Run the full suite — must be green with the existing scenarios (selection unchanged).
 
 ## 3. Typed trust taxonomy (replace string-sets + ranks)
 
