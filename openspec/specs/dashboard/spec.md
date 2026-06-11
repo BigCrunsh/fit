@@ -2,9 +2,7 @@
 
 ## Purpose
 TBD — normalized from archived change deltas; update Purpose.
-
 ## Requirements
-
 ### Requirement: fit report generates a self-contained HTML dashboard
 `fit report` SHALL generate a single self-contained HTML file with Chart.js 4.4.7 (+ chartjs-plugin-annotation for event markers + chartjs-adapter-date-fns for time-scaled x-axes) for charting. All three JS libraries are vendored and inlined. The dashboard SHALL use a dark theme (`#07070c` background), monospace numerics (JetBrains Mono), and an information-dense layout. The output file SHALL be viewable in any browser without a build step or server. Generation uses Jinja2 templates (`fit/report/templates/dashboard.html`).
 
@@ -339,7 +337,6 @@ The generator SHALL define color constants matching the two-palette system: `SAF
 - **WHEN** the generator is loaded
 - **THEN** it defines `SAFE`, `CAUTION`, `DANGER`, `Z12`, `Z3`, `Z45`, and `ACCENT` constants with the two-palette hex values
 
-
 ### Requirement: Decomposed generator as sections/ package
 The dashboard generator SHALL be decomposed into a `fit/report/sections/` package: `engine.py` (main `generate_dashboard()` orchestrator + template loading, ~117 lines), `cards.py` (status cards, milestone cards, alert cards), `charts.py` (all chart data generation), `predictions.py` (race prediction + pacing strategy section). The top-level `generator.py` becomes a thin wrapper re-exporting from sections/.
 
@@ -655,3 +652,22 @@ Sections whose numbers depend on a model SHALL state the model and its key assum
 #### Scenario: Marathon Prediction discloses the Riegel/durability assumption
 - **WHEN** the Marathon Prediction definition popover is opened
 - **THEN** it states the forecast is Riegel-based with a fatigue exponent (default 1.06, personalizable), and that the short-vs-long-race gap is durability
+
+### Requirement: Marathon Prediction section shows interval, probability, and influence
+The Marathon Prediction section SHALL render the median forecast, its 90% credible interval, and P(sub-goal); a fitness-tracking trend (marathon-equivalent at maximal effort vs CTL over time) with per-effort points coloured by distance; and SHALL flag any single effort whose removal moves the headline by more than ~5 minutes (leave-one-out influence), so no race silently owns the number. The def-box SHALL state the model assumptions (durability exponent, the maximal-marathon HR is an input, the interval is estimation uncertainty not race-day spread).
+
+#### Scenario: Headline never stands alone
+- **WHEN** the Marathon Prediction section renders with a fit model
+- **THEN** the median is shown together with the 90% interval and P(sub-goal); the point estimate is never shown by itself
+
+#### Scenario: Influential race is flagged
+- **WHEN** removing one effort would move the headline > 5 min
+- **THEN** that effort is flagged in the section so the athlete sees the number isn't owned by a single race
+
+### Requirement: Durability and fitness-value are first-class dashboard readouts
+The dashboard SHALL surface the durability exponent `beta_d` (with interval) and the race-time value of fitness `phi` (e.g. "+10 CTL ≈ −6 min at the marathon") as tracked readouts — signals the platform otherwise lacks — positioned to complement (not duplicate) the resilience drift-onset and speed/bpm efficiency metrics.
+
+#### Scenario: Durability readout present
+- **WHEN** the model is fit
+- **THEN** the dashboard shows `beta_d` with its credible interval and a plain-language reading ("every doubling of distance ×2.09 time")
+

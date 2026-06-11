@@ -2,9 +2,7 @@
 
 ## Purpose
 TBD — normalized from archived change deltas; update Purpose.
-
 ## Requirements
-
 ### Requirement: SQLite schema defines all fitness data tables
 The system SHALL create and maintain a SQLite database at the path specified in config (`sync.db_path`, default `~/.fit/fitness.db`). The schema SHALL define 10 tables (`activities`, `daily_health`, `checkins`, `body_comp`, `weather`, `goals`, `training_phases`, `goal_log`, `calibration`, `weekly_agg`) and 2 views (`v_run_days`, `v_all_training`) as specified in `migrations/001_schema.sql`.
 
@@ -484,7 +482,6 @@ Body composition data SHALL be imported via the explicit `fit import-health <Exp
 - **WHEN** `fit sync` runs and the latest body_comp row has a date in the future (typo, bad timezone import)
 - **THEN** the sync output includes a distinct warning about the future-dated row, separate from the "stale" warning — so the bogus row is not silently treated as fresh
 
-
 ### Requirement: track_running and trail_running treated as running
 The system SHALL treat `track_running` and `trail_running` activity types as running everywhere: queries, views, enrichment (zone computation, efficiency, run_type classification), and weekly_agg aggregation. These are running variants and must not be excluded from running statistics.
 
@@ -554,3 +551,19 @@ The active calibration anchor SHALL NOT change automatically. After ingesting ne
 #### Scenario: A slow trail race never lowers the anchor (no prompt)
 - **WHEN** a slow trail half produces a VDOT estimate of 35.8 while the recency-decayed max is 40.4
 - **THEN** the policy suggestion stays 40.4, no downward change is suggested, and no terrain tagging is required
+
+### Requirement: The marathon posterior is refit and cached, not recomputed per read
+`fit sync` SHALL (after ingest) refit the marathon model and cache the posterior to `~/.fit/marathon_posterior.nc`; prediction, trend, and derived-metric reads SHALL reuse the cached draws without resampling. Refitting SHALL NOT block the core sync when PyMC is unavailable — it logs and skips. CTL/ATL features SHALL be computed from daily `training_load` using loads strictly *before* each effort day (incoming fitness, excluding the effort's own load).
+
+#### Scenario: Sync refits and caches
+- **WHEN** `fit sync` completes ingest and PyMC is installed
+- **THEN** the model is refit and the posterior written to `~/.fit/marathon_posterior.nc`; a subsequent `fit report` reads that file with no resampling
+
+#### Scenario: Sync without the forecast extra does not break
+- **WHEN** `fit sync` runs and PyMC is not installed
+- **THEN** the refit step logs a skip and sync completes normally; the dashboard uses the fallback prediction
+
+#### Scenario: Incoming fitness excludes the effort's own load
+- **WHEN** computing CTL for an effort on day D
+- **THEN** only loads from days strictly before D contribute, so a hard effort does not inflate its own incoming-fitness covariate
+
