@@ -1,7 +1,7 @@
 -- Rename calibration.method strings to the ubiquitous-language taxonomy (DDD review).
 --
 -- The trust tiers and behaviour are unchanged — only the labels, so a name no longer
--- contradicts its meaning (see DATA_LINEAGE.md §6 Glossary). Homonyms that confused us
+-- contradicts its meaning (see docs/GLOSSARY.md, method trust taxonomy). Homonyms that confused us
 -- (race_extract vs race_estimate; garmin_lt vs garmin_estimate) become self-describing:
 --
 --   garmin_lt        -> device_lt          (DEVICE: instrument-measured threshold)
