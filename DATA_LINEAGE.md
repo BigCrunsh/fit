@@ -445,6 +445,15 @@ these meanings; a name that contradicts the glossary is a bug.
   auto-derived candidates (`race_candidate`, `activity_max`, `drift_test`, `scale`).
   *(Renamed in migration 016 — formerly `garmin_lt`, `garmin_estimate`,
   `race_estimate`/`effort_estimate`, `race_extract`.)*
+- **State reading vs estimator-backed anchor** — two kinds of calibration metric.
+  *State readings* (`weight`) are latest-value: the current reading is the truth, age only
+  raises a staleness warning, no aggregation. *Estimator-backed anchors* (`vdot`, `lthr`,
+  `max_hr`, `aet`) are noisy snapshots where the windowed statistic — not the latest
+  reading — is representative: a trailing window yields a *suggestion* + staleness, and the
+  active value stays the human-confirmed sticky value (never auto-overwritten). `vo2max` is
+  a *reference reading* — latest-value like weight, but reference-only and **never an
+  anchor** (see Garmin VO2max). Encoded as "has an `AGGREGATION_POLICY` or not"; only the
+  estimator-backed metrics are "anchors" in the precedence sense above.
 - **Chronic load** — THE fitness-state primitive: trailing mean of daily
   `training_load` over a window (`fit.training_load.chronic_load_before`). One windowing
   model, not two. The forecast's fitness covariate counts **all** activities (aerobic
