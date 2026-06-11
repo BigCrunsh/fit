@@ -30,14 +30,16 @@ Frozen dataclass:
 class CalibrationAnchor:
     metric: str
     value: float                 # invariant: a real number (never None)
-    confidence: Confidence | None
-    method: CalibrationMethod
-    source_date: date | None
+    confidence: str | None       # 'high'/'medium'/'low' — display string, as today
+    method: str                  # resolved method string, e.g. 'confirmed'/'device_lt'/'policy'
+    source_date: str | None      # ISO date of the source effort (drives staleness)
     stale: bool | None
     inputs: list[dict]           # contributing rows (kept as dicts — display/audit)
     suggestion: dict | None      # policy estimate {value, confidence, reason, inputs, differs}
 ```
-Keeping `inputs` and `suggestion` as-is preserves the diagnostics card (`cards.py:2733`) and the sync accept/reject flow (`evaluate_suggestions`, `accept_suggestion`) without touching them. The previous `{"value": None, …}` branch becomes `return None`.
+Keeping `inputs`/`suggestion` as-is preserves the diagnostics card and the sync accept/reject flow without touching them. The previous `{"value": None, …}` branch becomes `return None`.
+
+**Public fields stay string-valued (revised during apply).** The draft typed `method`/`confidence` as enums. But `cards.py:182–185` passes `anchor.confidence` straight into the dashboard payload and derives a display label from `anchor.method` (`"confirmed" if method in ("manual","confirmed")`), and `cards.py:761` compares `method == "device_vo2max"` — so enum-typing the *public* fields would change the dashboard/MCP serialization, the very contract we must preserve. Resolution: the **enums (`TrustTier`/`Confidence`/`CalibrationMethod`) are internal to selection** (E2's win — typed precedence, no untiered method, graceful legacy); the anchor's *public* `method`/`confidence` remain the same strings the dict exposed. Migration is then purely `anchor.get("x")` → `anchor.x` + `is None` handling, with zero semantic change at display/emit sites. Deeper public typing is a later refinement, not E1+E2.
 
 *Alternative considered:* drop `inputs` (the DDD sketch did). Rejected — `cards.py` reads it; dropping it widens the change for no correctness gain.
 

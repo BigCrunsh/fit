@@ -12,7 +12,7 @@ The system SHALL expose one function, `get_calibration_anchor(conn, metric)`, th
 - **THEN** the returned `CalibrationAnchor`'s `value` is the policy output, `inputs` lists the contributing rows, and `suggestion` describes the heuristic (e.g. "median of 4 drift tests in 90d = 152")
 
 #### Scenario: No anchor-eligible value returns None, never a valueless anchor
-- **WHEN** a metric has only reference-only/informational rows (e.g. a Garmin VO2max `device_vo2max` row) and no confirmed, device, policy, or legacy value
+- **WHEN** a metric's only rows are reference-only (e.g. a Garmin VO2max `device_vo2max` row) — excluded from the estimator and not anchor-eligible — with no confirmed, device, policy, or legacy value
 - **THEN** `get_calibration_anchor` returns `None` — not an object with `value=None` — and consumers treat `None` as "no anchor" with a single `anchor is None` check
 
 ## ADDED Requirements
@@ -32,9 +32,13 @@ Every calibration `method` SHALL resolve to a `TrustTier` forming a total order:
 - **WHEN** two anchor-eligible candidates resolve to the same `TrustTier`
 - **THEN** the candidate with the more recent `source_date` is selected
 
-#### Scenario: Reference and informational rows are never the anchor
-- **WHEN** a `vdot` metric has only a `device_vo2max` (reference) row and `race_observation` (informational) rows, with no confirmed/device/policy/legacy value
-- **THEN** `get_calibration_anchor(conn, 'vdot')` returns `None`
+#### Scenario: A reference-only metric has no anchor
+- **WHEN** a `vdot` metric's only row is a `device_vo2max` (reference) reading
+- **THEN** `get_calibration_anchor(conn, 'vdot')` returns `None` — reference rows are excluded from the estimator and are not anchor-eligible
+
+#### Scenario: Informational rows feed the policy but are never the active row
+- **WHEN** a `vdot` metric has only `race_observation` (informational) rows and no confirmed/device value
+- **THEN** they are excluded from direct active-row selection but DO feed the windowed estimator, so the anchor's value is the resulting `policy` suggestion — not one of the rows, and not `None`
 
 #### Scenario: An unknown legacy method degrades, it does not crash
 - **WHEN** a historical calibration row carries a `method` string outside the taxonomy

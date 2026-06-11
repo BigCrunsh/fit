@@ -294,15 +294,15 @@ def _ctx_profile(conn) -> list[str]:
             "SELECT vo2max FROM activities WHERE vo2max IS NOT NULL ORDER BY date DESC LIMIT 1"
         ).fetchone()
         garmin_vo2 = float(garmin_row["vo2max"]) if garmin_row and garmin_row["vo2max"] else None
-        if anchor and anchor.get("value") is not None:
-            stale = " — STALE, suggest a fresh 5–10k/threshold test" if anchor.get("stale") else ""
-            line = (f"Fitness anchor: VDOT {anchor['value']:g} "
-                    f"({anchor.get('method')}, confidence {anchor.get('confidence')}){stale}")
+        if anchor is not None:
+            stale = " — STALE, suggest a fresh 5–10k/threshold test" if anchor.stale else ""
+            line = (f"Fitness anchor: VDOT {anchor.value:g} "
+                    f"({anchor.method}, confidence {anchor.confidence}){stale}")
             if garmin_vo2:
-                gap = garmin_vo2 - anchor["value"]
+                gap = garmin_vo2 - anchor.value
                 line += f"; Garmin VO2max {garmin_vo2:.0f} (gap {gap:+.0f} — trust the anchor)"
-            if anchor.get("suggestion") and anchor["suggestion"].get("differs"):
-                line += f"; pending suggestion {anchor['suggestion']['value']:g} (run `fit calibrate vdot`)"
+            if anchor.suggestion and anchor.suggestion.get("differs"):
+                line += f"; pending suggestion {anchor.suggestion['value']:g} (run `fit calibrate vdot`)"
             s.append(line)
         elif garmin_vo2:
             s.append(f"Fitness anchor: none yet; Garmin VO2max {garmin_vo2:.0f} only "
@@ -581,7 +581,8 @@ def _ctx_forecast(conn) -> list[str]:
         return []
 
     def _hms(x):
-        x = int(round(x)); return f"{x // 3600}:{(x % 3600) // 60:02d}:{x % 60:02d}"
+        x = int(round(x))
+        return f"{x // 3600}:{(x % 3600) // 60:02d}:{x % 60:02d}"
 
     ex = fc["extrapolation"]
     s = [f"Marathon forecast (durability model, maximal effort): {_hms(fc['median'])} "

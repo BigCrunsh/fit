@@ -4,9 +4,113 @@ import json
 import logging
 import os
 import sqlite3
+from dataclasses import dataclass
 from datetime import date, timedelta
+from enum import Enum, IntEnum
 
 logger = logging.getLogger(__name__)
+
+
+# ── Typed trust taxonomy (DDD E1+E2) ─────────────────────────────────────────
+# The calibration trust model as types. `TrustTier`'s ordering IS the precedence
+# (confirmed > device > policy > legacy); INFORMATIONAL/REFERENCE are never
+# anchors. `CalibrationMethod` pairs every known stored method string with a
+# tier — an "untiered method" is unrepresentable — and `resolve` degrades an
+# unknown/legacy string to TrustTier.LEGACY rather than raising, so historical
+# rows keep loading. `CalibrationAnchor` makes "an anchor with no value"
+# unrepresentable. See DATA_LINEAGE.md §6 and the typed-calibration-anchor change.
+
+
+class TrustTier(IntEnum):
+    """How far a calibration source is trusted; the ordering is the precedence."""
+
+    INFORMATIONAL = 0   # race_observation/effort_observation — history/chart, never an anchor
+    REFERENCE = 1       # device_vo2max — context only, never an estimator input
+    LEGACY = 2          # un-tiered/unknown active row — last-resort fallback
+    POLICY = 3          # the windowed policy estimate ("what races imply")
+    DEVICE = 4          # device_lt — instrument measurement
+    CONFIRMED = 5       # manual/confirmed — human-owned, sticky
+
+    @property
+    def is_anchor_eligible(self) -> bool:
+        """REFERENCE/INFORMATIONAL are never anchors; anything >= LEGACY can be."""
+        return self >= TrustTier.LEGACY
+
+
+class Confidence(IntEnum):
+    """Ordered confidence tier; replaces the _CONFIDENCE_RANK dict."""
+
+    LOW = 0
+    MEDIUM = 1
+    HIGH = 2
+
+    @classmethod
+    def from_str(cls, s: str | None) -> "Confidence":
+        return {"low": cls.LOW, "medium": cls.MEDIUM, "high": cls.HIGH}.get(
+            (s or "").lower(), cls.LOW)
+
+    def to_str(self) -> str:
+        return self.name.lower()
+
+
+class CalibrationMethod(Enum):
+    """A stored calibration-method string paired with its trust tier.
+
+    A member cannot be declared without a tier, so an "untiered method" is
+    unrepresentable. `resolve` maps a stored string to a member, degrading
+    unknown/None strings to the LEGACY sentinel (never raises). `POLICY` is the
+    marker for the synthesized windowed suggestion (not a stored string).
+    """
+
+    MANUAL             = ("manual",             TrustTier.CONFIRMED)
+    CONFIRMED          = ("confirmed",          TrustTier.CONFIRMED)
+    DEVICE_LT          = ("device_lt",          TrustTier.DEVICE)
+    DEVICE_VO2MAX      = ("device_vo2max",      TrustTier.REFERENCE)
+    RACE_OBSERVATION   = ("race_observation",   TrustTier.INFORMATIONAL)
+    EFFORT_OBSERVATION = ("effort_observation", TrustTier.INFORMATIONAL)
+    RACE_CANDIDATE     = ("race_candidate",     TrustTier.LEGACY)
+    ACTIVITY_MAX       = ("activity_max",       TrustTier.LEGACY)
+    DRIFT_TEST         = ("drift_test",         TrustTier.LEGACY)
+    SCALE              = ("scale",              TrustTier.LEGACY)
+    POLICY             = ("policy",             TrustTier.POLICY)
+    LEGACY             = ("__legacy__",         TrustTier.LEGACY)
+
+    def __init__(self, method_str: str, trust_tier: TrustTier):
+        self.method_str = method_str
+        self.trust_tier = trust_tier
+
+    @property
+    def is_anchor_eligible(self) -> bool:
+        return self.trust_tier.is_anchor_eligible
+
+    @classmethod
+    def resolve(cls, s: str | None) -> "CalibrationMethod":
+        """Map a stored method string to a member; unknown/None → LEGACY."""
+        if s:
+            for m in cls:
+                if m is not cls.LEGACY and m.method_str == s:
+                    return m
+        return cls.LEGACY
+
+
+@dataclass(frozen=True)
+class CalibrationAnchor:
+    """The single canonical value for a metric (DDD E1).
+
+    `value` is always a real number — "an anchor with no value" is
+    unrepresentable; absence is signalled by `get_calibration_anchor` returning
+    None. `method`/`confidence` stay the same display strings the legacy dict
+    exposed; the typed taxonomy above is used internally for selection.
+    """
+
+    metric: str
+    value: float
+    confidence: str | None
+    method: str
+    source_date: str | None
+    stale: bool | None
+    inputs: list
+    suggestion: dict | None
 
 STALENESS_THRESHOLDS = {
     "max_hr": timedelta(days=365),
@@ -141,14 +245,16 @@ def derive_confidence(method: str, flags: list[str], has_prior_agreement: bool =
     return "medium"
 
 
-_CONFIDENCE_RANK = {"high": 0, "medium": 1, "low": 2}
-
-# Methods that are recorded for history/context only and must NEVER be
-# auto-selected as the active calibration. `race_observation` LTHR rows are
-# written from past races to populate the calibration-history chart, but the
-# active LTHR stays human-confirmed (run `fit calibrate lthr`) so a noisy or
-# non-max effort sitting in race_calendar can't silently shift the zone model.
-INFORMATIONAL_METHODS = {"race_observation", "effort_observation"}
+# Confidence ordering and the method→tier taxonomy live in the typed enums
+# (`Confidence`, `CalibrationMethod`/`TrustTier`) at the top of the module. The
+# four former string-sets (CONFIRMED/DEVICE/REFERENCE/INFORMATIONAL_METHODS) and
+# the `_CONFIDENCE_RANK` dict are gone — selection reads `method.trust_tier` and
+# `Confidence` directly.
+#
+# Informational-tier rows (`race_observation`/`effort_observation`) are recorded
+# for the calibration-history chart but must NEVER be auto-selected as the active
+# value: the active LTHR stays human-confirmed (run `fit calibrate lthr`) so a
+# noisy or non-max race can't silently shift the zone model.
 
 
 def get_active_calibration(conn: sqlite3.Connection, metric: str,
@@ -156,8 +262,8 @@ def get_active_calibration(conn: sqlite3.Connection, metric: str,
     """Get the active calibration row for a metric, preferring higher confidence.
 
     Selection rule (subsumes the old date-only behavior):
-      1. Informational rows (INFORMATIONAL_METHODS) are excluded entirely —
-         they're chart history, never the active value.
+      1. Informational-tier rows (`race_observation`/`effort_observation`) are
+         excluded entirely — they're chart history, never the active value.
       2. Prefer non-stale rows over stale rows.
       3. Within that pool, prefer higher confidence (high → medium → low).
       4. Within tied confidence, prefer the most recent date.
@@ -178,7 +284,8 @@ def get_active_calibration(conn: sqlite3.Connection, metric: str,
     rows = conn.execute(
         "SELECT * FROM calibration WHERE metric = ?", (metric,),
     ).fetchall()
-    rows = [r for r in rows if (r["method"] or "") not in INFORMATIONAL_METHODS]
+    rows = [r for r in rows
+            if CalibrationMethod.resolve(r["method"]).trust_tier != TrustTier.INFORMATIONAL]
 
     # Point-in-time: only when reconstructing a past date do we exclude rows
     # dated after it. The default (asof=None) keeps the exact prior behaviour
@@ -196,7 +303,7 @@ def get_active_calibration(conn: sqlite3.Connection, metric: str,
     threshold = STALENESS_THRESHOLDS.get(metric, timedelta(days=365))
 
     def _key(r):
-        # Compound key: (stale flag, confidence rank, -ordinal). min() picks
+        # Compound key: (stale flag, -confidence, -ordinal). min() picks
         # non-stale before stale, then high → medium → low, then most recent.
         try:
             day = date.fromisoformat(r["date"])
@@ -204,7 +311,7 @@ def get_active_calibration(conn: sqlite3.Connection, metric: str,
             day_neg = -day.toordinal()
         except (ValueError, TypeError):
             stale_flag, day_neg = 1, 0
-        return (stale_flag, _CONFIDENCE_RANK.get(r["confidence"] or "low", 2), day_neg)
+        return (stale_flag, -Confidence.from_str(r["confidence"]), day_neg)
 
     return dict(min(rows, key=_key))
 
@@ -221,22 +328,15 @@ def get_active_calibration(conn: sqlite3.Connection, metric: str,
 #   - LTHR / AeT are two-sided noisy thresholds (a hot day inflates avg HR
 #     without raising the threshold) → take a ROBUST CENTER (median/trimmed).
 #
-# Methods that represent a human-owned, confirmed anchor. The active value is
-# *sticky* — whatever the athlete last confirmed; it changes only when they
-# accept a new suggestion (never auto-overwritten by the policy estimate).
-CONFIRMED_METHODS = {"manual", "confirmed"}
-
-# Reference-only observations: recorded for context but never fed to an
-# estimator. Garmin's wrist-HR VO2max is optimistic, so it never enters VDOT's
-# max — it's only a last-resort bootstrap value.
-REFERENCE_METHODS = {"device_vo2max"}
-
-# Device-measured anchors: a direct instrument reading (Garmin's auto-detected
-# lactate-threshold HR), trusted as authoritative — it ranks ABOVE the race-proxy
-# policy estimate but BELOW a deliberate human confirm. Like REFERENCE rows it is
-# kept out of the policy estimator (the policy answers "what do your RACES imply",
-# which stays a useful cross-check vs the device value via `differs`).
-DEVICE_METHODS = {"device_lt"}
+# Trust tiers (CONFIRMED > DEVICE > POLICY > LEGACY; REFERENCE/INFORMATIONAL never
+# anchors) are defined on `CalibrationMethod`/`TrustTier` at the top of the module:
+#   - CONFIRMED (manual/confirmed): human-owned, *sticky* active value — changes
+#     only when the athlete accepts a new suggestion, never auto-overwritten.
+#   - DEVICE (device_lt): Garmin's auto-detected LT — authoritative ABOVE the
+#     race-proxy policy estimate but BELOW a human confirm; kept out of the policy
+#     estimator (the policy answers "what do your RACES imply", a `differs` cross-check).
+#   - REFERENCE (device_vo2max): recorded for context, never fed to an estimator
+#     and never an anchor — Garmin's wrist-HR VO2max is optimistic by design.
 
 # Two estimator families, picked by the metric's statistics:
 #   - 'max'    — one-sided / ceiling metrics (VDOT, MaxHR). A slow/distorted
@@ -305,15 +405,15 @@ def _median_in_window(rows, window_days, now):
     return round(med, 1), obs
 
 
-def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> dict | None:
-    """Canonical fitness anchor for a metric — the single way consumers read one.
+def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> CalibrationAnchor | None:
+    """Canonical calibration anchor for a metric — the single way consumers read one.
 
-    Returns a payload::
+    Returns a :class:`CalibrationAnchor` whose ``value`` is always a real number,
+    or ``None`` when no anchor-eligible value exists. There is no "anchor with no
+    value": absence is ``None`` and a consumer's only check is ``anchor is None``.
 
-        {value, confidence, method, stale, inputs, suggestion}
-
-    - ``value`` is what consumers use: the human-confirmed *sticky* active value
-      when one exists, else the policy estimate so the dashboard is never blank.
+    - ``value`` is the human-confirmed *sticky* active value when one exists, else
+      the policy estimate so the dashboard is never blank.
     - ``stale`` is True when the value's source effort is older than the policy
       window (or there is no in-window evidence) — the cue to prompt a re-test.
     - ``suggestion`` is the policy estimate from the trailing window plus whether
@@ -331,15 +431,16 @@ def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> dict | None
     if not policy:
         if not active:
             return None
-        return {"value": active["value"], "confidence": active.get("confidence"),
-                "method": active.get("method"), "stale": None,
-                "inputs": [active], "suggestion": None}
+        return CalibrationAnchor(
+            metric=metric, value=active["value"], confidence=active.get("confidence"),
+            method=active.get("method"), source_date=active.get("date"), stale=None,
+            inputs=[active], suggestion=None)
 
     rows = [dict(r) for r in conn.execute(
         "SELECT * FROM calibration WHERE metric = ?", (metric,)).fetchall()]
     observations = [r for r in rows
-                    if (r.get("method") or "") not in REFERENCE_METHODS
-                    and (r.get("method") or "") not in DEVICE_METHODS]
+                    if CalibrationMethod.resolve(r.get("method")).trust_tier
+                    not in (TrustTier.REFERENCE, TrustTier.DEVICE)]
     now = date.today()
     window = policy["window_days"]
     family = policy["family"]
@@ -352,7 +453,7 @@ def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> dict | None
             # Confidence rides from the contributing rows; lowest wins (a single
             # implausible/low row keeps the suggestion cautious for the prompt).
             confs = [c.get("confidence") or "low" for c in contributors]
-            sug_conf = max(confs, key=lambda c: _CONFIDENCE_RANK.get(c, 2))
+            sug_conf = min(confs, key=Confidence.from_str)   # lowest confidence wins
             verb = "max" if family == "max" else "median"
             top = contributors[0]
             suggestion = {
@@ -379,8 +480,9 @@ def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> dict | None
     # estimate (what races imply) > legacy active. A confirmed/manual row is the
     # value, untouched by the estimator; else a recent device reading is
     # authoritative over the race-proxy; else fall back to the policy suggestion.
-    confirmed = active if (active and active.get("method") in CONFIRMED_METHODS) else None
-    device = active if (not confirmed and active and active.get("method") in DEVICE_METHODS) else None
+    active_tier = CalibrationMethod.resolve(active.get("method")).trust_tier if active else None
+    confirmed = active if active_tier == TrustTier.CONFIRMED else None
+    device = active if active_tier == TrustTier.DEVICE else None
     if confirmed:
         value, confidence, method, src_date = (
             confirmed["value"], confirmed.get("confidence"), confirmed["method"], confirmed.get("date"))
@@ -390,14 +492,14 @@ def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> dict | None
     elif suggestion is not None:
         value, confidence, method, src_date = (
             suggestion["value"], suggestion["confidence"], "policy", suggestion["inputs"][0]["date"])
-    elif active and (active.get("method") or "") not in REFERENCE_METHODS:
-        # Legacy fallback — but never a reference-only row (e.g. Garmin VO2max
-        # must not become the VDOT anchor; it's optimistic by design).
+    elif active and active_tier.is_anchor_eligible:
+        # Legacy fallback — any anchor-eligible active row that isn't confirmed/
+        # device. REFERENCE rows (e.g. Garmin VO2max) are excluded by
+        # is_anchor_eligible, so they never become the anchor.
         value, confidence, method, src_date = (
             active["value"], active.get("confidence"), active.get("method"), active.get("date"))
     else:
-        return {"value": None, "confidence": None, "method": None, "stale": True,
-                "inputs": [], "suggestion": suggestion}
+        return None
 
     # Stale when the value's source effort has aged past the window.
     try:
@@ -408,9 +510,11 @@ def get_calibration_anchor(conn: sqlite3.Connection, metric: str) -> dict | None
     if suggestion is not None:
         suggestion["differs"] = abs(suggestion["value"] - value) >= policy["differs"]
 
-    return {"value": value, "confidence": confidence, "method": method, "stale": stale,
-            "inputs": suggestion["inputs"] if suggestion else ([confirmed] if confirmed else []),
-            "suggestion": suggestion}
+    return CalibrationAnchor(
+        metric=metric, value=value, confidence=confidence, method=method,
+        source_date=src_date, stale=stale,
+        inputs=(suggestion["inputs"] if suggestion else ([confirmed] if confirmed else [])),
+        suggestion=suggestion)
 
 
 def add_calibration(conn: sqlite3.Connection, metric: str, value: float,
@@ -859,14 +963,14 @@ def evaluate_suggestions(conn: sqlite3.Connection, review: dict | None = None) -
     out = []
     for metric, policy in AGGREGATION_POLICY.items():
         anchor = get_calibration_anchor(conn, metric)
-        sug = anchor.get("suggestion") if anchor else None
+        sug = anchor.suggestion if anchor else None
         if not sug or not sug.get("differs"):
             continue
         # The active value is device-measured (e.g. Garmin's auto-detected LT).
         # Anchor precedence is confirmed > device > policy, so a policy estimate
         # can never displace a device reading — nagging to change it would be
         # self-contradictory. Suppress until the device stops providing the value.
-        if anchor.get("method") in DEVICE_METHODS:
+        if CalibrationMethod.resolve(anchor.method).trust_tier == TrustTier.DEVICE:
             continue
         dismissed = review.get(metric)
         if (dismissed and dismissed.get("state") == "dismissed"
@@ -875,7 +979,7 @@ def evaluate_suggestions(conn: sqlite3.Connection, review: dict | None = None) -
         out.append({
             "metric": metric,
             "value": sug["value"],
-            "active": anchor.get("value"),
+            "active": anchor.value,
             "reason": sug.get("reason"),
             "confidence": sug.get("confidence"),
         })
@@ -885,7 +989,7 @@ def evaluate_suggestions(conn: sqlite3.Connection, review: dict | None = None) -
 def accept_suggestion(conn: sqlite3.Connection, metric: str, path: str | None = None) -> float | None:
     """Confirm the current policy suggestion as the active anchor (sticky)."""
     anchor = get_calibration_anchor(conn, metric)
-    sug = anchor.get("suggestion") if anchor else None
+    sug = anchor.suggestion if anchor else None
     if not sug:
         return None
     add_calibration(conn, metric, sug["value"], "confirmed", "high", date.today())
@@ -898,7 +1002,7 @@ def accept_suggestion(conn: sqlite3.Connection, metric: str, path: str | None = 
 def reject_suggestion(conn: sqlite3.Connection, metric: str, path: str | None = None) -> None:
     """Dismiss the current suggestion; ledger suppresses it until it moves."""
     anchor = get_calibration_anchor(conn, metric)
-    sug = anchor.get("suggestion") if anchor else None
+    sug = anchor.suggestion if anchor else None
     if not sug:
         return
     review = load_review(path)

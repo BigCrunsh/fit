@@ -39,15 +39,15 @@ class TestDeviceAnchorPrecedence:
         _row(db, 175, "race_observation", "low", 20)
         _row(db, 173, "device_lt", "high", 1)
         a = get_calibration_anchor(db, "lthr")
-        assert a["value"] == 173
-        assert a["method"] == "device_lt"
+        assert a.value == 173
+        assert a.method == "device_lt"
 
     def test_human_confirm_overrides_device(self, db):
         _row(db, 173, "device_lt", "high", 2)
         _row(db, 168, "manual", "high", 1)  # deliberate, newer
         a = get_calibration_anchor(db, "lthr")
-        assert a["value"] == 168
-        assert a["method"] == "manual"
+        assert a.value == 168
+        assert a.method == "manual"
 
     def test_device_excluded_from_race_suggestion(self, db):
         # the policy suggestion ("what races imply") ignores the device value
@@ -56,9 +56,9 @@ class TestDeviceAnchorPrecedence:
         _row(db, 164, "race_observation", "low", 10)
         _row(db, 173, "device_lt", "high", 1)
         a = get_calibration_anchor(db, "lthr")
-        assert a["value"] == 173                # device is the anchor
-        assert a["suggestion"]["value"] == 162  # median of the 3 race rows only
-        assert a["suggestion"]["differs"] is True
+        assert a.value == 173                # device is the anchor
+        assert a.suggestion["value"] == 162  # median of the 3 race rows only
+        assert a.suggestion["differs"] is True
 
     def test_device_anchor_suppresses_policy_nag(self, db):
         # evaluate_suggestions must NOT nag toward a policy estimate when the
@@ -70,7 +70,7 @@ class TestDeviceAnchorPrecedence:
         _row(db, 162, "race_observation", "low", 20)
         _row(db, 164, "race_observation", "low", 10)
         _row(db, 173, "device_lt", "high", 1)
-        assert get_calibration_anchor(db, "lthr")["suggestion"]["differs"] is True
+        assert get_calibration_anchor(db, "lthr").suggestion["differs"] is True
         assert not any(s["metric"] == "lthr"
                        for s in evaluate_suggestions(db, review={}))
 
@@ -83,7 +83,7 @@ class TestDeviceAnchorPrecedence:
         _row(db, 164, "race_observation", "low", 10)   # median 162
         _row(db, 172, "manual", "high", 1)             # confirmed, differs from 162
         a = get_calibration_anchor(db, "lthr")
-        assert a["method"] == "manual" and a["value"] == 172
+        assert a.method == "manual" and a.value == 172
         assert any(s["metric"] == "lthr"
                    for s in evaluate_suggestions(db, review={}))
 
@@ -108,7 +108,7 @@ class TestSyncStore:
         monkeypatch.setattr(sync.garmin, "fetch_lactate_threshold",
                             lambda api: {"lthr": 173.0, "lt_speed_mps": 0.34})
         assert sync._sync_lactate_threshold(db, object()) is True       # first store
-        assert get_calibration_anchor(db, "lthr")["value"] == 173.0
+        assert get_calibration_anchor(db, "lthr").value == 173.0
         assert sync._sync_lactate_threshold(db, object()) is False      # unchanged → dedup
 
         monkeypatch.setattr(sync.garmin, "fetch_lactate_threshold",
