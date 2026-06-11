@@ -5,7 +5,7 @@ import logging
 from datetime import date
 from pathlib import Path
 
-from fit.analysis import RUNNING_TYPES_SQL
+from fit.analysis import RUNNING_TYPES_SQL, Zone
 from fit.report.headline import generate_headline
 from fit.narratives import (
     generate_race_countdown,
@@ -2518,9 +2518,10 @@ def _last_7_days_runs(conn):
         if planned and planned != "race_handled":
             plan_type = planned["workout_type"] or ""
             verdict = "on target"
-            if plan_type in ("easy", "recovery") and r["hr_zone"] in ("Z3", "Z4", "Z5"):
+            _z = Zone.parse_or_none(r["hr_zone"])
+            if plan_type in ("easy", "recovery") and _z is not None and _z >= Zone.Z3:
                 verdict = "too fast"
-            elif plan_type in ("tempo", "intervals") and r["hr_zone"] in ("Z1", "Z2"):
+            elif plan_type in ("tempo", "intervals") and _z in {Zone.Z1, Zone.Z2}:
                 verdict = "too slow"
             run["plan_comparison"] = {
                 "planned_name": planned["workout_name"],

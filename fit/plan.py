@@ -7,7 +7,7 @@ import re
 from datetime import date, timedelta
 from pathlib import Path
 
-from fit.analysis import RUNNING_TYPES_SQL
+from fit.analysis import RUNNING_TYPES_SQL, Zone
 
 logger = logging.getLogger(__name__)
 
@@ -669,9 +669,10 @@ def compute_plan_adherence(conn, week_str=None):
 
             # Zone/intensity compliance
             zone_match = _zone_compatible(p["workout_type"], best.get("hr_zone"))
+            _best_zone = Zone.parse_or_none(best.get("hr_zone"))
             intensity_override = (
                 p["workout_type"] in ("easy", "recovery")
-                and best.get("hr_zone") in ("Z3", "Z4", "Z5")
+                and _best_zone is not None and _best_zone >= Zone.Z3
             )
 
             matches.append({
@@ -769,15 +770,15 @@ def _zone_compatible(planned_type, actual_zone):
         return True  # no data to judge
 
     expected_zones = {
-        "easy": ("Z1", "Z2"),
-        "recovery": ("Z1", "Z2"),
-        "long": ("Z1", "Z2", "Z3"),  # long runs can be Z2-Z3
-        "tempo": ("Z3", "Z4"),
-        "intervals": ("Z4", "Z5"),
-        "progression": ("Z2", "Z3", "Z4"),
+        "easy": {Zone.Z1, Zone.Z2},
+        "recovery": {Zone.Z1, Zone.Z2},
+        "long": {Zone.Z1, Zone.Z2, Zone.Z3},  # long runs can be Z2-Z3
+        "tempo": {Zone.Z3, Zone.Z4},
+        "intervals": {Zone.Z4, Zone.Z5},
+        "progression": {Zone.Z2, Zone.Z3, Zone.Z4},
     }
-    allowed = expected_zones.get(planned_type, ())
-    return actual_zone in allowed
+    allowed = expected_zones.get(planned_type, set())
+    return Zone.parse_or_none(actual_zone) in allowed
 
 
 def _detect_systematic_override(conn, week_start):
@@ -810,22 +811,12 @@ def _detect_systematic_override(conn, week_start):
             ORDER BY duration_min DESC LIMIT 1
         """, (d,)).fetchone()
         if activity and activity["hr_zone"]:
-            zone_num = _zone_to_number(activity["hr_zone"])
-            if zone_num >= 3:
+            z = Zone.parse_or_none(activity["hr_zone"])
+            if z is not None and z >= Zone.Z3:
                 z3_plus_count += 1
 
     ratio = z3_plus_count / len(easy_dates) if easy_dates else 0
     return ratio > 0.6
-
-
-def _zone_to_number(zone_str):
-    """Convert zone string like 'Z3' or 'z3' to integer 3."""
-    if not zone_str:
-        return 0
-    try:
-        return int(zone_str.upper().replace("Z", ""))
-    except (ValueError, TypeError):
-        return 0
 
 
 def _iso_week_to_monday(week_str):

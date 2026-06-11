@@ -298,16 +298,18 @@ class TestEffortClass:
     def test_null(self):
         assert compute_effort_class(None) is None
 
-    def test_unknown_zone(self):
-        """Unknown zone string should return 'Easy' as default."""
-        assert compute_effort_class("Z6") == "Easy"
+    def test_unknown_zone_raises(self):
+        """An unrecognised zone is rejected, not silently mislabeled 'Easy' (DDD E3)."""
+        with pytest.raises(KeyError):
+            compute_effort_class("Z6")
 
-    def test_empty_string(self):
-        assert compute_effort_class("") == "Easy"
+    def test_empty_string_raises(self):
+        with pytest.raises(KeyError):
+            compute_effort_class("")
 
-    def test_lowercase_zone(self):
-        """Lowercase 'z1' is not in the mapping, should default to Easy."""
-        assert compute_effort_class("z1") == "Easy"
+    def test_lowercase_zone_parses(self):
+        """Case-insensitive: 'z1' parses to Z1 → Recovery (was silently 'Easy')."""
+        assert compute_effort_class("z1") == "Recovery"
 
 
 # ════════════════════════════════════════════════════════════════

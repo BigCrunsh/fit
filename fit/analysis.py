@@ -3,12 +3,68 @@
 import logging
 import sqlite3
 from datetime import date, timedelta
+from enum import Enum, IntEnum
 
 logger = logging.getLogger(__name__)
 
 # Canonical set of running activity types (Garmin classifies some as track/trail)
 RUNNING_TYPES = ("running", "track_running", "trail_running")
 RUNNING_TYPES_SQL = "('running','track_running','trail_running')"
+
+
+# ── Zone ladder as value objects (DDD E3) ───────────────────────────────────
+# The HR zone ladder is the project's central intensity model. `Zone` owns its
+# identity, ordering, and the one zone→effort-class map, so a zone-model change
+# lands in one place and a typo'd zone is caught — not silently mislabeled.
+# Boundary *numbers* stay in config (`zones_lthr` / `zones_max_hr_pct`).
+
+
+class EffortClass(Enum):
+    """The documented 5-level effort class."""
+
+    RECOVERY = "Recovery"
+    EASY = "Easy"
+    MODERATE = "Moderate"
+    HARD = "Hard"
+    VERY_HARD = "Very Hard"
+
+
+class Zone(IntEnum):
+    """An HR zone Z1..Z5 — ordering is intrinsic; the zone→effort-class map lives here."""
+
+    Z1 = 1
+    Z2 = 2
+    Z3 = 3
+    Z4 = 4
+    Z5 = 5
+
+    @classmethod
+    def parse(cls, s: str) -> "Zone":
+        """`'Z3'`/`'z3'` → `Zone.Z3`. Raises on junk/None — an unrecognised zone is a
+        bug to surface, not a silent fallthrough."""
+        return cls[s.strip().upper()]
+
+    @classmethod
+    def parse_or_none(cls, s) -> "Zone | None":
+        """Like `parse`, but returns None for missing/unknown — for call sites that
+        legitimately tolerate a None/absent zone."""
+        try:
+            return cls.parse(s)
+        except (KeyError, AttributeError, TypeError):
+            return None
+
+    @property
+    def effort_class(self) -> EffortClass:
+        return _ZONE_EFFORT[self]
+
+
+_ZONE_EFFORT = {
+    Zone.Z1: EffortClass.RECOVERY,
+    Zone.Z2: EffortClass.EASY,
+    Zone.Z3: EffortClass.MODERATE,
+    Zone.Z4: EffortClass.HARD,
+    Zone.Z5: EffortClass.VERY_HARD,
+}
 
 
 # ── HR Zone Computation (parallel models) ──
@@ -163,16 +219,15 @@ def _classify_zone_lthr(avg_hr: int, lthr: int, zones_pct: dict,
 
 
 def compute_effort_class(zone: str | None) -> str | None:
-    """Map zone to 5-level effort class."""
+    """Map a zone string to its 5-level effort-class string.
+
+    `None → None`; a valid `Z1`–`Z5` → its `EffortClass` value (outputs unchanged). An
+    unrecognised zone now raises (was a silent `"Easy"`): in normal operation the input is
+    always a `compute_hr_zones` output, so an invalid zone is a bug to surface, not mislabel.
+    """
     if zone is None:
         return None
-    return {
-        "Z1": "Recovery",
-        "Z2": "Easy",
-        "Z3": "Moderate",
-        "Z4": "Hard",
-        "Z5": "Very Hard",
-    }.get(zone, "Easy")
+    return Zone.parse(zone).effort_class.value
 
 
 # ── Speed Per BPM (aerobic efficiency) ──
@@ -230,7 +285,7 @@ def classify_run_type(activity: dict, config: dict = None, recent_long_run_avg: 
         return "intervals"
 
     # Tempo detection
-    if "tempo" in name or (zone in ("Z3", "Z4") and distance >= 6):
+    if "tempo" in name or (Zone.parse_or_none(zone) in {Zone.Z3, Zone.Z4} and distance >= 6):
         return "tempo"
 
     # Long run detection — dual condition:
@@ -246,7 +301,7 @@ def classify_run_type(activity: dict, config: dict = None, recent_long_run_avg: 
         return "long"
 
     # Recovery detection (very easy, short)
-    if zone == "Z1" and distance < 6:
+    if Zone.parse_or_none(zone) == Zone.Z1 and distance < 6:
         return "recovery"
 
     # Intensity guard: a Z4/Z5 effort is a hard session, never "easy",
@@ -257,7 +312,7 @@ def classify_run_type(activity: dict, config: dict = None, recent_long_run_avg: 
     # sustained-vs-rep call isn't possible here — classify as the hard-
     # continuous bucket 'tempo'. (Races are tagged separately via
     # _match_race_calendar and override this.)
-    if zone in ("Z4", "Z5"):
+    if Zone.parse_or_none(zone) in {Zone.Z4, Zone.Z5}:
         return "tempo"
 
     # Default: easy
@@ -300,7 +355,7 @@ def enrich_activity(activity: dict, config: dict, lthr: int | None = None,
             activity.get("distance_km"), activity.get("duration_min"), activity.get("avg_hr")
         )
         activity["speed_per_bpm"] = spb
-        activity["speed_per_bpm_z2"] = spb if activity.get("hr_zone") == "Z2" else None
+        activity["speed_per_bpm_z2"] = spb if Zone.parse_or_none(activity.get("hr_zone")) == Zone.Z2 else None
     else:
         activity["speed_per_bpm"] = None
         activity["speed_per_bpm_z2"] = None
