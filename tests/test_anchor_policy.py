@@ -57,45 +57,45 @@ class TestVdotAnchor:
         _ins(db, "vdot", 41.0, "confirmed", days_ago=220, confidence="high", active=1)
         _ins(db, "vdot", 35.7, "race_observation", days_ago=30, confidence="low")
         a = get_calibration_anchor(db, "vdot")
-        assert a["value"] == 41.0                      # sticky — not the 35.7 window max
-        assert a["suggestion"]["value"] == 35.7        # surfaced as a suggestion
-        assert a["suggestion"]["differs"] is True      # → sync would prompt accept/reject
-        assert a["stale"] is True                      # confirmed 41 is older than 180d
+        assert a.value == 41.0                      # sticky — not the 35.7 window max
+        assert a.suggestion["value"] == 35.7        # surfaced as a suggestion
+        assert a.suggestion["differs"] is True      # → sync would prompt accept/reject
+        assert a.stale is True                      # confirmed 41 is older than 180d
 
     def test_bootstrap_uses_windowed_max_when_no_confirmed(self, db):
         """No confirmed row yet → value falls back to the windowed max."""
         _ins(db, "vdot", 35.7, "race_observation", days_ago=30, confidence="low")
         _ins(db, "vdot", 40.9, "race_observation", days_ago=60, confidence="medium")
         a = get_calibration_anchor(db, "vdot")
-        assert a["value"] == 40.9
-        assert a["method"] == "policy"
+        assert a.value == 40.9
+        assert a.method == "policy"
 
     def test_device_vo2max_excluded_from_observations(self, db):
         """Garmin's optimistic wrist-HR estimate never enters the max."""
         _ins(db, "vdot", 49.0, "device_vo2max", days_ago=10, confidence="medium", active=1)
         _ins(db, "vdot", 38.0, "race_observation", days_ago=20, confidence="medium")
         a = get_calibration_anchor(db, "vdot")
-        assert a["suggestion"]["value"] == 38.0        # 49 ignored
+        assert a.suggestion["value"] == 38.0        # 49 ignored
 
     def test_stale_with_no_in_window_evidence(self, db):
         """Confirmed value older than the window, nothing fresh → stale, no suggestion."""
         _ins(db, "vdot", 41.0, "confirmed", days_ago=220, confidence="high", active=1)
         a = get_calibration_anchor(db, "vdot")
-        assert a["value"] == 41.0
-        assert a["stale"] is True
-        assert a["suggestion"] is None
+        assert a.value == 41.0
+        assert a.stale is True
+        assert a.suggestion is None
 
     def test_fresh_confirmed_is_not_stale(self, db):
         _ins(db, "vdot", 40.0, "confirmed", days_ago=30, confidence="high", active=1)
         a = get_calibration_anchor(db, "vdot")
-        assert a["stale"] is False
+        assert a.stale is False
 
     def test_suggestion_within_threshold_does_not_flag_differs(self, db):
         """A suggestion within differs_materially (1.0) of active shouldn't prompt."""
         _ins(db, "vdot", 41.0, "confirmed", days_ago=200, confidence="high", active=1)
         _ins(db, "vdot", 40.5, "race_observation", days_ago=20)   # within 1.0 of 41.0
         a = get_calibration_anchor(db, "vdot")
-        assert a["suggestion"]["differs"] is False
+        assert a.suggestion["differs"] is False
 
 
 class TestMedianFamily:
@@ -104,29 +104,29 @@ class TestMedianFamily:
         for v, age in [(170, 20), (172, 60), (173, 100), (181, 10)]:  # 181 = hot-day outlier
             _ins(db, "lthr", v, "race_observation", days_ago=age)
         a = get_calibration_anchor(db, "lthr")
-        assert a["suggestion"]["value"] == 172.5   # median of 170/172/173/181, NOT 181
-        assert a["suggestion"]["value"] < 181
+        assert a.suggestion["value"] == 172.5   # median of 170/172/173/181, NOT 181
+        assert a.suggestion["value"] < 181
 
     def test_aet_median_of_noisy_drift_tests(self, db):
         for v, age in [(146, 10), (155, 30), (152, 50)]:
             _ins(db, "aet", v, "drift_test", days_ago=age)
         a = get_calibration_anchor(db, "aet")
-        assert a["suggestion"]["value"] == 152      # median of 146/152/155
+        assert a.suggestion["value"] == 152      # median of 146/152/155
 
     def test_below_min_samples_falls_back_to_recent_low_confidence(self, db):
         """LTHR needs 3; with 2 it uses the most recent at low confidence."""
         _ins(db, "lthr", 170, "race_observation", days_ago=60)
         _ins(db, "lthr", 174, "race_observation", days_ago=10)
         a = get_calibration_anchor(db, "lthr")
-        assert a["suggestion"]["value"] == 174       # most recent, not the median
-        assert a["suggestion"]["confidence"] == "low"
+        assert a.suggestion["value"] == 174       # most recent, not the median
+        assert a.suggestion["confidence"] == "low"
 
     def test_maxhr_max_family_365d_window(self, db):
         """MaxHR is a max over a 365-day window (not 180)."""
         _ins(db, "max_hr", 192, "race_candidate", days_ago=300)   # in 365d window
         _ins(db, "max_hr", 188, "activity_max", days_ago=20)
         a = get_calibration_anchor(db, "max_hr")
-        assert a["suggestion"]["value"] == 192       # 300d-old peak still counts
+        assert a.suggestion["value"] == 192       # 300d-old peak still counts
 
 
 class TestBackfillRaceVdot:
@@ -203,5 +203,5 @@ class TestNoPolicyFallback:
         """weight has no aggregation policy → legacy single-row, no suggestion."""
         _ins(db, "weight", 75.4, "scale", days_ago=2, confidence="high", active=1)
         a = get_calibration_anchor(db, "weight")
-        assert a["value"] == 75.4
-        assert a["suggestion"] is None
+        assert a.value == 75.4
+        assert a.suggestion is None

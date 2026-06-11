@@ -666,7 +666,7 @@ def predict_race_time(conn: sqlite3.Connection | None = None,
         if vdot_seconds:
             anchor = get_calibration_anchor(conn, "vdot")
             predictions["vdot"] = {
-                "vdot": anchor["value"] if anchor else None,
+                "vdot": anchor.value if anchor else None,
                 "predicted_seconds": round(vdot_seconds),
                 "predicted_pace_sec_km": round(vdot_seconds / marathon_km),
             }

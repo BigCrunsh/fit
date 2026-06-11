@@ -72,9 +72,9 @@ def _lthr(conn: sqlite3.Connection) -> float:
     from fit.calibration import get_calibration_anchor  # local: keep features import-light
 
     anchor = get_calibration_anchor(conn, "lthr")
-    if not anchor or not anchor.get("value"):
+    if anchor is None:
         raise ValueError("no LTHR calibration anchor — marathon forecast cannot run")
-    return float(anchor["value"])
+    return float(anchor.value)
 
 
 def _max_hr(conn: sqlite3.Connection) -> float | None:
@@ -82,7 +82,7 @@ def _max_hr(conn: sqlite3.Connection) -> float | None:
     from fit.calibration import get_calibration_anchor  # local
 
     anchor = get_calibration_anchor(conn, "max_hr")
-    return float(anchor["value"]) if anchor and anchor.get("value") else None
+    return float(anchor.value) if anchor is not None else None
 
 
 def _goal_distance(conn: sqlite3.Connection) -> float:

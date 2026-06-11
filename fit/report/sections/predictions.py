@@ -117,8 +117,8 @@ def _prediction_summary(conn):
         headline = anchor_race_time(conn, target_km)
         note = ""
         if headline:
-            anchor = get_calibration_anchor(conn, "vdot") or {}
-            note = " (stale — re-test)" if anchor.get("stale") else ""
+            anchor = get_calibration_anchor(conn, "vdot")
+            note = " (stale — re-test)" if (anchor and anchor.stale) else ""
         else:
             # No calibrated anchor → conservative Riegel extrapolation from
             # actual races. Never the retired Garmin-VO2max table.

@@ -76,8 +76,8 @@ def _effective_vdot(conn: sqlite3.Connection):
     try:
         from fit.calibration import get_calibration_anchor  # local: calibration imports fitness
         anchor = get_calibration_anchor(conn, "vdot")
-        if anchor and anchor.get("value") is not None:
-            return float(anchor["value"])
+        if anchor is not None:
+            return float(anchor.value)
     except Exception as e:
         logger.debug("vdot anchor unavailable, using legacy effective_vdot: %s", e)
     race_vdot, race_date = _get_race_vdot(conn)
@@ -348,9 +348,9 @@ def anchor_race_time(conn: sqlite3.Connection, distance_km: float) -> int | None
         return None
     from fit.calibration import get_calibration_anchor  # local: avoid import cycle
     anchor = get_calibration_anchor(conn, "vdot")
-    if not anchor or not anchor.get("value"):
+    if anchor is None:
         return None
-    return vdot_to_race_time(anchor["value"], distance_km)
+    return vdot_to_race_time(anchor.value, distance_km)
 
 
 def inverse_vdot(target_time_seconds: int, distance_km: float) -> float | None:
@@ -752,7 +752,7 @@ def derive_objectives(conn, race_id: int) -> list[dict]:
         # HRs are LTHR-relative (personalised), not stale textbook absolutes (was 134 / 165).
         from fit.calibration import get_calibration_anchor as _gca
         _lthr_a = _gca(conn, "lthr")
-        _lthr = float(_lthr_a["value"]) if _lthr_a and _lthr_a.get("value") else 172.0
+        _lthr = float(_lthr_a.value) if _lthr_a is not None else 172.0
         z2_hr = round(0.89 * _lthr)   # Friel %LTHR Z2 ceiling (≈154 at LTHR 173), was hardcoded 134
         threshold_target = round(easy_pace_m_per_min / z2_hr, 3)
         objectives.append({

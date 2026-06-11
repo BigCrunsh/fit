@@ -69,8 +69,8 @@ def _prediction_summary(conn):
         headline = anchor_race_time(conn, target_km)
         note = ""
         if headline:
-            anchor = get_calibration_anchor(conn, "vdot") or {}
-            note = " (stale — re-test)" if anchor.get("stale") else ""
+            anchor = get_calibration_anchor(conn, "vdot")
+            note = " (stale — re-test)" if (anchor and anchor.stale) else ""
         else:
             # No calibrated anchor → conservative (slowest) Riegel extrapolation
             # from actual races. Never the retired Garmin-VO2max table.
@@ -152,20 +152,20 @@ def _vdot_comparison(conn):
     ).fetchone()
     garmin = float(garmin_row["vo2max"]) if garmin_row and garmin_row["vo2max"] else None
 
-    if (not anchor or anchor.get("value") is None) and not garmin:
+    if anchor is None and not garmin:
         return None
 
     # Anchor payload — the standardized value + the effort that drives it.
     anchor_payload = None
-    anchor_vdot = anchor.get("value") if anchor else None
+    anchor_vdot = anchor.value if anchor else None
     if anchor_vdot is not None:
         # Source effort = the top in-window observation (joins to its activity
         # for distance/time). Falls back to the confirmed row's own date.
         src = None
-        sug = anchor.get("suggestion")
+        sug = anchor.suggestion
         if sug and sug.get("inputs"):
             src = sug["inputs"][0]
-        src_date = (src or {}).get("date") or (anchor.get("inputs") or [{}])[0].get("date")
+        src_date = (src or {}).get("date") or (anchor.inputs or [{}])[0].get("date")
         act = None
         if src and src.get("source_activity_id"):
             act = conn.execute(
@@ -180,9 +180,9 @@ def _vdot_comparison(conn):
             "distance_km": round(act["distance_km"], 1) if act and act["distance_km"] else None,
             "result_time": _fmt_time(act["duration_min"] * 60) if act and act["duration_min"] else None,
             "name": (act["name"] if act and act["name"] else "Confirmed VDOT"),
-            "source": "confirmed" if anchor.get("method") in ("manual", "confirmed") else "race",
-            "confidence": anchor.get("confidence"),
-            "stale": anchor.get("stale"),
+            "source": "confirmed" if anchor.method in ("manual", "confirmed") else "race",
+            "confidence": anchor.confidence,
+            "stale": anchor.stale,
         }
 
     anchor_marathon = _marathon(anchor_vdot) if anchor_vdot is not None else None
@@ -508,13 +508,13 @@ def _attention_items(conn):
     # the suggestion down.
     try:
         from fit.calibration import (get_active_calibration as _gac,
-                                      extract_lthr_from_race, DEVICE_METHODS)
+                                      extract_lthr_from_race, CalibrationMethod, TrustTier)
         active_lthr = _gac(conn, "lthr")
         # A device-measured LTHR (Garmin auto-detected LT) is the trusted anchor —
         # it outranks any race-derived estimate (precedence: confirmed > device >
         # policy), so a race-implied LTHR nudge is noise against it. Skip when the
         # active value is device-sourced; it re-enables if the device stops feeding it.
-        if active_lthr and active_lthr.get("method") in DEVICE_METHODS:
+        if active_lthr and CalibrationMethod.resolve(active_lthr.get("method")).trust_tier == TrustTier.DEVICE:
             active_lthr = None
         hm = conn.execute(f"""
             SELECT a.date, a.name, a.distance_km, a.avg_hr
@@ -755,10 +755,10 @@ def _pace_zones(conn):
     # one consistent story. (Daniels off Garmin's optimistic VO2max would
     # prescribe paces far too fast — see the anchor's reference-method exclusion.)
     anchor = get_calibration_anchor(conn, "vdot")
-    if not anchor or anchor.get("value") is None:
+    if anchor is None:
         return {"available": False, "missing": "No qualifying effort yet — run a 5–10 km at ≥ LTHR to anchor your paces."}
-    vdot = anchor["value"]
-    vdot_source = "garmin" if anchor.get("method") == "device_vo2max" else "anchor"
+    vdot = anchor.value
+    vdot_source = "garmin" if anchor.method == "device_vo2max" else "anchor"
 
     paces = compute_daniels_paces(vo2max=vdot)
     if not paces:

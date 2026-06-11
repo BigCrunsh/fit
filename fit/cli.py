@@ -1804,8 +1804,8 @@ def calibrate(metric: str, value: float | None, cal_date: str | None):
         elif metric == "vdot":
             console.print("\n[bold]VDOT Calibration[/bold]")
             anchor = get_calibration_anchor(conn, "vdot")
-            if anchor and anchor.get("suggestion"):
-                s = anchor["suggestion"]
+            if anchor and anchor.suggestion:
+                s = anchor.suggestion
                 console.print(f"  Suggested from your races: [bold]{s['value']:g}[/bold] ({s['reason']})")
             if value is None:
                 console.print("  Confirm your VDOT from a recent representative race "
