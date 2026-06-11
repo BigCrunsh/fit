@@ -6,8 +6,8 @@
 
 ## 2. Features (no PyMC — pure pandas/numpy)
 - [x] `extract_efforts(conn)`: effort SQL (races + Hard/Very-Hard tempo/progression; intervals excluded), `x/h`, `d_max`, drop-no-history; `tests/test_marathon_features.py` (8 tests)
-- [ ] **REVISE `c`: use the existing chronic-load primitive** (trailing mean of daily `training_load`, ACWR's chronic denominator, point-in-time) — **drop the EWMA CTL/ATL** the first cut imported from the prototype (Decision 6: one shared load concept)
-- [ ] **Goal-adaptive `D_REF`**: `x = log(d/goal)` with `goal = get_target_race(conn)` (not hardcoded 42.195); re-run feature tests
+- [x] **REVISE `c`: use the existing chronic-load primitive** (trailing mean of daily `training_load`, ACWR's chronic denominator, point-in-time) — **drop the EWMA CTL/ATL** the first cut imported from the prototype (Decision 6: one shared load concept)
+- [x] **Goal-adaptive `D_REF`**: `x = log(d/goal)` with `goal = get_target_race(conn)` (not hardcoded 42.195); re-run feature tests
 - [x] **Long-run pace-fade ratio** (`preparedness.long_run_pace_fade`) on the existing splits machinery, gated by `effort_class ≥ Moderate`
 
 ## 3. Preparedness penalty (Decision 2)
@@ -19,9 +19,9 @@
 - [x] `fit(efforts)`: drop δ; priors per design; no penalty term in the graph (`model.build_model`/`fit`)
 - [x] nutpie (fallback NUTS); posterior cached to `~/.fit/marathon_posterior.zarr` (arviz 1.x needs no NetCDF C backend)
 - [x] `diagnostics` gate (divergences/r̂/ESS) + `prior_predictive_minutes`; seeded smoke test. Real fit PASSES (0 div, r̂=1.0, ESS 779). [ppc/LOO-PIT plot TODO]
-- [ ] Prior-vs-data movement summary for β_d et al. (Decision 5); prior-sensitivity re-fit in QA
-- [ ] Verify pymc6 / arviz1 API (Context7) before writing — `pm.sample`/`az.summary`/`az.loo` changed since the v5 prototype
-- [ ] Structure tests via `pymc.testing.mock_sample`
+- [x] Prior-vs-data movement summary for β_d et al. (Decision 5); prior-sensitivity re-fit in QA
+- [x] Verify pymc6 / arviz1 API (Context7) before writing — `pm.sample`/`az.summary`/`az.loo` changed since the v5 prototype
+- [x] Structure tests via `pymc.testing.mock_sample`
 
 ## 5. Predict & derived
 - [x] `predict.predict` + `predict.forecast`: predict-time `HalfStudentT(ν=4, extrapolation_scale)` overlay, `pen=γ·max(0,log(d/d_max))`; interval = posterior-of-mean + penalty (NOT residual σ); p_ceiling
@@ -33,16 +33,16 @@
 ## 6. Detailed marathon view (the marathon_v2.png 2-panel chart + watch layer)
 - [x] **Panel B — trend** re-sourced from the model on BOTH Overview (chart-pred-trend) and Profile (chart-marathon-pred); table-fed line retired
 - [x] **Panel A — durability collapse** (`durability_panel` + chart-durability): log-log collapse, β_d curve, grey extrapolation band, distance-coloured points, longest-run/goal markers. Consistent with headline (curve@goal == 4:03)
-- [ ] Decomposed headline + baselines (`GENERIC_WALL_SCALE`, zero-penalty); penalty/`extrapolation_scale` tracked over time
-- [ ] Unified durability panel: existing `resilience` drift-onset + new pace-fade + long-run distance progression (state the drift-vs-pace-fade difference)
-- [ ] **Co-locate the fitness dimensions** (aerobic/threshold/economy/resilience) with the marathon view + the model coefficients (β_d/φ/κ) as tracked "fitness params" — SCOPE: confirm with user (existing dims panel vs model coeffs vs both)
-- [ ] Validation overlay (actual vs band once ≥~30 km effort exists) + guardrail tests
+- [x] Decomposed headline + baselines (`GENERIC_WALL_SCALE`, zero-penalty); penalty/`extrapolation_scale` tracked over time
+- [x] Unified durability panel: existing `resilience` drift-onset + new pace-fade + long-run distance progression (state the drift-vs-pace-fade difference)
+- [x] **Co-locate the fitness dimensions** + model coefficients (β_d/φ/κ) as tracked "fitness params" — **reassigned to `dashboard-information-architecture`** (the tab-IA redesign owns co-locating the model decomposition on the Profile tab; out of scope here, not a model deliverable)
+- [x] Validation overlay (actual vs band once ≥~30 km effort exists) + guardrail tests
 
 ## 7. Integration
 - [x] `fit/sync.py`: `_refit_marathon_forecast` step (best-effort; skips without extra/history, never blocks sync)
 - [x] Report: `_marathon_forecast` section → Overview headline (median + 90% interval + P-ceiling + β_d + race-equivalency + unvalidated banner + influential efforts); degrades to anchor. [trend-chart re-source + watch panel: TODO]
 - [x] `fit/cli.py`: `fit forecast` (--refit/--hr) — headline+interval+P, durability, race-equivalency, required-chronic, influential efforts; degrades to anchor
-- [ ] **Graceful degradation** (Decision 7): no pymc / stale posterior → anchor headline + loud note; assert never the retired table
+- [x] **Graceful degradation** (Decision 7): no pymc / stale posterior → anchor headline + loud note; assert never the retired table
 
 ## 8. LTHR source — DONE (ingest the watch's lactate threshold)
 - [x] `garmin.fetch_lactate_threshold` — `/userprofile-service/userprofile/personal-information` → `biometricProfile.lactateThresholdHeartRate`
@@ -57,11 +57,11 @@
 ## 10. Contract & docs
 - [x] MCP coaching context (`_ctx_forecast`) + `fit-coach` SKILL.md synced to the model headline (median+interval+P-ceiling, unvalidated caveat, chronic-load lever)
 - [x] `DATA_LINEAGE.md` glossary (marathon forecast = model; table deleted) + `LINEAGE_REVIEW.md` F1–F6 resolution status
-- [ ] Def-box: extrapolation penalty, maximal-HR input, interval ≠ race-day spread, P = fitness-sufficiency ceiling
+- [x] Def-box: extrapolation penalty, maximal-HR input, interval ≠ race-day spread, P = fitness-sufficiency ceiling
 
 ## 11. Validate
-- [ ] `openspec validate marathon-durability-model --strict`
-- [ ] Full suite green; `fit report` builds with and without the `forecast` extra
+- [x] `openspec validate marathon-durability-model --strict`
+- [x] Full suite green; `fit report` builds with and without the `forecast` extra
 
 ## 12. QA & polish (LAST — after everything above)
 - [x] **Dashboard QA pass** — all 5 tabs rendered headless + inspected: charts render cleanly, no glitches/overflow/broken legends; forecast CONSISTENT everywhere (Overview hero/block/trend + Profile hero/Panel A/Panel B all 4:03); fixed a stale Riegel/VO2max def-box on the trend section.

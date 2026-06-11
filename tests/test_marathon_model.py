@@ -106,6 +106,43 @@ class TestBuildModel:
         assert "delta" not in names            # δ interaction dropped (Decision 1)
 
 
+class TestModelStructureMockSample:
+    """Structure-only tests (no real MCMC) via `pymc.testing.mock_sample`: the graph is
+    exactly the six fitted params + the observed likelihood, and it samples to that
+    structure when `pm.sample` is mocked — fast, deterministic, no convergence needed."""
+
+    def test_graph_is_exactly_the_six_params_plus_observed_y(self):
+        pytest.importorskip("pymc")
+        from fit.marathon.model import build_model, PARAMS
+        m = build_model(_synthetic_ds())
+        assert {rv.name for rv in m.free_RVs} == set(PARAMS)          # exactly the 6 fitted params
+        assert {rv.name for rv in m.observed_RVs} == {"y"}            # one observed likelihood
+        assert type(m.observed_RVs[0].owner.op).__name__ == "StudentTRV"   # robust (Student-T) likelihood
+
+    def test_mock_sample_round_trip_yields_posterior_params(self, monkeypatch):
+        pytest.importorskip("pymc")
+        import pymc as pm
+        from pymc.testing import mock_sample
+        from fit.marathon.model import build_model, PARAMS
+        monkeypatch.setattr(pm, "sample", mock_sample)               # prior-predictive, not MCMC
+        with build_model(_synthetic_ds()):
+            idata = pm.sample()
+        assert set(PARAMS) <= set(idata.posterior.data_vars)         # graph is samplable to spec
+
+    def test_fit_runs_end_to_end_under_mock(self, monkeypatch):
+        """fit() (build → sample → log-lik → diagnostics → return) completes without real
+        sampling when pm.sample is mocked; the result has the expected posterior structure."""
+        pytest.importorskip("pymc")
+        import pymc as pm
+        from functools import partial
+        from pymc.testing import mock_sample
+        from fit.marathon.model import fit, PARAMS
+        monkeypatch.setattr(pm, "sample", partial(
+            mock_sample, sample_stats={"diverging": lambda size: np.zeros(size, dtype=int)}))
+        idata = fit(_synthetic_ds(), save=False)                     # no disk, no MCMC
+        assert set(PARAMS) <= set(idata.posterior.data_vars)
+
+
 class TestDerivedMetrics:
     def test_structure_and_equivalency_monotone(self):
         from fit.marathon.predict import derived_metrics

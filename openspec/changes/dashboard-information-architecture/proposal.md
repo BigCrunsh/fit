@@ -18,6 +18,8 @@ The dashboard has five tabs but no clear information architecture. The **Overvie
 
 This is the coaching triage order (recovery → consistency → physiology/performance → synthesis), and **CTL is the thread** through all of them.
 
+> Scope note: this change owns **co-locating the fitness dimensions with the model coefficients (β_d/φ/κ)** on the Profile tab — reassigned here from `marathon-durability-model` (its task was scoped to "confirm with user"; it's a tab-IA decision, not a model deliverable).
+
 ### Overview becomes a hub (summary + drill-in links), not a detail page
 
 - **Headline** = the goal verdict: predicted time + interval + P(goal) + countdown on the phase timeline (the `marathon-durability-model` output — one source of truth).
