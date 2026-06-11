@@ -79,12 +79,14 @@ def generate_dashboard(conn: sqlite3.Connection, output_path: Path) -> None:
         "chartjs_code": chartjs_code,
         "annotation_code": annotation_code,
         "date_adapter_code": date_adapter_code,
+        # Triage order (recovery → consistency → physiology → synthesis); `job` is the
+        # one-line decision each tab supports, shown as a subtitle (dashboard-information-architecture).
         "tabs": [
-            {"id": "overview", "label": "Overview"},
-            {"id": "profile", "label": "Profile"},
-            {"id": "training", "label": "Training"},
-            {"id": "readiness", "label": "Readiness"},
-            {"id": "coach", "label": "Coach"},
+            {"id": "overview", "label": "Overview", "job": "On track? And the one thing to do."},
+            {"id": "readiness", "label": "Readiness", "job": "Can I absorb training — am I fresh?"},
+            {"id": "training", "label": "Training", "job": "Am I doing the work?"},
+            {"id": "profile", "label": "Profile", "job": "Who am I — and what will race day give?"},
+            {"id": "coach", "label": "Coach", "job": "The plan, and why."},
         ],
         "headline": _headline(conn),
         "headline_signal": _headline_signal(conn),

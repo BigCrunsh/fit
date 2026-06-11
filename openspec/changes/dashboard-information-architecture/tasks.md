@@ -1,14 +1,14 @@
 ## 1. Tab order + job subtitles (mechanical, low-risk)
 
-- [ ] 1.1 `generator.py`: reorder the `tabs` list to triage order — `overview · readiness · training · profile · coach` — and add a one-line `job` (the decision it supports) to each.
-- [ ] 1.2 `dashboard.html`: render each tab's `job` as a subtitle; reuse a design-system text style.
-- [ ] 1.3 Suite green; `fit report` builds (new tab order + subtitles present).
+- [x] 1.1 `generator.py`: reorder the `tabs` list to triage order — `overview · readiness · training · profile · coach` — and add a one-line `job` (the decision it supports) to each.
+- [x] 1.2 `dashboard.html`: render each tab's `job` as a subtitle; reuse a design-system text style.
+- [x] 1.3 Suite green; `fit report` builds (new tab order + subtitles present).
 
 ## 2. `showTab` — target section + URL hash
 
-- [ ] 2.1 Extend `showTab(id, btn)` → `showTab(id, btn, section=null)`: keep the reveal-all-then-restore pass (charts init at real size), then scroll to `section`, and set `location.hash` to `id` (or `id/section`).
-- [ ] 2.2 On load: a valid hash routes through `showTab`; unknown/empty → `overview`.
-- [ ] 2.3 Reusable `→ <Tab>` link affordance (calls `showTab`, never a raw anchor jump) + its `design_system.css` component.
+- [x] 2.1 Extend `showTab(id, btn)` → `showTab(id, btn, section=null)`: keep the reveal-all-then-restore pass (charts init at real size), then scroll to `section`, and set `location.hash` to `id` (or `id/section`).
+- [x] 2.2 On load: a valid hash routes through `showTab`; unknown/empty → `overview`.
+- [x] 2.3 Reusable `→ <Tab>` link affordance (calls `showTab`, never a raw anchor jump) + its `design_system.css` component.
 
 ## 3. Overview-hub builder (the story logic)
 
