@@ -1382,6 +1382,181 @@ def _overview_objectives(conn):
         return None
 
 
+# Status grammar shared by the Overview hub strip (icon + colour; never colour alone).
+_HUB_STATUS_ICON = {"safe": "✓", "caution": "!", "danger": "✗", "neutral": "·"}
+_HUB_SEV = {"danger": 2, "caution": 1, "safe": 0, "neutral": -1}
+# Limiter lever per domain: (tab, section anchor, concrete lever phrasing).
+_HUB_LEVER = {
+    "Fitness": ("training", "train-objectives", "build weekly volume toward the phase target"),
+    "Recovery": ("readiness", "readiness-acwr", "ease back — training load is outside the safe range"),
+    "Physiology": ("profile", "prof-pace-zones", "sharpen race-pace work to close the VDOT gap"),
+}
+
+
+# Default VDOT-point cutoffs (the values agreed for the Physiology card); overridable.
+HUB_VDOT_WATCH, HUB_VDOT_OFF = 1.0, 3.0
+
+
+def _hub_volume_status(vol, km_min, km_max):
+    """Weekly volume vs the active phase's [min, max] km range → (status, gap-fraction).
+    In range = safe; outside = caution; beyond a full range-width outside = danger. The
+    reference is the phase range itself — no fixed-percentage tolerance."""
+    if not vol or km_min is None or km_max is None:
+        return "neutral", 0.0
+    if km_min <= vol <= km_max:
+        return "safe", 0.0
+    over = (km_min - vol) if vol < km_min else (vol - km_max)
+    width = max(km_max - km_min, 1.0)
+    return ("danger" if over > width else "caution"), (over / km_min if km_min else 0.0)
+
+
+def _hub_vdot_status(eff, req, watch=HUB_VDOT_WATCH, off=HUB_VDOT_OFF):
+    """Effective VDOT vs goal-required → (status, gap-fraction). `watch`/`off` are the agreed
+    VDOT-point cutoffs (≤watch on-track · watch–off watch · >off off-track), passed in."""
+    if eff is None or req is None or not req:
+        return "neutral", 0.0
+    d = req - eff
+    return ("safe" if d <= watch else "caution" if d <= off else "danger"), max(0.0, d) / req
+
+
+def _hub_acwr_status(acwr, safe_range, danger_hi):
+    """ACWR vs the config safe band + danger threshold → (status, gap-fraction). The band
+    centre and the symmetric low-danger bound are *derived* from those config values (no
+    invented constants); gap = distance outside the band, relative to the band width."""
+    if acwr is None or not safe_range:
+        return "neutral", 0.0
+    lo, hi = safe_range
+    if lo <= acwr <= hi:
+        return "safe", 0.0
+    margin = (danger_hi - hi) if danger_hi else 0.0      # symmetric danger margin, from config
+    danger_lo = lo - margin
+    over = (lo - acwr) if acwr < lo else (acwr - hi)
+    status = "danger" if (danger_hi and acwr > danger_hi) or (margin and acwr < danger_lo) else "caution"
+    return status, over / max(hi - lo, 0.01)
+
+
+def _hub_pick_limiter(cards):
+    """The single highlighted limiter: worst status (danger>caution) among the gap-bearing
+    domains, tie-broken by the larger gap. None when nothing is below target. Every below-target
+    domain still shows in the strip — this is only the highlight."""
+    cand = [c for c in cards if c["label"] in _HUB_LEVER and c["status"] in ("caution", "danger")]
+    if not cand:
+        return None
+    top = max(cand, key=lambda c: (_HUB_SEV[c["status"]], c["gap"]))
+    tab, anchor, lever = _HUB_LEVER[top["label"]]
+    return {"label": top["label"], "lever": lever, "status": top["status"], "tab": tab, "anchor": anchor}
+
+
+def _overview_hub(conn):
+    """Overview synthesis hub (dashboard-information-architecture): the goal verdict + the
+    single highlighted limiter + a four-card status strip. Reuses the same values the detail
+    tabs show (no new computation), so a card can't disagree with its tab. Degrades to a
+    neutral/empty state when there's no goal / unfit model / thin data.
+
+    Status per domain: `safe`/`caution`/`danger` against a *defensible* reference (phase
+    volume target, the ACWR safe band, goal-required VDOT) — else `neutral` (no false colour).
+    The limiter is the worst-status domain (danger > caution), tie-broken by gap — the one to
+    act on first; every below-target domain still shows in the strip (nothing hidden).
+    """
+    try:
+        from fit.analysis import compute_rolling_week
+        from fit.fitness import get_fitness_profile
+        from fit.goals import get_target_race
+
+        rolling = compute_rolling_week(conn) or {}
+
+        # Goal-required VDOT — the existing derived target (reuse derive_objectives).
+        req_vdot = None
+        target = get_target_race(conn)
+        if target:
+            try:
+                from fit.fitness import derive_objectives
+                for o in derive_objectives(conn, target["id"]):
+                    if (o.get("name") or "").lower().startswith("vdot"):
+                        req_vdot = o.get("target_value")
+            except Exception:
+                pass
+
+        eff_vdot = (get_fitness_profile(conn) or {}).get("effective_vdot")
+
+        # References from config + the active phase — not hardcoded.
+        from fit.config import get_config
+        acfg = (get_config() or {}).get("analysis", {})
+        safe_range = acfg.get("acwr_safe_range", [0.8, 1.3])
+        danger_hi = acfg.get("acwr_danger_threshold", 1.5)
+        phase = conn.execute(
+            "SELECT weekly_km_min, weekly_km_max FROM training_phases WHERE status='active' LIMIT 1"
+        ).fetchone()
+        km_min = phase["weekly_km_min"] if phase else None
+        km_max = phase["weekly_km_max"] if phase else None
+
+        # Per-domain status vs its defensible reference (pure helpers — unit-tested).
+        vol = rolling.get("run_km")
+        fit_status, fit_gap = _hub_volume_status(vol, km_min, km_max)
+        phys_status, phys_gap = _hub_vdot_status(eff_vdot, req_vdot)
+        row = conn.execute(
+            "SELECT acwr FROM weekly_agg WHERE acwr IS NOT NULL ORDER BY week DESC LIMIT 1"
+        ).fetchone()
+        acwr = row["acwr"] if row else None
+        rec_status, rec_gap = _hub_acwr_status(acwr, safe_range, danger_hi)
+
+        # Coach: top coaching note (narrative — neutral/info, not a limiter candidate).
+        coach = _coaching(conn) or {}
+        notes = coach.get("insights") or []
+        top_note = notes[0]["title"] if notes and notes[0].get("title") else None
+
+        def _card(label, value, status, gap, tab, anchor):
+            return {"label": label, "value": value, "status": status,
+                    "icon": _HUB_STATUS_ICON[status], "gap": gap, "tab": tab, "anchor": anchor}
+
+        cards = [
+            _card("Fitness", f"{vol:.0f} km/wk" if vol else "—", fit_status, fit_gap, "training", "train-objectives"),
+            _card("Recovery", f"ACWR {acwr:.2f}" if acwr is not None else "—", rec_status, rec_gap, "readiness", "readiness-acwr"),
+            _card("Physiology", f"VDOT {eff_vdot:.0f}" if eff_vdot else "—", phys_status, phys_gap, "profile", "prof-vo2max"),
+            _card("Coach", top_note or "—", "neutral", 0.0, "coach", "coach-insights"),
+        ]
+
+        limiter = _hub_pick_limiter(cards)
+
+        # Verdict — the one forecast (most-likely + range + P(goal) + the limiter as the lever).
+        from fit.report.sections.predictions import _marathon_forecast
+        fc = _marathon_forecast(conn) or {}
+        verdict = None
+        if fc.get("available") and fc.get("median"):
+            parts = [f"≈{fc['median']}"]
+            if fc.get("interval"):
+                parts.append(f"likely {fc['interval']}")
+            if fc.get("p_ceiling_pct") is not None:
+                parts.append(f"P(goal) {fc['p_ceiling_pct']}%")
+            reading = " · ".join(parts)
+            if limiter:
+                reading += f" — limited by {limiter['label'].lower()}: {limiter['lever']}"
+            elif fc.get("source") == "model":
+                reading += " — on track"
+            verdict = {"time": fc["median"], "interval": fc.get("interval"),
+                       "p_goal": fc.get("p_ceiling_pct"), "reading": reading,
+                       "source": fc.get("source"), "tab": "profile", "anchor": "prof-prediction"}
+
+        # Next action: the top (severity-sorted) attention item, else the limiter's lever.
+        att = _attention_items(conn) or []
+        if att:
+            next_action = {"text": att[0].get("message"), "severity": att[0].get("severity"), "tab": "overview"}
+        elif limiter:
+            next_action = {"text": limiter["lever"], "severity": "info", "tab": limiter["tab"], "anchor": limiter["anchor"]}
+        else:
+            next_action = None
+
+        if not verdict and all(c["status"] == "neutral" for c in cards):
+            return {"empty": True, "cards": cards,
+                    "prompt": "Set a goal race and log a few runs to light up the Overview."}
+
+        return {"empty": False, "verdict": verdict, "limiter": limiter,
+                "next_action": next_action, "cards": cards}
+    except Exception as e:
+        logger.debug("overview hub unavailable: %s", e)
+        return None
+
+
 def _readiness_summary(conn):
     """Readiness summary cards for Overview tab — HRV, ACWR, Sleep, Monotony with sparklines."""
     try:

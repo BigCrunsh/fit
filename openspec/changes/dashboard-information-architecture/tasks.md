@@ -12,12 +12,12 @@
 
 ## 3. Overview-hub builder (the story logic)
 
-- [ ] 3.1 `_overview_hub(conn)` in `cards.py`, reusing existing computed values (no new compute). Produces:
-- [ ] 3.2 **Goal verdict** — predicted time + 90% interval + P(goal) (the model output, same as Profile/coaching) + a one-line reading: *most-likely + range* (never a single false-certain time) and the Δ since last week.
-- [ ] 3.3 **Limiter** — the domain with the largest gap *relative to its phase-target/goal-required level* (fitness/durability/effort/recovery); a **concrete** lever (a session/volume/recovery change, not a restatement); link to the owning tab + to the **next workout** that delivers the lever when one is planned; on-track → reframe as *what to protect*. The lever in the verdict reading IS this limiter (one story).
-- [ ] 3.4 **Single next action** by fixed precedence: safety (injury/illness) > consistency (missed/at-risk plan) > the limiter's lever.
-- [ ] 3.5 **Four status cards** (Fitness→Training, Recovery→Readiness, Physiology→Profile, Coach→Coach): value + trend (over the domain's canonical window per the window policy) + status as **icon/label + `safe`/`caution`/`danger` colour** (not colour-only); colour only against a defensible reference, else **neutral**; compact + a `→ <Tab>` link.
-- [ ] 3.6 Wire `_overview_hub` into the report context (`generator.py`).
+- [x] 3.1 `_overview_hub(conn)` in `cards.py`, reusing existing computed values (no new compute). Produces:
+- [x] 3.2 **Goal verdict** — predicted time + 90% interval + P(goal) (the model output, same as Profile/coaching) + a one-line reading: *most-likely + range* (never a single false-certain time) and the Δ since last week.
+- [x] 3.3 **Limiter** — the domain with the largest gap *relative to its phase-target/goal-required level* (fitness/durability/effort/recovery); a **concrete** lever (a session/volume/recovery change, not a restatement); link to the owning tab + to the **next workout** that delivers the lever when one is planned; on-track → reframe as *what to protect*. The lever in the verdict reading IS this limiter (one story).
+- [x] 3.4 **Single next action** by fixed precedence: safety (injury/illness) > consistency (missed/at-risk plan) > the limiter's lever.
+- [x] 3.5 **Four status cards** (Fitness→Training, Recovery→Readiness, Physiology→Profile, Coach→Coach): value + trend (over the domain's canonical window per the window policy) + status as **icon/label + `safe`/`caution`/`danger` colour** (not colour-only); colour only against a defensible reference, else **neutral**; compact + a `→ <Tab>` link.
+- [x] 3.6 Wire `_overview_hub` into the report context (`generator.py`).
 
 ## 4. Recompose Overview + relocate detail + lead the detail tabs
 
