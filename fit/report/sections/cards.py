@@ -1388,7 +1388,7 @@ _HUB_SEV = {"danger": 2, "caution": 1, "safe": 0, "neutral": -1}
 # Limiter lever per domain: (tab, section anchor, concrete lever phrasing).
 _HUB_LEVER = {
     "Fitness": ("training", "train-objectives", "build weekly volume toward the phase target"),
-    "Recovery": ("readiness", "readiness-acwr", "ease back — training load is outside the safe range"),
+    "Recovery": ("readiness", "readiness-acwr", "ease back — your load is spiking; add recovery"),
     "Physiology": ("profile", "prof-pace-zones", "sharpen race-pace work to close the VDOT gap"),
 }
 
@@ -1420,19 +1420,18 @@ def _hub_vdot_status(eff, req, watch=HUB_VDOT_WATCH, off=HUB_VDOT_OFF):
 
 
 def _hub_acwr_status(acwr, safe_range, danger_hi):
-    """ACWR vs the config safe band + danger threshold → (status, gap-fraction). The band
-    centre and the symmetric low-danger bound are *derived* from those config values (no
-    invented constants); gap = distance outside the band, relative to the band width."""
+    """ACWR for the Recovery card = load-**spike** (overload/injury) risk only. In or *below*
+    the safe band → safe: a low ACWR is freshness, not a recovery deficit — the under-training
+    it implies surfaces on the Fitness card (volume), so it isn't double-flagged here (that was
+    the backwards 'ease back' on a low ACWR). Above the band → caution; above the config danger
+    threshold → danger. Bands come from config (`acwr_safe_range`, `acwr_danger_threshold`)."""
     if acwr is None or not safe_range:
         return "neutral", 0.0
     lo, hi = safe_range
-    if lo <= acwr <= hi:
+    if acwr <= hi:                                   # in band or below → recovery is fine
         return "safe", 0.0
-    margin = (danger_hi - hi) if danger_hi else 0.0      # symmetric danger margin, from config
-    danger_lo = lo - margin
-    over = (lo - acwr) if acwr < lo else (acwr - hi)
-    status = "danger" if (danger_hi and acwr > danger_hi) or (margin and acwr < danger_lo) else "caution"
-    return status, over / max(hi - lo, 0.01)
+    status = "danger" if (danger_hi and acwr > danger_hi) else "caution"
+    return status, (acwr - hi) / max(hi - lo, 0.01)
 
 
 def _hub_pick_limiter(cards):
@@ -1445,6 +1444,23 @@ def _hub_pick_limiter(cards):
     top = max(cand, key=lambda c: (_HUB_SEV[c["status"]], c["gap"]))
     tab, anchor, lever = _HUB_LEVER[top["label"]]
     return {"label": top["label"], "lever": lever, "status": top["status"], "tab": tab, "anchor": anchor}
+
+
+def _hub_next_action(attention, limiter):
+    """The single next action by precedence — **safety > consistency/performance**: a critical
+    (safety) attention item wins; otherwise the limiter's lever is the headline action; a
+    non-critical attention item (e.g. a stale-calibration nudge) does NOT outrank the limiter
+    — it only fills in when there's no limiter."""
+    crit = next((a for a in (attention or []) if a.get("severity") == "critical"), None)
+    if crit:
+        return {"text": crit.get("message"), "severity": "critical", "tab": "overview"}
+    if limiter:
+        return {"text": limiter["lever"], "severity": "info",
+                "tab": limiter["tab"], "anchor": limiter.get("anchor")}
+    if attention:
+        a = attention[0]
+        return {"text": a.get("message"), "severity": a.get("severity"), "tab": "overview"}
+    return None
 
 
 def _overview_hub(conn):
@@ -1537,14 +1553,8 @@ def _overview_hub(conn):
                        "p_goal": fc.get("p_ceiling_pct"), "reading": reading,
                        "source": fc.get("source"), "tab": "profile", "anchor": "prof-prediction"}
 
-        # Next action: the top (severity-sorted) attention item, else the limiter's lever.
-        att = _attention_items(conn) or []
-        if att:
-            next_action = {"text": att[0].get("message"), "severity": att[0].get("severity"), "tab": "overview"}
-        elif limiter:
-            next_action = {"text": limiter["lever"], "severity": "info", "tab": limiter["tab"], "anchor": limiter["anchor"]}
-        else:
-            next_action = None
+        # Next action by precedence: critical (safety) > the limiter's lever > a remaining item.
+        next_action = _hub_next_action(_attention_items(conn) or [], limiter)
 
         if not verdict and all(c["status"] == "neutral" for c in cards):
             return {"empty": True, "cards": cards,

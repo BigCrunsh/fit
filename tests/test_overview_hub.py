@@ -7,7 +7,8 @@ builders elsewhere.
 """
 
 from fit.report.sections.cards import (
-    _hub_acwr_status, _hub_pick_limiter, _hub_vdot_status, _hub_volume_status, _overview_hub,
+    _hub_acwr_status, _hub_next_action, _hub_pick_limiter, _hub_vdot_status,
+    _hub_volume_status, _overview_hub,
 )
 
 
@@ -52,21 +53,43 @@ class TestVolumeStatus:
 class TestAcwrStatus:
     SAFE, DANGER_HI = [0.8, 1.3], 1.5   # the config bands, passed in
 
-    def test_bands(self):
+    def test_overload_side(self):
         assert _hub_acwr_status(1.0, self.SAFE, self.DANGER_HI)[0] == "safe"     # in band
         assert _hub_acwr_status(1.4, self.SAFE, self.DANGER_HI)[0] == "caution"  # 1.3–1.5
         assert _hub_acwr_status(1.6, self.SAFE, self.DANGER_HI)[0] == "danger"   # > danger_hi
-        assert _hub_acwr_status(0.7, self.SAFE, self.DANGER_HI)[0] == "caution"  # below band, above derived lo
-        assert _hub_acwr_status(0.5, self.SAFE, self.DANGER_HI)[0] == "danger"   # below derived lo
 
-    def test_low_danger_bound_is_derived_from_config(self):
-        # danger_lo = lo - (danger_hi - hi) = 0.8 - 0.2 = 0.6 — derived, not hardcoded
-        assert _hub_acwr_status(0.61, self.SAFE, self.DANGER_HI)[0] == "caution"
-        assert _hub_acwr_status(0.59, self.SAFE, self.DANGER_HI)[0] == "danger"
+    def test_low_acwr_is_not_a_recovery_concern(self):
+        # low ACWR = freshness / under-training → safe on Recovery (the build story is Fitness's)
+        assert _hub_acwr_status(0.7, self.SAFE, self.DANGER_HI)[0] == "safe"
+        assert _hub_acwr_status(0.44, self.SAFE, self.DANGER_HI)[0] == "safe"
 
     def test_neutral_when_missing(self):
         assert _hub_acwr_status(None, self.SAFE, self.DANGER_HI)[0] == "neutral"
         assert _hub_acwr_status(1.0, None, self.DANGER_HI)[0] == "neutral"
+
+
+class TestNextAction:
+    def _att(self, *sev):
+        return [{"severity": s, "message": f"{s} item"} for s in sev]
+
+    def _lim(self):
+        return {"label": "Fitness", "lever": "build volume", "tab": "training", "anchor": "train-objectives"}
+
+    def test_critical_safety_wins(self):
+        na = _hub_next_action(self._att("warning", "critical"), self._lim())
+        assert na["severity"] == "critical" and na["text"] == "critical item"
+
+    def test_limiter_outranks_noncritical_attention(self):
+        # a stale-calibration "warning" must NOT outrank the limiter's lever
+        na = _hub_next_action(self._att("warning", "info"), self._lim())
+        assert na["text"] == "build volume"
+
+    def test_attention_fallback_when_no_limiter(self):
+        na = _hub_next_action(self._att("warning"), None)
+        assert na["text"] == "warning item"
+
+    def test_none_when_nothing(self):
+        assert _hub_next_action([], None) is None
 
 
 class TestPickLimiter:
