@@ -65,6 +65,38 @@
   </div>
   {% endif %}
 
+  <!-- 1·SYNTHESIS HUB — the two-line answer (verdict + limiter) + the status strip.
+       dashboard-information-architecture: am I on track? + the one thing to do. -->
+  {% if overview_hub and not overview_hub.empty %}
+  <div class="hub">
+    {% if overview_hub.verdict %}
+    <div class="hub-verdict">
+      <span class="hub-time">{{ overview_hub.verdict.time }}</span>
+      <span class="hub-reading">{{ overview_hub.verdict.reading }}</span>
+    </div>
+    {% endif %}
+    {% if overview_hub.limiter %}
+    <div class="hub-limiter hub-{{ overview_hub.limiter.status }}">
+      <span class="hub-tag">Limiter</span> {{ overview_hub.limiter.label }} — {{ overview_hub.limiter.lever }}
+      <a class="hub-link" href="javascript:void(0)" onclick="showTab('{{ overview_hub.limiter.tab }}', null, '{{ overview_hub.limiter.anchor }}')">→ {{ overview_hub.limiter.tab | title }}</a>
+    </div>
+    {% endif %}
+    {% if overview_hub.next_action %}
+    <div class="hub-action"><span class="hub-tag">Next</span> {{ overview_hub.next_action.text }}</div>
+    {% endif %}
+    <div class="hub-strip">
+      {% for c in overview_hub.cards %}
+      <a class="hub-card hub-{{ c.status }}" href="javascript:void(0)" onclick="showTab('{{ c.tab }}', null, '{{ c.anchor }}')" title="open {{ c.tab | title }}">
+        <span class="hub-card-top"><span class="hub-card-icon">{{ c.icon }}</span> {{ c.label }}</span>
+        <span class="hub-card-value">{{ c.value }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% elif overview_hub and overview_hub.empty %}
+  <div class="hub-empty">{{ overview_hub.prompt }}</div>
+  {% endif %}
+
   <!-- 1b. YOUR PHYSIOLOGY — the four anchors everything else derives from -->
   {% if physiology %}
   <div class="physiology-card">
