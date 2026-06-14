@@ -542,80 +542,84 @@ def _all_charts(conn):
     # 1. Per-km chart: individual runs (thin) + 4-week average (thick), dual-axis pace + HR
     # 2. Drift-over-time chart: drift % per run as time series
     from collections import defaultdict
+    from fit.fit_file import compute_cardiac_drift as _ccd
+    # Long-Run Resilience curves: per-km pace + HR for steady long runs, 4-week avg overlaid.
+    # Binned by CUMULATIVE DISTANCE (real km), never the lap index — so an interval session's
+    # many short laps can't stretch or mislabel the x-axis. Inclusion matches the Resilience
+    # dimension: >=8 km, last 28d, and compute_cardiac_drift (the ONE grade-adjusted source)
+    # classifies it 'detected'/'none'; its pace-CV gate drops interval / variable-pace runs.
     drift_runs = conn.execute("""
-        SELECT a.id, a.date, a.name, COUNT(s.split_num) as n_splits
+        SELECT a.id, a.date, a.name
         FROM activities a
         JOIN activity_splits s ON s.activity_id = a.id
         WHERE a.type IN ('running','track_running','trail_running')
           AND a.date >= date('now', '-28 days')
-        GROUP BY a.id HAVING n_splits >= 5
+          AND a.distance_km >= 8
+        GROUP BY a.id HAVING COUNT(s.split_num) >= 4
         ORDER BY a.date
     """).fetchall()
     if drift_runs:
         # Collect per-run split data + per-km averages
         pace_by_km = defaultdict(list)
         hr_by_km = defaultdict(list)
-        max_splits = 0
-        run_splits = []  # list of {date, name, pace: [...], hr: [...]}
-        drift_pcts = []  # for drift-over-time chart
+        max_km = 0
+        run_splits = []  # list of {date, name, pace: {km:..}, hr: {km:..}, n}
 
         for run in drift_runs:
             splits = conn.execute(
-                "SELECT split_num, pace_sec_per_km, avg_hr FROM activity_splits WHERE activity_id = ? ORDER BY split_num",
-                (run["id"],)
-            ).fetchall()
-            run_pace = {}
-            run_hr = {}
-            hr_vals = []
-            for s in splits:
-                km = s["split_num"]
-                if s["pace_sec_per_km"]:
+                "SELECT split_num, pace_sec_per_km, avg_hr, distance_km, elevation_gain_m, "
+                "elevation_loss_m FROM activity_splits WHERE activity_id = ? ORDER BY split_num",
+                (run["id"],)).fetchall()
+            sd = [dict(s) for s in splits]
+            # Steady-run gate via the canonical (grade-adjusted) drift fn: variable-pace /
+            # interval runs come back 'inconclusive_variable_pace' and are dropped here, so the
+            # chart's set stays identical to the Resilience dimension's.
+            if _ccd(sd).get("status") not in ("detected", "none"):
+                continue
+            run_pace_bins = defaultdict(list)
+            run_hr_bins = defaultdict(list)
+            cum = 0.0
+            for s in sd:
+                cum += s.get("distance_km") or 0
+                km = max(1, round(cum))      # real cumulative km, not the lap index
+                if s.get("pace_sec_per_km"):
+                    run_pace_bins[km].append(s["pace_sec_per_km"])
                     pace_by_km[km].append(s["pace_sec_per_km"])
-                    run_pace[km] = round(s["pace_sec_per_km"] / 60, 2)
-                if s["avg_hr"]:
+                if s.get("avg_hr"):
+                    run_hr_bins[km].append(s["avg_hr"])
                     hr_by_km[km].append(s["avg_hr"])
-                    run_hr[km] = round(s["avg_hr"], 0)
-                    hr_vals.append(s["avg_hr"])
-                max_splits = max(max_splits, km)
+            if not run_pace_bins and not run_hr_bins:
+                continue
+            # Per-run value at each km = mean of the laps in that km (smooths sub-km laps too).
+            run_pace = {k: round(sum(v) / len(v) / 60, 2) for k, v in run_pace_bins.items()}
+            run_hr = {k: round(sum(v) / len(v), 0) for k, v in run_hr_bins.items()}
+            max_km = max([max_km] + list(run_pace_bins) + list(run_hr_bins))
             run_splits.append({"date": run["date"], "name": run["name"] or run["date"],
-                               "pace": run_pace, "hr": run_hr, "n": max(run_pace.keys()) if run_pace else 0})
+                               "pace": run_pace, "hr": run_hr,
+                               "n": max(run_pace) if run_pace else 0})
 
-            # Compute drift % for this run: (second-half avg HR / first-half avg HR - 1) × 100
-            if len(hr_vals) >= 6:
-                mid = len(hr_vals) // 2
-                first_half = hr_vals[:mid]
-                second_half = hr_vals[mid:]
-                if first_half and second_half:
-                    first_avg = sum(first_half) / len(first_half)
-                    second_avg = sum(second_half) / len(second_half)
-                    if first_avg > 0:
-                        drift_pct = round((second_avg / first_avg - 1) * 100, 1)
-                        drift_pcts.append({"date": run["date"], "drift": drift_pct})
-
-        if max_splits >= 5:
-            split_labels = [f"{i}km" for i in range(1, max_splits + 1)]
+        if max_km >= 5 and run_splits:
+            split_labels = [f"{i}km" for i in range(1, max_km + 1)]
 
             # Average lines (thick)
             avg_pace = [round(sum(pace_by_km[i]) / len(pace_by_km[i]) / 60, 2)
-                        if pace_by_km.get(i) else None for i in range(1, max_splits + 1)]
+                        if pace_by_km.get(i) else None for i in range(1, max_km + 1)]
             avg_hr = [round(sum(hr_by_km[i]) / len(hr_by_km[i]), 0)
-                      if hr_by_km.get(i) else None for i in range(1, max_splits + 1)]
+                      if hr_by_km.get(i) else None for i in range(1, max_km + 1)]
 
             # Individual run lines (thin, faint)
             datasets = []
-            for idx, rs in enumerate(run_splits):
+            for rs in run_splits:
                 short_name = rs["date"][-5:]  # MM-DD
-                # Pace line for this run
-                pace_vals = [rs["pace"].get(i) for i in range(1, max_splits + 1)]
                 datasets.append({
-                    "label": f"Pace {short_name}", "data": pace_vals,
+                    "label": f"Pace {short_name}",
+                    "data": [rs["pace"].get(i) for i in range(1, max_km + 1)],
                     "borderColor": Z2 + "30", "borderWidth": 1, "pointRadius": 0,
                     "tension": 0.3, "yAxisID": "y", "fill": False, "spanGaps": True,
                 })
-                # HR line for this run
-                hr_vals_run = [rs["hr"].get(i) for i in range(1, max_splits + 1)]
                 datasets.append({
-                    "label": f"HR {short_name}", "data": hr_vals_run,
+                    "label": f"HR {short_name}",
+                    "data": [rs["hr"].get(i) for i in range(1, max_km + 1)],
                     "borderColor": DANGER + "25", "borderWidth": 1, "pointRadius": 0,
                     "tension": 0.3, "yAxisID": "y1", "fill": False, "spanGaps": True,
                 })
@@ -637,16 +641,21 @@ def _all_charts(conn):
                 _onset = (_gfp(conn).get("resilience") or {}).get("current_value")
             except Exception:
                 _onset = None
-            if _onset and 1 <= _onset <= max_splits:
+            # Place the marker on the integer-km category axis (label "Xkm" → index X-1),
+            # clamped to the last tick. Without the clamp a no-drift best run — whose onset is
+            # the full run distance (e.g. 20.1 on a 20 km axis) — lands just past the right edge
+            # (index 19.1 > 19) and the line is clipped out of the plot entirely.
+            if _onset and _onset >= 1:
+                _mk = max(0, min(round(_onset) - 1, max_km - 1))
                 drift_annots["drift"] = {
-                    "type": "line", "xMin": _onset - 1, "xMax": _onset - 1,
+                    "type": "line", "xMin": _mk, "xMax": _mk,
                     "borderColor": CAUTION + "80", "borderDash": [4, 3], "borderWidth": 1,
                     "label": {"display": True, "content": "best onset %g km" % _onset, "position": "start",
                               "color": CAUTION, "font": {"size": 9}, "backgroundColor": "transparent",
                               "yAdjust": -10},
                 }
 
-            n_runs = len(drift_runs)
+            n_runs = len(run_splits)
             charts.append({"id": "chart-drift", "config": json.dumps({
                 "type": "line",
                 "data": {"labels": split_labels, "datasets": datasets},
