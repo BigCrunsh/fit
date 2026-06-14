@@ -1111,6 +1111,7 @@ def _all_charts(conn):
             curve = [{"x": round(c["distance_km"], 2), "y": round(c["median"], 1)} for c in dp["curve"]]
             hi = [{"x": round(c["distance_km"], 2), "y": round(c["hi"], 1)} for c in dp["curve"]]
             lo = [{"x": round(c["distance_km"], 2), "y": round(c["lo"], 1)} for c in dp["curve"]]
+            _mid = curve[len(curve) // 2] if curve else None   # anchor for the β_d slope label
             charts.append({"id": "chart-durability", "config": json.dumps({
                 "type": "scatter",
                 "data": {"datasets": [
@@ -1141,7 +1142,14 @@ def _all_charts(conn):
                                      "borderColor": ACCENT + "90", "borderWidth": 1,
                                      "label": {"content": "goal", "display": True, "position": "end",
                                                "font": {"size": 8}, "color": ACCENT,
-                                               "backgroundColor": "rgba(0,0,0,0)"}}}}},
+                                               "backgroundColor": "rgba(0,0,0,0)"}},
+                            # β_d IS the slope of this log-log line — label it on the curve so the
+                            # number and the picture are the same object (durability-param context).
+                            **({"betad": {"type": "label", "xValue": _mid["x"], "yValue": _mid["y"],
+                                          "content": ["slope = β_d %.2f" % dp["beta_d"]],
+                                          "color": ACCENT, "font": {"size": 9, "weight": "bold"},
+                                          "backgroundColor": "rgba(0,0,0,0.55)", "padding": 4, "yAdjust": -20}}
+                               if _mid else {})}}},
                     "scales": {
                         "x": {"type": "logarithmic", "title": {"display": True, "text": "distance (km)"},
                               "min": dmin * 0.9, "max": dp["goal"] * 1.08,
