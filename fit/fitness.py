@@ -196,6 +196,10 @@ RESILIENCE_LENGTH_REF_KM = 32.0    # length-weight reference (~marathon long run
 RESILIENCE_SHRINK_K = 2.0          # shrink strength: λ = N_eff / (N_eff + K)
 RESILIENCE_PRIOR_FRAC = 0.6        # cold-start prior = this × typical recent long run …
 RESILIENCE_PRIOR_FLOOR_KM = 8.0    # … floored here (the qualifying-run threshold)
+# Resilience = AEROBIC durability: how far you hold marathon-style (sub-threshold) effort
+# before HR decouples. Hard-effort runs decouple early BY DESIGN (run above aerobic pace), so
+# they're excluded; a NULL/unclassified run_type is kept (assumed steady). (Durability knob B.)
+RESILIENCE_HARD_TYPES = ("tempo", "intervals", "progression", "race")
 
 
 def _weighted_quantile(pairs, q):
@@ -236,11 +240,13 @@ def _compute_resilience(conn: sqlite3.Connection) -> dict:
     conservative prior when the effective sample is thin or stale, so a lone/old run is never
     reported as a confident durability figure.
     """
+    _hard = ", ".join(f"'{t}'" for t in RESILIENCE_HARD_TYPES)
     splits_runs = conn.execute(f"""
         SELECT a.id, a.date, a.distance_km FROM activities a
         WHERE a.type IN {RUNNING_TYPES_SQL}
         AND a.splits_status = 'done'
         AND a.distance_km >= 8
+        AND (a.run_type IS NULL OR a.run_type NOT IN ({_hard}))
         AND a.date >= date('now', '-{RESILIENCE_LOOKBACK_DAYS} days')
         ORDER BY a.date
     """).fetchall()

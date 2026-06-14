@@ -643,13 +643,16 @@ def _all_charts(conn):
     # many short laps can't stretch or mislabel the x-axis. Inclusion matches the Resilience
     # dimension: >=8 km, last 28d, and compute_cardiac_drift (the ONE grade-adjusted source)
     # classifies it 'detected'/'none'; its pace-CV gate drops interval / variable-pace runs.
-    drift_runs = conn.execute("""
+    from fit.fitness import RESILIENCE_HARD_TYPES   # exclude hard-effort runs (knob B) — same as the dimension
+    _steady = "(a.run_type IS NULL OR a.run_type NOT IN (%s))" % ", ".join(f"'{t}'" for t in RESILIENCE_HARD_TYPES)
+    drift_runs = conn.execute(f"""
         SELECT a.id, a.date, a.name
         FROM activities a
         JOIN activity_splits s ON s.activity_id = a.id
         WHERE a.type IN ('running','track_running','trail_running')
           AND a.date >= date('now', '-28 days')
           AND a.distance_km >= 8
+          AND {_steady}
         GROUP BY a.id HAVING COUNT(s.split_num) >= 4
         ORDER BY a.date
     """).fetchall()
@@ -779,10 +782,11 @@ def _all_charts(conn):
     from fit.fit_file import grade_adjusted_duration_min
     drift_onset_data = []
     grade_impact = []   # per-run raw-vs-grade-adjusted speed_per_bpm + onset (for the impact chart)
-    all_drift_runs = conn.execute("""
+    all_drift_runs = conn.execute(f"""
         SELECT a.id, a.date, a.distance_km, a.duration_min, a.avg_hr FROM activities a
         JOIN activity_splits s ON s.activity_id = a.id
         WHERE a.type IN ('running','track_running','trail_running')
+          AND {_steady}
         GROUP BY a.id HAVING COUNT(s.split_num) >= 6
         ORDER BY a.date
     """).fetchall()

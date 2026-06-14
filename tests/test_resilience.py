@@ -14,13 +14,13 @@ from datetime import date, timedelta
 from fit.fitness import _compute_resilience
 
 
-def _seed_run(db, aid, days_ago, n_splits, onset_split, base_hr=150, hi_hr=160, pace=300):
+def _seed_run(db, aid, days_ago, n_splits, onset_split, base_hr=150, hi_hr=160, pace=300, run_type=None):
     """A run whose HR:pace ratio jumps at `onset_split` → drift onset there."""
     d = (date.today() - timedelta(days=days_ago)).isoformat()
     db.execute(
-        "INSERT INTO activities (id, date, type, distance_km, duration_min, splits_status) "
-        "VALUES (?, ?, 'running', ?, ?, 'done')",
-        (aid, d, float(n_splits), n_splits * pace / 60.0))
+        "INSERT INTO activities (id, date, type, distance_km, duration_min, splits_status, run_type) "
+        "VALUES (?, ?, 'running', ?, ?, 'done', ?)",
+        (aid, d, float(n_splits), n_splits * pace / 60.0, run_type))
     for k in range(1, n_splits + 1):
         hr = hi_hr if k >= onset_split else base_hr
         db.execute(
@@ -90,3 +90,13 @@ class TestResilienceBestOnset:
         _seed_run(db, "long20", days_ago=5, n_splits=20, onset_split=99)
         _seed_run(db, "short8", days_ago=5, n_splits=8, onset_split=99)
         assert _compute_resilience(db)["current_value"] > 14
+
+    def test_hard_effort_runs_are_excluded(self, db):
+        # Resilience = aerobic durability: a tempo/progression/race run decouples early BY
+        # DESIGN, so it must NOT feed the estimate; a steady long run does (knob B).
+        _seed_run(db, "long", days_ago=3, n_splits=18, onset_split=99, run_type="long")    # no drift
+        _seed_run(db, "tempo", days_ago=2, n_splits=16, onset_split=5, run_type="tempo")   # early drift
+        _seed_run(db, "prog", days_ago=1, n_splits=15, onset_split=4, run_type="progression")
+        dists = {p["dist"] for p in _compute_resilience(db)["points"]}
+        assert 18.0 in dists                      # steady long run kept
+        assert 16.0 not in dists and 15.0 not in dists   # tempo + progression dropped

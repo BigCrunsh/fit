@@ -102,9 +102,10 @@ how much do we trust each source it could come from?*
 
 - **Resilience** — aerobic-decoupling onset: the km at which HR:pace decouples >5% within
   a run (a cardiac/thermal signal). The dimension value is a **one-sided, right-censored**
-  estimate (a no-drift run is a *lower bound* — durable to *at least* its distance), weighted
-  by recency and run length and shrunk to a prior when thin/stale, reported with an asymmetric
-  uncertainty band + confidence. NOT the same as…
+  estimate (a no-drift run is a *lower bound* — durable to *at least* its distance), over
+  **steady aerobic runs only** (tempo/intervals/progression/race excluded — they decouple early
+  by design), weighted by recency and run length and shrunk to a prior when thin/stale, reported
+  with an asymmetric uncertainty band + confidence. NOT the same as…
 - **Pace-fade** — speed give-back over a long run's second half at ≥ Moderate effort
   (a glycogen/neuromuscular signal; the evidence-backed marathon-durability marker).
 - **Effort (qualifying)** — a continuous intensity-bearing run: a race, or
