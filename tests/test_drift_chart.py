@@ -99,6 +99,19 @@ class TestDriftChartStillRendersSteadyRuns:
         assert len(_per_run_pace_lines(chart)) == 1
 
 
+class TestDriftTrendCensoredMarkers:
+    def test_observed_and_censored_markers_and_band(self, db):
+        # No-drift 20 km (▲ censored lower bound) + a run that drifts at km 9 (● observed).
+        _seed(db, "nodrift20", 2, "long", [1.0] * 20, [360] * 20, [150] * 20)
+        hrs = [150 if k < 9 else 170 for k in range(16)]
+        _seed(db, "drift16", 5, "long", [1.0] * 16, [360] * 16, hrs)
+        chart = next((c for c in _all_charts(db) if c["id"] == "chart-drift-trend"), None)
+        assert chart is not None
+        cfg = chart["config"]
+        assert '"triangle"' in cfg and '"circle"' in cfg   # censored vs observed markers
+        assert '"estBand"' in cfg                           # the asymmetric resilience band is drawn
+
+
 class TestDriftOnsetMarker:
     def test_no_drift_best_run_marker_stays_on_axis(self, db):
         # Flat HR over 20 km → no drift → onset = full distance (20). The marker must land ON

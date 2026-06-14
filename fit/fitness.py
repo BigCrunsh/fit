@@ -183,15 +183,65 @@ def _compute_economy(conn: sqlite3.Connection) -> dict:
     }
 
 
+# ── Resilience (drift onset) estimator ──────────────────────────────────────────────
+# Drift onset is a ONE-SIDED, right-censored signal: a no-drift run is a LOWER bound
+# (durable to at least its distance — we can't see past the run), a detected run is an
+# observed onset, and short/hot/tired runs only push onset EARLIER. So the estimate is a
+# weighted BEST-demonstrated onset (not a downward-biased mean), shrunk toward a conservative
+# prior when the evidence is thin or stale — mirroring the maximal-effort schedule's T₀.
+# All four constants are judgment-informed priors, NOT measured values.
+RESILIENCE_LOOKBACK_DAYS = 120     # query bound; the half-life decay does the real weighting
+RESILIENCE_HALF_LIFE_DAYS = 21     # recency decay — durability is trainable/detrainable
+RESILIENCE_LENGTH_REF_KM = 32.0    # length-weight reference (~marathon long run); weight caps at 1
+RESILIENCE_SHRINK_K = 2.0          # shrink strength: λ = N_eff / (N_eff + K)
+RESILIENCE_PRIOR_FRAC = 0.6        # cold-start prior = this × typical recent long run …
+RESILIENCE_PRIOR_FLOOR_KM = 8.0    # … floored here (the qualifying-run threshold)
+
+
+def _weighted_quantile(pairs, q):
+    """Weighted q-quantile (q in [0,1]) of (value, weight) pairs — the smallest value whose
+    cumulative weight (ascending) reaches q·Σw. Used for the weighted best-demonstrated onset."""
+    pts = sorted((v, w) for v, w in pairs if w > 0)
+    if not pts:
+        return None
+    total = sum(w for _, w in pts)
+    target = q * total
+    cum = 0.0
+    for v, w in pts:
+        cum += w
+        if cum >= target:
+            return v
+    return pts[-1][0]
+
+
+def _goal_long_km(conn):
+    """~0.75 × the target race distance — the long run a marathon-style goal demands — or None."""
+    try:
+        from fit.goals import get_target_race
+        t = get_target_race(conn)
+        if t and t.get("distance_km"):
+            return round(float(t["distance_km"]) * 0.75, 1)
+    except Exception:
+        return None
+    return None
+
+
 def _compute_resilience(conn: sqlite3.Connection) -> dict:
-    """Resilience: drift onset km from split analysis (how far before HR decouples)."""
-    # Check if split data exists
+    """Resilience: drift onset km — a recency- and length-weighted, censored estimate with an
+    asymmetric uncertainty band and a confidence level (resilience-uncertainty change).
+
+    Drift onset comes from compute_cardiac_drift (the ONE source); this aggregates the per-run
+    points: a no-drift run is a right-censored LOWER bound at its full distance, a detected run
+    is an observed onset. Recent + long runs weigh more; the estimate shrinks toward a
+    conservative prior when the effective sample is thin or stale, so a lone/old run is never
+    reported as a confident durability figure.
+    """
     splits_runs = conn.execute(f"""
         SELECT a.id, a.date, a.distance_km FROM activities a
         WHERE a.type IN {RUNNING_TYPES_SQL}
         AND a.splits_status = 'done'
         AND a.distance_km >= 8
-        AND a.date >= date('now', '-{DIMENSION_WINDOW_DAYS} days')
+        AND a.date >= date('now', '-{RESILIENCE_LOOKBACK_DAYS} days')
         ORDER BY a.date
     """).fetchall()
 
@@ -201,47 +251,90 @@ def _compute_resilience(conn: sqlite3.Connection) -> dict:
             "Need long runs (8km+) with split data for resilience tracking."
         )
 
-    # Compute drift onset for each run
-    drift_points = []
+    from fit.fit_file import compute_cardiac_drift
+    today = date.today()
+    points = []   # {date, value, censored, age, dist, weight}
     for run in splits_runs:
         splits = conn.execute("""
             SELECT split_num, avg_hr, pace_sec_per_km, distance_km,
                    elevation_gain_m, elevation_loss_m FROM activity_splits
             WHERE activity_id = ? ORDER BY split_num
         """, (run["id"],)).fetchall()
-
         if len(splits) < 4:
             continue
-
-        from fit.fit_file import compute_cardiac_drift
         drift = compute_cardiac_drift([dict(s) for s in splits])
-        if drift and drift.get("status") == "detected" and drift.get("drift_onset_km"):
-            drift_points.append((run["date"], float(drift["drift_onset_km"])))
-        elif drift and drift.get("status") == "none":
-            # No drift = resilience is at least the full distance
-            drift_points.append((run["date"], float(run["distance_km"])))
+        status = drift.get("status") if drift else None
+        if status == "detected" and drift.get("drift_onset_km"):
+            value, censored = float(drift["drift_onset_km"]), False
+        elif status == "none":
+            value, censored = float(run["distance_km"]), True   # lower bound: held to the end
+        else:
+            continue   # inconclusive (variable pace) / insufficient — not usable
+        dist = float(run["distance_km"] or 0)
+        age = max(0, (today - date.fromisoformat(run["date"])).days)
+        recency = 0.5 ** (age / RESILIENCE_HALF_LIFE_DAYS)
+        length = min(dist / RESILIENCE_LENGTH_REF_KM, 1.0) if RESILIENCE_LENGTH_REF_KM else 1.0
+        points.append({"date": run["date"], "value": value, "censored": censored,
+                       "age": age, "dist": dist, "weight": recency * length})
 
-    if not drift_points:
-        return _empty_dimension("No drift data from recent long runs")
+    if not points:
+        return _empty_dimension("No usable drift data from recent long runs")
 
-    # Drift onset is ONE-SIDED (bounded above by true durability): heat, fatigue,
-    # a bad day or a short run only push it EARLIER, and a short run physically
-    # caps how late it can be. So the BEST recent onset is the truest signal —
-    # same logic as the VDOT anchor's max. Taking the latest run (or a median)
-    # lets a short/easy run mask the durability a long run actually demonstrated
-    # (e.g. an 18 km holding to km 11 shouldn't be overwritten by a 10 km
-    # drifting at km 6). Trend still runs over the chronological points.
-    current = max(v for _, v in drift_points)
-    trend, rate = _compute_trend(drift_points) if len(drift_points) >= 2 else ("insufficient_data", None)
+    weights = [p["weight"] for p in points]
+    sw, sw2 = sum(weights), sum(w * w for w in weights)
+    n_eff = (sw * sw / sw2) if sw2 > 0 else 0.0   # Kish effective sample size
+
+    # Weighted best-demonstrated onset (75th pct — an upper, one-sided quantity, robust to a
+    # single stale outlier; recency/length weights discount old + short runs).
+    weighted_best = _weighted_quantile([(p["value"], p["weight"]) for p in points], 0.75) or 0.0
+
+    # Cold-start prior: a conservative fraction of the typical recent long run.
+    dists = sorted(p["dist"] for p in points)
+    median_dist = dists[len(dists) // 2]
+    prior = max(RESILIENCE_PRIOR_FLOOR_KM, RESILIENCE_PRIOR_FRAC * median_dist)
+
+    # Shrink toward the prior when the effective sample is thin/stale (mirrors T₀).
+    lam = n_eff / (n_eff + RESILIENCE_SHRINK_K) if (n_eff + RESILIENCE_SHRINK_K) > 0 else 0.0
+    est = lam * weighted_best + (1 - lam) * prior
+
+    # ── Asymmetric band: tight floor (demonstrated), wider upside (censored / unobserved km) ──
+    longest = max(p["dist"] for p in points)
+    best_age = min(p["age"] for p in points)            # recency of the freshest evidence
+    stale_hl = best_age / RESILIENCE_HALF_LIFE_DAYS
+    goal_long = _goal_long_km(conn)
+    coverage_gap = max(0.0, goal_long - longest) if goal_long else 0.0
+    thin = 1.0 / math.sqrt(max(n_eff, 0.5))
+    base = est * (0.08 + 0.12 * thin)                   # relative width, shrinks with N_eff
+    lo = max(0.0, est - base * 0.5 * (1 + 0.5 * stale_hl))
+    hi = est + base * (1 + 0.5 * stale_hl) + 0.4 * coverage_gap   # ≥ lo gap → asymmetric (up)
+
+    # Confidence: enough recent long runs near the goal distance → high; thin/stale/short → low.
+    recent = best_age <= RESILIENCE_HALF_LIFE_DAYS
+    covered = (goal_long is None) or (longest >= 0.8 * goal_long)
+    if n_eff >= 4 and recent and covered:
+        level, reason = "high", "several recent long runs near goal distance"
+    elif n_eff < 1.5 or stale_hl > 2.5 or (goal_long and longest < 0.5 * goal_long):
+        level, reason = "low", ("thin data" if n_eff < 1.5 else
+                                "best evidence is stale" if stale_hl > 2.5 else
+                                "longest run far short of goal")
+    else:
+        level, reason = "med", "moderate recent long-run evidence"
+
+    trend, rate = _compute_trend([(p["date"], p["value"]) for p in points])
 
     return {
-        "current_value": round(current, 1),
+        "current_value": round(est, 1),
         "trend": trend,
         "rate_per_month": round(rate, 1) if rate else None,
         "unit": "km (drift onset)",
-        "source": "Cardiac drift analysis",
-        "data_points": len(drift_points),
-        "history": [v for _, v in drift_points[-8:]],
+        "source": "Cardiac drift analysis (recency/length-weighted, censored)",
+        "data_points": len(points),
+        "n_eff": round(n_eff, 1),
+        "band": {"lo": round(lo, 1), "hi": round(hi, 1)},
+        "confidence": {"level": level, "reason": reason},
+        "history": [p["value"] for p in points[-8:]],
+        "points": [{"date": p["date"], "value": round(p["value"], 1),
+                    "censored": p["censored"], "dist": round(p["dist"], 1)} for p in points],
     }
 
 

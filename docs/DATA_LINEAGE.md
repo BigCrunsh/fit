@@ -175,7 +175,7 @@ flowchart LR
   classDef out fill:#11162a,stroke:#818cf8,color:#c7d2fe
   SPL["activity_splits<br/>avg_hr · pace · elevation_gain/loss"]:::src
   SPL -->|"compute_cardiac_drift · HR : GRADE-ADJ pace >5% vs 1st-half"| DO["drift onset km (canonical)"]:::fn
-  DO -->|"_compute_resilience · MAX over 28d ≥8km"| RES["Resilience dim"]:::fn
+  DO -->|"_compute_resilience · recency/length-weighted, censored, shrink-to-prior + band"| RES["Resilience dim"]:::fn
   DO -->|"chart-drift marker + chart-drift-trend (same fn; raw overlay = pre-grade-adj)"| CDO["drift charts"]:::fn
   SPL -->|"grade_adjusted_duration_min"| GAD["flat-equiv duration"]:::fn
   SPB["grade-adj speed/bpm<br/>(stored × raw÷flat-equiv dur)"]:::fn
@@ -280,7 +280,7 @@ flowchart LR
 | aerobic dim | `fitness._compute_aerobic` | **`_effective_vdot`** (NOT Garmin VO2max); Garmin only shapes the trend, shifted to the anchor level | = effective VDOT — the single trusted aerobic value |
 | threshold dim | `fitness._compute_threshold` | **`_ga_spb_series('speed_per_bpm_z2')`** | median Z2 spb, **grade-adjusted** |
 | economy dim | `fitness._compute_economy` | **`_ga_spb_series('speed_per_bpm')`** | median spb, **grade-adjusted** |
-| resilience dim (durability) | `fitness._compute_resilience` | activity_splits via `compute_cardiac_drift` (grade-adj) | MAX drift-onset over 28d long runs |
+| resilience dim (durability) | `fitness._compute_resilience` | activity_splits via `compute_cardiac_drift` (grade-adj) | recency/length-weighted, **censored** (no-drift = ≥ lower bound) best-demonstrated onset over ≥8km long runs, **shrunk to a prior** when thin/stale; exposes an asymmetric **band** + **confidence** |
 | cardiac drift (primitive) | `fit_file.compute_cardiac_drift` | splits avg_hr · **grade-adjusted** pace · elevation | first 2nd-half split >5% over first-half HR:GAP ratio; CV gate on grade-adj pace. **THE single drift source** (was 5 forks) |
 | **effective VDOT (single source)** | `fitness._effective_vdot` | `get_calibration_anchor('vdot')` > race VDOT ≤180d > garmin−5 | every aerobic consumer reads this — dim + headline never diverge |
 | fitness profile (4 dims + effective_vdot) | `fitness.get_fitness_profile` | the four dims + `_effective_vdot` | aerobic dim and effective_vdot share one source |

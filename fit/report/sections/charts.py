@@ -708,12 +708,17 @@ def _all_charts(conn):
             (run["id"],)).fetchall()
         sd = [dict(s) for s in sp]
         flat = [{**s, "elevation_gain_m": 0, "elevation_loss_m": 0} for s in sd]  # terrain stripped
-        ga_onset = _onset_from(sd, run["distance_km"])
-        if ga_onset is None:
+        ga = compute_cardiac_drift(sd)
+        ga_status = ga.get("status")
+        if ga_status == "detected" and ga.get("drift_onset_km"):
+            ga_onset, censored = ga["drift_onset_km"], False      # observed onset
+        elif ga_status == "none":
+            ga_onset, censored = round(run["distance_km"] or 0, 1), True   # held to end → ≥ bound
+        else:
             continue
         raw_onset = _onset_from(flat, run["distance_km"])
         drift_onset_data.append({"date": run["date"], "onset_km": ga_onset, "raw_km": raw_onset,
-                                 "dist": round(run["distance_km"] or 0, 1)})
+                                 "dist": round(run["distance_km"] or 0, 1), "censored": censored})
         # raw vs grade-adjusted speed_per_bpm (efficiency): raw uses actual duration, GA uses
         # the flat-equivalent duration from the splits.
         dist, dur, hr = run["distance_km"], run["duration_min"], run["avg_hr"]
@@ -726,13 +731,38 @@ def _all_charts(conn):
             })
     if drift_onset_data:
         max_onset = max(d["onset_km"] for d in drift_onset_data)
+        # Resilience estimate + asymmetric band (resilience-uncertainty): drawn as a band + line
+        # so the censored, weighted estimate is visible against the per-run points.
+        from fit.fitness import get_fitness_profile as _gfp2
+        try:
+            _res = _gfp2(conn).get("resilience") or {}
+        except Exception:
+            _res = {}
+        _band, _est = _res.get("band"), _res.get("current_value")
+        _conf = (_res.get("confidence") or {}).get("level")
+        dt_annots = {"good": {"type": "box", "yMin": 15, "yMax": max(max_onset + 2, 20),
+                              "backgroundColor": SAFE + "28", "borderColor": SAFE + "44",
+                              "label": {"content": "Good (>15km)", "display": True, "position": "start",
+                                        "color": SAFE, "font": {"size": 10}, "backgroundColor": "transparent"}}}
+        if _band and _est is not None:
+            dt_annots["estBand"] = {"type": "box", "yMin": _band["lo"], "yMax": _band["hi"],
+                                    "backgroundColor": CAUTION + "14", "borderColor": CAUTION + "30", "borderWidth": 1}
+            dt_annots["est"] = {"type": "line", "yMin": _est, "yMax": _est, "borderColor": CAUTION + "cc",
+                                "borderDash": [6, 3], "borderWidth": 1.5,
+                                "label": {"display": True, "position": "end", "color": CAUTION,
+                                          "font": {"size": 9}, "backgroundColor": "transparent",
+                                          "content": "estimate %g km%s" % (_est, (" · " + _conf) if _conf else "")}}
         charts.append({"id": "chart-drift-trend", "config": json.dumps({
             "type": "scatter",
             "data": {"datasets": [
                 {"label": "drift onset (grade-adjusted)",
                  "data": [{"x": d["date"], "y": d["onset_km"]} for d in drift_onset_data],
-                 "borderColor": DANGER + "b3", "backgroundColor": DANGER + "60",
-                 "pointRadius": 5, "showLine": True, "borderWidth": 2, "tension": 0.3},
+                 "borderColor": DANGER + "b3",
+                 "backgroundColor": ["rgba(0,0,0,0)" if d["censored"] else DANGER + "60" for d in drift_onset_data],
+                 "pointBorderColor": DANGER + "b3",
+                 "pointStyle": ["triangle" if d["censored"] else "circle" for d in drift_onset_data],
+                 "pointRadius": [6 if d["censored"] else 5 for d in drift_onset_data],
+                 "showLine": True, "borderWidth": 2, "tension": 0.3},
                 {"label": "raw (no grade adj)",
                  "data": [{"x": d["date"], "y": d["raw_km"]} for d in drift_onset_data if d.get("raw_km") is not None],
                  "borderColor": "rgba(148,163,184,0.55)", "backgroundColor": "rgba(148,163,184,0.0)",
@@ -741,13 +771,7 @@ def _all_charts(conn):
             "options": {"responsive": True,
                         "plugins": {"legend": {"display": True, "labels": {"boxWidth": 10, "font": {"size": 9}}},
                                     "tooltip": {"callbacks": {"__DRIFT_ONSET_TT__": True}},
-                                    "annotation": {"annotations": {
-                                        "good": {"type": "box", "yMin": 15, "yMax": max(max_onset + 2, 20),
-                                                 "backgroundColor": SAFE + "28", "borderColor": SAFE + "44",
-                                                 "label": {"content": "Good (>15km)", "display": True,
-                                                           "position": "start", "color": SAFE,
-                                                           "font": {"size": 10}, "backgroundColor": "transparent"}},
-                                    }}},
+                                    "annotation": {"annotations": dt_annots}},
                         "scales": {"y": {"title": {"display": True, "text": "Drift onset (km)",
                                                    "color": "#64748b", "font": {"size": 10}},
                                          "min": 0,
