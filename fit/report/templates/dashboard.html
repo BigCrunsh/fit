@@ -1393,9 +1393,9 @@ const chartInstances = {};
     };
   }
   // Durability-param panels (chart-param-*): log-time y-axis → h:mm ticks; tooltips identify the
-  // run (date · distance · finish time → normalised marathon-equivalent), like the trend chart.
+  // hover IDENTICAL to the Marathon Prediction Trend (same fmtHM, same "<dist>km · <h:mm>").
   if ('{{ chart.id }}'.indexOf('chart-param-') === 0 && cfg.options) {
-    var fmtHM2 = function(v){ return Math.floor(v/60) + ':' + ('0' + Math.round(v%60)).slice(-2); };
+    var fmtHM2 = function(v) { return Math.floor(v/60) + ':' + ('0' + Math.floor(v%60)).slice(-2); };
     cfg.options.scales = cfg.options.scales || {}; cfg.options.scales.y = cfg.options.scales.y || {};
     cfg.options.scales.y.ticks = Object.assign(cfg.options.scales.y.ticks || {}, { callback: fmtHM2 });
     // Log y-axis auto-ticks crowd/overlap at the low end — pin a clean 10-min-spaced set in range.
@@ -1406,13 +1406,14 @@ const chartInstances = {};
       axis.ticks = out;
     };
     cfg.options.plugins = cfg.options.plugins || {};
-    cfg.options.plugins.tooltip = Object.assign(cfg.options.plugins.tooltip || {}, {
-      callbacks: { label: function(ctx){
-        var r = ctx.raw || {};
-        if (r.d != null) return (r.date ? r.date + ' · ' : '') + r.d.toFixed(1) + 'km in ' + fmtHM2(r.t)
-                                + ' → equiv ' + fmtHM2(ctx.parsed.y);
-        return fmtHM2(ctx.parsed.y);
-      } } });
+    cfg.options.plugins.tooltip = cfg.options.plugins.tooltip || {};
+    cfg.options.plugins.tooltip.filter = function(ctx) { return !(ctx.dataset.label && ctx.dataset.label[0] === '_'); };
+    cfg.options.plugins.tooltip.callbacks = cfg.options.plugins.tooltip.callbacks || {};
+    cfg.options.plugins.tooltip.callbacks.label = function(ctx) {
+      var v = ctx.parsed.y;
+      if (ctx.raw && ctx.raw.d != null) return ctx.raw.d + 'km · ' + fmtHM2(v);
+      return ctx.dataset.label + ': ' + fmtHM2(v);
+    };
   }
   const el = document.getElementById('{{ chart.id }}');
   if (el) {

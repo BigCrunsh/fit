@@ -457,7 +457,7 @@ def _coeff_panel(idata, ds, *, covariate, c_ref, maximal_h, n_grid=40):
 
     # Each point carries its distance/finish-time/date so the chart can colour it by distance
     # (matching the durability collapse) and identify the run on hover.
-    points = [{"x": float(x), "minutes": float(y), "d": float(dd), "t": float(tt), "date": dt}
+    points = [{"x": float(x), "minutes": float(y), "d": round(float(dd), 1), "t": float(tt), "date": dt}
               for x, y, dd, tt, dt in zip(pts_x, pts_y, dist, actual, dates)]
     line, lo, hi = [], [], []
     for xv, mu in zip(grid_x, mu_grid):
