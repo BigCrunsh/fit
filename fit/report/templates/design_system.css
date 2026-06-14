@@ -140,6 +140,17 @@ h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
 .hub-card.hub-danger { border-top-color:var(--danger); } .hub-card.hub-neutral { border-top-color:var(--text-faint); }
 .hub-empty { background:var(--surface); border:1px dashed var(--hairline); border-radius:12px; padding:14px 16px; margin:14px 0 18px; color:var(--text-muted); font-size:12px; }
 
+/* Detail-tab lead — the one-line answer a drill-in lands on, above the supporting charts
+   (dashboard-information-architecture: conclusion-first, not a card pile). */
+.tab-lead { font-size:14px; font-weight:600; color:var(--text); line-height:1.5; padding:10px 14px; margin:6px 0 16px;
+            background:var(--surface); border:1px solid var(--hairline); border-left:3px solid var(--accent); border-radius:10px; }
+.tab-lead-q { display:block; font-size:10px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--text-faint); margin-bottom:3px; }
+.tab-lead-good { color:var(--safe); } .tab-lead-warn { color:var(--caution); } .tab-lead-bad { color:var(--danger); }
+
+/* Overview: one-line Coach's Take summary — the full narrative lives on the Coach tab. */
+.overview-coach { font-size:12px; color:var(--text-muted); line-height:1.5; margin:2px 0 14px; padding-left:8px; border-left:3px solid var(--hairline); }
+.overview-coach strong { color:var(--text); } .overview-coach .hub-link { margin-left:8px; }
+
 /* Attention panel (Overview tab) — what's pending from the user */
 .attention-panel { background:rgba(251,191,36,0.04); border:1px solid rgba(251,191,36,0.12); border-radius:14px; padding:12px 16px; margin:14px 0; }
 .attention-panel-title { font-size:10px; font-weight:700; color:var(--caution); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:8px; }
@@ -160,7 +171,7 @@ h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
 .race-prediction-confidence.level-medium { color:var(--caution); }
 .race-prediction-confidence.level-low { color:var(--danger); }
 
-/* Your Physiology card (Overview tab) — four anchors side-by-side */
+/* Your Physiology card (Profile tab) — four anchors side-by-side */
 .physiology-card { background:rgba(129,140,248,0.03); border:1px solid rgba(129,140,248,0.08); border-radius:14px; padding:14px 16px 16px; margin:14px 0; }
 .physiology-grid { display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; margin-top:8px; }
 .physiology-anchor { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 12px; position:relative; }
@@ -371,7 +382,8 @@ details.insight-box .insight-title { font-size:14px; padding:2px 0; }
 .run-bar { display:flex; align-items:center; gap:10px; margin:4px 0; font-size:11px; }
 .run-bar-fill { height:22px; border-radius:4px; display:flex; align-items:center; padding:0 8px; font-size:10px; font-weight:600; color:rgba(255,255,255,0.9); white-space:nowrap; }
 
-/* Workout-row — planned-workout pill on Next Workouts list (Overview tab) */
+/* Workout-row — planned-workout pill (unused since the Overview Next Workouts list moved to
+   the Training "Next Up" markup; kept for now, safe to drop in a CSS cleanup pass) */
 .workout-row { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 14px; display:flex; align-items:center; gap:10px; }
 .workout-zone-chip { width:34px; height:34px; border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
 .workout-zone-chip span { font-size:12px; font-family:var(--mono); font-weight:700; }

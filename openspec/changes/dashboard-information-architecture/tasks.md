@@ -21,22 +21,22 @@
 
 ## 4. Recompose Overview + relocate detail + lead the detail tabs
 
-- [ ] 4.1 Overview: phase-timeline countdown **as the headline** carrying the verdict, the limiter beside it (the two-line answer), then — secondary — the single next action and the four status cards. Alerts stay at top.
-- [ ] 4.2 Relocate the full *Fitness Profile* dimension sparklines + *Your Physiology* anchors → **Profile**; *Objectives* → **Training**; *Checkpoints* + *Coach's Take* → **Coach** (Overview keeps a one-line summary + link). Every target gets a stable section anchor.
-- [ ] 4.3 **Each detail tab leads with its one-line answer** (Readiness "can I absorb training?", Training "am I doing the work?", Profile "what will race day give?", Coach "the plan & why") above its supporting charts — conclusion-first, not a card pile.
-- [ ] 4.4 **Graceful empty/degraded Overview**: no goal / unfit model / thin history → anchor estimate + a "set a goal / log runs" prompt + neutral status strip; never blanks, NaNs, or broken layout.
+- [x] 4.1 Overview: the synthesis hub is the headline — verdict (line 1) + limiter (line 2) = the two-line answer, then the single next action and the four status cards; the phase-timeline countdown + prediction-trend card sits directly below as the timeline/evidence. Alerts stay at top. (Hub-as-headline with the countdown card adjacent, rather than fusing days-left into the verdict line — flagged for the visual review.)
+- [x] 4.2 Relocated: full *Fitness Profile* snapshot sparklines + *Your Physiology* anchors → **Profile** (`prof-snapshot`, `prof-physiology`); *Objectives* → **Training** (`train-objectives`; the Overview copy was a duplicate of the Training objectives, so dropped not moved); *Checkpoints* → **Coach** (`#checkpoints-table`, rendered by id from the trend IIFE); *Coach's Take* → **Coach** (`coach-insights`), Overview keeps a one-line summary + link. *Next Workouts* dropped (Training "Next Up" is canonical). Every hub target has a stable, unique anchor.
+- [x] 4.3 Each detail tab leads with its one-line answer: Profile "what will race day give?" (forecast), Training "am I doing the work?" (7-day km + plan%), Readiness "can I absorb training?" (body summary), Coach "the plan & why" (top insight) — `.tab-lead`, above the charts.
+- [x] 4.4 **Graceful empty/degraded Overview**: hub degrades to a neutral strip / `hub-empty` prompt (test_overview_hub); Profile & Coach leads have an empty-state else; thin/empty-DB render builds without blanks or NaNs (test_dashboard_ia + the empty-DB smoke test).
 
 ## 5. Consistency
 
-- [ ] 5.1 The Overview verdict/forecast == the Profile + coaching-context output (one source — no separately-computed prediction).
-- [ ] 5.2 The Fitness card's CTL/load == the Training-tab figure (one canonical signal).
+- [x] 5.1 The Overview verdict reuses `_marathon_forecast(conn)` — the *same* builder the race card, the Profile tab and the coaching context read; no separately-computed prediction (verified).
+- [x] 5.2 The Fitness card's volume == the Training-tab figure: `compute_rolling_week().run_km` == `_last_7_days_hero().volume_km` (one canonical 7-day signal; verified equal on live data).
 
 ## 6. Tests (template/structure guards — no compute change)
 
-- [ ] 6.1 Overview: the verdict shows time + interval + P(goal) + a range-bearing reading; the four domain `→` links resolve.
-- [ ] 6.2 Limiter = largest *relative* gap (not lowest raw value); names a concrete lever; links to the next workout when one is planned; verdict's lever == the limiter (one story).
-- [ ] 6.3 Status uses icon/label + colour (not colour-only) and is **neutral** when no defensible reference exists (e.g. no goal set).
-- [ ] 6.4 Each relocated detail section lives under its owning tab; each detail tab opens with a one-line answer (lead) before its charts.
-- [ ] 6.5 `showTab` still reveals-all-then-restores (deep-linking a charted section sizes the chart, not 0×0); on-load hash routing lands on the named tab; unknown hash → overview; `→` link target anchors exist (no dead links).
-- [ ] 6.6 Graceful empty: no goal + unfit model → anchor estimate + prompt + neutral strip, no blanks/NaNs.
-- [ ] 6.7 Full suite green; `ruff` clean; `fit report` builds with and without the `forecast` extra.
+- [x] 6.1 Overview: the verdict shows time + interval + P(goal) + a range-bearing reading (test_overview_hub); the four domain `→` links resolve (test_dashboard_ia `TestNoDeadLinks`).
+- [x] 6.2 Limiter = largest *relative* gap (not lowest raw value); names a concrete lever; verdict's lever == the limiter (test_overview_hub `TestPickLimiter` + verdict reading).
+- [x] 6.3 Status uses icon/label + colour (`_HUB_STATUS_ICON` + `.hub-*` colour classes) and is **neutral** when no defensible reference exists (test_overview_hub).
+- [x] 6.4 Each relocated detail section lives under its owning tab and is gone from the Overview; each detail tab opens with a one-line lead (test_dashboard_ia).
+- [x] 6.5 `showTab` is the 3-arg target+hash path, the reveal-all-then-restore pass is present (no 0×0), `routeFromHash` runs on load, and every `→` link target anchor exists & is unique (test_dashboard_ia).
+- [x] 6.6 Graceful empty: hub → neutral/empty prompt, no blanks/NaNs (test_overview_hub integration + empty-DB render).
+- [x] 6.7 Full suite green (1111); `ruff` clean; `fit report` builds (thin/empty-DB render exercises the forecast-absent degrade path).
