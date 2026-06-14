@@ -438,31 +438,41 @@
   <div class="sec-sub">What time would my current fitness deliver, over time? Lower = faster. The line is the durability model's median tracking your chronic load; the shaded band is its 90% credible interval. Dots are your efforts projected to the goal distance, coloured by their own distance (blue = short → red = long); the diamond is today's forecast with its 90% whisker.</div>
   <div class="chart-box chart-canvas-lg"><canvas id="chart-marathon-pred"></canvas></div>
   {% if marathon_forecast and marathon_forecast.goal_km %}<div class="dist-legend">point colour = effort distance:<span>{{ marathon_forecast.dist_min }} km</span><span class="dist-legend-bar">{% if marathon_forecast.d_max and marathon_forecast.goal_km > marathon_forecast.dist_min %}<span class="dist-legend-mark" style="left:{{ ((marathon_forecast.d_max - marathon_forecast.dist_min) / (marathon_forecast.goal_km - marathon_forecast.dist_min) * 100) | round(0) | int }}%" title="longest run {{ marathon_forecast.d_max }} km"></span>{% endif %}</span><span>{{ marathon_forecast.goal_km | round(1) }} km</span><span class="dist-legend-note">— scale runs to the {{ marathon_forecast.goal_km | round(0) | int }} km goal; tick = your longest run ({{ marathon_forecast.d_max }} km), so the red end is distance you've never raced (the durability gap). Same scale in the durability collapse below.</span></div>{% endif %}
-  {% if charts | selectattr('id', 'equalto', 'chart-durability') | first %}
-  <div class="sec-sub" style="margin-top:16px"><strong>Durability collapse.</strong> Every effort normalised to today's fitness &amp; a maximal effort — if your durability is consistent they fall onto one power law (slope = β<sub>d</sub>). The band past your longest run is the honest extrapolation to the goal; points run blue (short) → red (long).</div>
-  <div class="chart-box chart-canvas-lg"><canvas id="chart-durability"></canvas></div>
-  {% endif %}
   {% if marathon_forecast and marathon_forecast.source == 'model' %}
-  <div class="sec-sub" style="margin-top:12px"><strong>Durability-model params</strong> — what the model unlocks beyond the headline (pair these with the Fitness Dimensions above: β<sub>d</sub> is your <em>performance</em> durability, while the Resilience dimension is the <em>measured</em> drift-onset one).</div>
-  <div style="display:flex;gap:32px;flex-wrap:wrap;margin:8px 0 4px">
-    <div style="max-width:230px">
-      <div class="kicker">Durability β<sub>d</sub></div>
-      <div class="stat-value-lg">{{ marathon_forecast.beta_d }}</div>
-      <div class="race-hero-subtitle">{{ marathon_forecast.beta_d_ci }}{% if marathon_forecast.beta_d_dominated %} · prior-dominated{% endif %}</div>
-      <div class="race-hero-subtitle" style="color:var(--text-dim);margin-top:3px">= the slope of the collapse curve above; ~1.06 is typical (higher = fades more at long distance).</div>
+  <!-- The forecast, decomposed: the model formula, then a graph per coefficient (each a slope). -->
+  <div class="sec-group" style="margin-top:18px">The forecast, decomposed</div>
+  <div class="param-formula">
+    <div class="param-formula-eq">log&#8201;t = <b class="pf-a">α</b> + <b class="pf-b">β<sub>d</sub></b>·log(dist/goal) + <b class="pf-c">φ</b>·fitness + <b class="pf-d">κ</b>·effort</div>
+    <div class="param-formula-legend">
+      <span><b class="pf-a">α</b> baseline — marathon-equiv time at avg fitness (CTL 50) &amp; threshold effort (HR = LTHR); the three slopes adjust from here</span>
+      <span><b class="pf-b">β<sub>d</sub></b> durability — time vs distance</span>
+      <span><b class="pf-c">φ</b> fitness — <b>chronic load (CTL)</b>: avg daily training load over the prior ~4 weeks</span>
+      <span><b class="pf-d">κ</b> effort — <b>avg HR vs LTHR</b> (per 5 bpm; how hard the run was)</span>
     </div>
-    <div style="max-width:230px">
-      <div class="kicker">Fitness value (φ)</div>
-      <div style="font-size:15px;font-weight:600;font-family:var(--mono)">{{ marathon_forecast.phi_reading }}</div>
-      {% if marathon_forecast.phi_dominated %}<div class="race-hero-subtitle">prior-dominated</div>{% endif %}
-      <div class="race-hero-subtitle" style="color:var(--text-dim);margin-top:3px">fitness = chronic training load (CTL); each +10 is roughly a month of consistent base-building.</div>
-    </div>
-    <div style="max-width:230px">
-      <div class="kicker">HR↔pace (κ)</div>
-      <div style="font-size:15px;font-weight:600;font-family:var(--mono)">{{ marathon_forecast.kappa_reading }}</div>
-      {% if marathon_forecast.kappa_dominated %}<div class="race-hero-subtitle">prior-dominated</div>{% endif %}
-      <div class="race-hero-subtitle" style="color:var(--text-dim);margin-top:3px">effort buys pace — the forecast assumes a near-maximal race-HR, so a sub-maximal race reads slower.</div>
-    </div>
+    <div class="param-formula-note">Each coefficient below is the <em>slope</em> of its term — its covariate vs marathon-equivalent time with the other two netted out, posterior median + 90% band (greyed when the data can't inform it). The white <strong>rise/run triangle</strong> reads the slope; points are coloured by distance (blue → red); a <span style="color:var(--danger)">red ring</span> marks your most-recent run; hover any point for the run.</div>
+  </div>
+
+  <!-- β_d — durability: the collapse (distance vs time; slope = β_d) -->
+  {% if charts | selectattr('id', 'equalto', 'chart-durability') | first %}
+  <div class="param-panel">
+    <div class="param-panel-head"><span class="kicker">β<sub>d</sub> — durability</span> <strong>{{ marathon_forecast.beta_d }}</strong> <span class="param-panel-ci">{{ marathon_forecast.beta_d_ci }}</span></div>
+    <div class="chart-box chart-canvas-md"><canvas id="chart-durability"></canvas></div>
+    <div class="param-panel-cap">Every effort normalised to today's fitness &amp; a maximal effort collapses onto one power law (slope = β<sub>d</sub>); the band past your longest run is the honest extrapolation to the goal. ~1.06 typical; higher = fades more at distance.</div>
+  </div>
+  {% endif %}
+
+  <!-- φ — fitness value -->
+  <div class="param-panel">
+    <div class="param-panel-head"><span class="kicker">φ — fitness value</span> <strong>{{ marathon_forecast.phi_reading }}</strong></div>
+    <div class="chart-box chart-canvas-md"><canvas id="chart-param-phi"></canvas></div>
+    <div class="param-panel-cap">fitness = chronic load (CTL); each +10 ≈ a month of base-building. Points are netted-out (partial residuals), not raw runs.</div>
+  </div>
+
+  <!-- κ — effort → pace -->
+  <div class="param-panel">
+    <div class="param-panel-head"><span class="kicker">κ — effort → pace</span> <strong>{{ marathon_forecast.kappa_reading }}</strong></div>
+    <div class="chart-box chart-canvas-md"><canvas id="chart-param-kappa"></canvas></div>
+    <div class="param-panel-cap">effort buys pace; a near-maximal race-HR is assumed. Points are netted-out, not raw runs.</div>
   </div>
   {% endif %}
   {% if profile_takeaways.prediction %}
@@ -1381,6 +1391,28 @@ const chartInstances = {};
       if (ctx.dataset.yAxisID === 'y') return ctx.dataset.label + ': ' + fmtPace(v) + ' /km';
       return ctx.dataset.label + ': ' + Math.round(v) + ' bpm';
     };
+  }
+  // Durability-param panels (chart-param-*): log-time y-axis → h:mm ticks; tooltips identify the
+  // run (date · distance · finish time → normalised marathon-equivalent), like the trend chart.
+  if ('{{ chart.id }}'.indexOf('chart-param-') === 0 && cfg.options) {
+    var fmtHM2 = function(v){ return Math.floor(v/60) + ':' + ('0' + Math.round(v%60)).slice(-2); };
+    cfg.options.scales = cfg.options.scales || {}; cfg.options.scales.y = cfg.options.scales.y || {};
+    cfg.options.scales.y.ticks = Object.assign(cfg.options.scales.y.ticks || {}, { callback: fmtHM2 });
+    // Log y-axis auto-ticks crowd/overlap at the low end — pin a clean 10-min-spaced set in range.
+    cfg.options.scales.y.afterBuildTicks = function(axis){
+      var step = 10, lo = Math.ceil(axis.min/step)*step, out = [];
+      for (var v = lo; v <= axis.max; v += step) out.push({value: v});
+      if (out.length > 8) out = out.filter(function(_, i){ return i % 2 === 0; });  // thin if dense
+      axis.ticks = out;
+    };
+    cfg.options.plugins = cfg.options.plugins || {};
+    cfg.options.plugins.tooltip = Object.assign(cfg.options.plugins.tooltip || {}, {
+      callbacks: { label: function(ctx){
+        var r = ctx.raw || {};
+        if (r.d != null) return (r.date ? r.date + ' · ' : '') + r.d.toFixed(1) + 'km in ' + fmtHM2(r.t)
+                                + ' → equiv ' + fmtHM2(ctx.parsed.y);
+        return fmtHM2(ctx.parsed.y);
+      } } });
   }
   const el = document.getElementById('{{ chart.id }}');
   if (el) {

@@ -25,7 +25,11 @@ INLINE_TEMPLATE_CHARTS = {
 
 def _generated_chart_ids() -> set[str]:
     text = CHARTS_PY.read_text()
-    return set(re.findall(r'"id":\s*"(chart-[a-z0-9-]+)"', text))
+    ids = set(re.findall(r'"id":\s*"(chart-[a-z0-9-]+)"', text))
+    # Charts built via the _param_panel_chart(id, ...) helper (durability-param-panels): the id
+    # is the first arg, not an inline "id": literal, but they ARE generated in charts.py.
+    ids |= set(re.findall(r'_param_panel_chart\(\s*\n?\s*"(chart-[a-z0-9-]+)"', text))
+    return ids
 
 
 def _canvas_chart_ids() -> set[str]:

@@ -113,6 +113,101 @@ def _time_x_scale(unit="month", min_iso=None, max_iso=None, stacked=False, offse
     return scale
 
 
+def _slope_triangle_annots(t):
+    """The rise/run slope triangle along a fitted line — its two legs + labels (the hypotenuse
+    IS the fit line). `t` = {x1, x2, y1, y2, run, rise} or None. Makes the coefficient legible
+    as a literal slope."""
+    if not t:
+        return {}
+    leg = "rgba(226,232,240,0.75)"
+    base = {"display": True, "font": {"size": 8}, "color": "rgba(226,232,240,0.95)",
+            "backgroundColor": "rgba(0,0,0,0.45)", "position": "center"}
+    # Run label goes ABOVE the leg on a downward (negative) slope, below on an upward one —
+    # so it never sits on the triangle body or the points.
+    run_ya = -11 if t["y2"] < t["y1"] else 12
+    return {
+        "triRun": {"type": "line", "xMin": t["x1"], "xMax": t["x2"], "yMin": t["y1"], "yMax": t["y1"],
+                   "borderColor": leg, "borderWidth": 1.5, "label": {**base, "content": t["run"], "yAdjust": run_ya}},
+        "triRise": {"type": "line", "xMin": t["x2"], "xMax": t["x2"], "yMin": t["y1"], "yMax": t["y2"],
+                    "borderColor": leg, "borderWidth": 1.5, "label": {**base, "content": t["rise"], "xAdjust": 26}},
+    }
+
+
+def _recent_marker_annot(r):
+    """A red ring around the most-recent effort — a temporal reference shared across all panels.
+    `r` carries x/y (param panels) or distance_km/minutes (collapse); accepts either."""
+    if not r:
+        return {}
+    x = r.get("x", r.get("distance_km"))
+    y = r.get("y", r.get("minutes"))
+    if x is None or y is None:
+        return {}
+    return {"recent": {"type": "point", "xValue": x, "yValue": y, "radius": 7,
+                       "borderColor": DANGER, "borderWidth": 2, "backgroundColor": "rgba(0,0,0,0)"}}
+
+
+def _param_panel_chart(chart_id, panel, *, x_label, x_log, prior_dominated, color):
+    """One added-variable (partial-regression) panel for a model coefficient
+    (durability-param-panels): partial-residual scatter + posterior median line + 5–95% HDI
+    ribbon, on a log-time y-axis so the slope reads straight. Greyed/dashed + tagged when
+    prior-dominated. A vertical "you are here" marks the operating point; a faint flat ("no
+    effect") line at the operating-point time shows whether the slope is distinguishable from 0.
+    `panel` carries points/line/lo/hi as [{x, minutes}], plus x_ref + slope."""
+    def xy(rows):
+        return [{"x": r["x"], "y": r["minutes"]} for r in rows]
+    line_c = "rgba(148,163,184,0.75)" if prior_dominated else color
+    band_c = "rgba(148,163,184,0.16)" if prior_dominated else color + "33"
+    dash = [5, 4] if prior_dominated else []
+    # Points coloured by distance (blue→red), matching the durability collapse; each carries
+    # its distance / finish-time / date so the tooltip identifies the run (like the trend chart).
+    pts = panel["points"]
+    pt_colors = (["rgba(148,163,184,0.55)"] * len(pts) if prior_dominated
+                 else [_distance_color(p["d"], panel["dmin"], panel["goal"]) for p in pts])
+    pt_data = [{"x": p["x"], "y": p["minutes"], "d": p["d"], "t": p["t"], "date": p["date"]} for p in pts]
+    xs, ys = [p["x"] for p in panel["line"]], [p["minutes"] for p in panel["line"]]
+    y_ref = ys[min(range(len(xs)), key=lambda k: abs(xs[k] - panel["x_ref"]))]  # time at operating point
+    annots = {
+        "op": {"type": "line", "xMin": panel["x_ref"], "xMax": panel["x_ref"],
+               "borderColor": "rgba(226,232,240,0.6)", "borderWidth": 1, "borderDash": [2, 2],
+               "label": {"content": "you are here", "display": True, "position": "start", "rotation": 90,
+                         "font": {"size": 8}, "color": "rgba(226,232,240,0.8)", "backgroundColor": "rgba(0,0,0,0)"}},
+        "flat": {"type": "line", "yMin": y_ref, "yMax": y_ref,
+                 "borderColor": "rgba(148,163,184,0.35)", "borderWidth": 1, "borderDash": [3, 4],
+                 "label": {"content": "no effect", "display": True, "position": "end", "font": {"size": 8},
+                           "color": "rgba(148,163,184,0.8)", "backgroundColor": "rgba(0,0,0,0)"}},
+    }
+    if prior_dominated:
+        annots["pd"] = {"type": "label", "xValue": panel["x_ref"], "yValue": y_ref,
+                        "content": ["prior-dominated", "(thin data)"], "color": "rgba(148,163,184,0.9)",
+                        "font": {"size": 9, "weight": "bold"}, "backgroundColor": "rgba(0,0,0,0.55)",
+                        "padding": 3, "yAdjust": -26}
+    annots.update(_slope_triangle_annots(panel.get("triangle")))
+    annots.update(_recent_marker_annot(panel.get("recent")))
+    return {"id": chart_id, "config": json.dumps({
+        "type": "scatter",
+        "data": {"datasets": [
+            {"label": "90% band", "data": xy(panel["hi"]), "showLine": True, "fill": "+1",
+             "backgroundColor": band_c, "borderColor": "rgba(0,0,0,0)", "pointRadius": 0, "order": 3},
+            {"label": "_lo", "data": xy(panel["lo"]), "showLine": True, "fill": False,
+             "borderColor": "rgba(0,0,0,0)", "pointRadius": 0, "order": 3},
+            {"label": "fit", "data": xy(panel["line"]), "showLine": True, "borderColor": line_c,
+             "borderWidth": 2, "borderDash": dash, "pointRadius": 0, "tension": 0.1, "order": 2},
+            {"label": "efforts (netted out)", "data": pt_data, "showLine": False,
+             "pointBackgroundColor": pt_colors, "pointBorderColor": "#0008", "pointBorderWidth": 1,
+             "pointRadius": 4, "order": 1},
+        ]},
+        "options": {"responsive": True, "maintainAspectRatio": False,
+            "plugins": {"legend": {"display": False}, "annotation": {"annotations": annots}},
+            "scales": {
+                "x": {"type": ("logarithmic" if x_log else "linear"),
+                      "title": {"display": True, "text": x_label, "font": {"size": 9}},
+                      "grid": {"color": "rgba(255,255,255,0.04)"}},
+                "y": {"type": "logarithmic",
+                      "title": {"display": True, "text": "marathon-equiv (h:mm)", "font": {"size": 9}},
+                      "grid": {"color": "rgba(255,255,255,0.04)"}}}}
+    }, ensure_ascii=False)}
+
+
 def _all_charts(conn):
     charts = []
 
@@ -1111,7 +1206,6 @@ def _all_charts(conn):
             curve = [{"x": round(c["distance_km"], 2), "y": round(c["median"], 1)} for c in dp["curve"]]
             hi = [{"x": round(c["distance_km"], 2), "y": round(c["hi"], 1)} for c in dp["curve"]]
             lo = [{"x": round(c["distance_km"], 2), "y": round(c["lo"], 1)} for c in dp["curve"]]
-            _mid = curve[len(curve) // 2] if curve else None   # anchor for the β_d slope label
             charts.append({"id": "chart-durability", "config": json.dumps({
                 "type": "scatter",
                 "data": {"datasets": [
@@ -1143,13 +1237,10 @@ def _all_charts(conn):
                                      "label": {"content": "goal", "display": True, "position": "end",
                                                "font": {"size": 8}, "color": ACCENT,
                                                "backgroundColor": "rgba(0,0,0,0)"}},
-                            # β_d IS the slope of this log-log line — label it on the curve so the
-                            # number and the picture are the same object (durability-param context).
-                            **({"betad": {"type": "label", "xValue": _mid["x"], "yValue": _mid["y"],
-                                          "content": ["slope = β_d %.2f" % dp["beta_d"]],
-                                          "color": ACCENT, "font": {"size": 9, "weight": "bold"},
-                                          "backgroundColor": "rgba(0,0,0,0.55)", "padding": 4, "yAdjust": -20}}
-                               if _mid else {})}}},
+                            # β_d IS the slope of this log-log line — shown as a rise/run triangle
+                            # + a red ring on the most-recent effort (a temporal reference).
+                            **_slope_triangle_annots(dp.get("triangle")),
+                            **_recent_marker_annot(dp.get("recent"))}}},
                     "scales": {
                         "x": {"type": "logarithmic", "title": {"display": True, "text": "distance (km)"},
                               "min": dmin * 0.9, "max": dp["goal"] * 1.08,
@@ -1157,6 +1248,25 @@ def _all_charts(conn):
                         "y": {"type": "logarithmic", "title": {"display": True, "text": "time @ today's fitness, max effort"},
                               "grid": {"color": "rgba(255,255,255,0.04)"}}}}
             }, ensure_ascii=False)})
+
+            # ── φ and κ added-variable panels (β_d's panel IS the durability collapse above) ──
+            # Each shows the coefficient AS a slope: its covariate vs marathon-equiv time with the
+            # other two netted out, posterior median line + HDI ribbon, log-time y-axis, points
+            # coloured by distance (matching the collapse) + run-identifying tooltips.
+            from fit.marathon.predict import (fitness_panel, effort_panel,
+                                              effort_h_for_distance, derived_metrics)
+            _cref = _current_c(conn)
+            _mh = effort_h_for_distance(_post, _ds, _ds.goal, c=_cref,
+                                        extrapolation_scale=_pr["scale"], nu=_pr["nu"])
+            _dm = derived_metrics(_post, _ds, c=_cref, extrapolation_scale=_pr["scale"], nu=_pr["nu"])
+            _fp = fitness_panel(_post, _ds, c_ref=_cref, maximal_h=_mh)
+            _ep = effort_panel(_post, _ds, c_ref=_cref, maximal_h=_mh)
+            charts.append(_param_panel_chart(
+                "chart-param-phi", _fp, x_label="fitness (CTL)", x_log=False,
+                prior_dominated=bool(_dm["fitness_value_phi"]["prior_dominated"]), color=Z2))
+            charts.append(_param_panel_chart(
+                "chart-param-kappa", _ep, x_label="effort (bpm above LTHR)", x_log=False,
+                prior_dominated=bool(_dm["effort_kappa"]["prior_dominated"]), color=Z4))
     except Exception as e:  # never break the report on the forecast chart
         logger.debug("durability chart skipped: %s", e)
 

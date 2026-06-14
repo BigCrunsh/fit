@@ -122,6 +122,10 @@ how much do we trust each source it could come from?*
   and renamed — drift doesn't drive it.)*
 
 *The next three are model coefficients — skip unless you're reading the forecast model.*
+Each is a **slope** of the regression `log t = α + β_d·x + φ·c + κ·h`, and the dashboard
+visualises each as an **added-variable panel** — the covariate vs marathon-equivalent time
+with the other two netted out, posterior median line + HDI ribbon (greyed when prior-dominated),
+so the line's steepness *is* the coefficient (durability-param-panels).
 
 - **β_d (durability exponent)** — the fitted Riegel power-law slope: the *optimistic*
   cross-distance bound ("what holds if the power law extends"). The dashboard leads with the

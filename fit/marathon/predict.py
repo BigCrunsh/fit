@@ -371,7 +371,7 @@ def durability_panel(idata, ds, *, c_ref=0.0, maximal_h=None, extrapolation_scal
         maximal_h = effort_h_for_distance(idata, ds, ds.goal, c=c_ref,
                                           extrapolation_scale=extrapolation_scale, nu=nu, seed=seed)
     a, b, phi, kappa = (_flat(idata, p) for p in ("alpha", "beta_d", "phi", "kappa"))
-    bm, pm, km = (float(np.median(v)) for v in (b, phi, kappa))
+    am, bm, pm, km = (float(np.median(v)) for v in (a, b, phi, kappa))
     eff = ds.efforts
     points = [
         {"distance_km": float(d),
@@ -389,8 +389,131 @@ def durability_panel(idata, ds, *, c_ref=0.0, maximal_h=None, extrapolation_scal
         mins = np.exp(mu + _wall_penalty_draws(nu, extrapolation_scale, gap, mu.shape[0], rng))
         curve.append({"distance_km": float(d), "median": float(np.median(mins)),
                       "lo": float(np.percentile(mins, 5)), "hi": float(np.percentile(mins, 95))})
+    # Most-recent effort (a temporal reference, marked in every panel) + the β_d slope triangle.
+    dts = [str(x)[:10] for x in eff["date"]] if "date" in eff.columns else [None] * len(points)
+    recent = points[max(range(len(dts)), key=lambda k: dts[k] or "")] if any(dts) else None
+    dlo = float(eff["distance_km"].min())
+    d1 = float(np.exp(np.log(dlo) + 0.15 * (np.log(ds.goal) - np.log(dlo))))
+    d2 = d1 * 2.0
+    def _ty(d):
+        return float(np.exp(am + bm * np.log(d / ds.goal) + pm * c_ref + km * maximal_h))
+    triangle = {"x1": d1, "x2": d2, "y1": _ty(d1), "y2": _ty(d2),
+                "run": "×2 dist", "rise": "×%.2f time = 2^β_d (β_d %.2f)" % (2 ** bm, bm)}
     return {"points": points, "curve": curve, "d_max": ds.d_max, "goal": ds.goal,
-            "beta_d": bm}
+            "beta_d": bm, "recent": recent, "triangle": triangle}
+
+
+def _coeff_panel(idata, ds, *, covariate, c_ref, maximal_h, n_grid=40):
+    """Added-variable (partial-regression) panel for one model coefficient — the Bayesian-honest
+    way to "see a slope as a slope" (durability-param-panels).
+
+    The model is `mu = α + β_d·x + φ·c + κ·h`. To isolate one covariate we net the OTHER two out
+    of each effort's log-time, leaving partial-residual points whose trend is that coefficient;
+    the fitted line is the posterior mean at the goal distance + the operating values of the
+    netted covariates, with a 5–95% HDI ribbon from posterior draws (uncertainty is the figure).
+
+    covariate ∈ {"fitness" (→ φ, x-axis = CTL), "effort" (→ κ, x-axis = bpm above LTHR)}.
+    β_d already has `durability_panel` (distance axis). All three share a log-time y-axis so the
+    slope reads straight and the panels are comparable. Points are netted at posterior medians
+    (illustrative scatter); the line + ribbon carry the posterior. Returns None if the model is
+    not usable.
+    """
+    from fit.marathon.features import CHRONIC_REF, CHRONIC_SCALE, H_DIV
+    a, b, phi, kappa = (_flat(idata, p) for p in ("alpha", "beta_d", "phi", "kappa"))
+    am, bm, pm, km = (float(np.median(v)) for v in (a, b, phi, kappa))
+    eff = ds.efforts
+    dist = np.asarray(eff["distance_km"], float)
+    cc, hh, lt = np.asarray(eff["c"], float), np.asarray(eff["h"], float), np.asarray(eff["logt"], float)
+    xlog = np.log(dist / ds.goal)                       # distance term per effort
+    actual = np.exp(lt)                                 # the run's (grade-adjusted) finish time, min
+    dates = [str(d)[:10] for d in eff["date"]] if "date" in eff.columns else [None] * len(dist)
+
+    if covariate == "distance":
+        slope, unit, x_log = bm, "km", True
+        pts_x = dist
+        pts_y = np.exp(lt - pm * (cc - c_ref) - km * (hh - maximal_h))   # net out fitness + effort
+        gv = np.exp(np.linspace(np.log(dist.min() * 0.95), np.log(ds.goal * 1.02), n_grid))
+        grid_x = gv
+        mu_grid = [a + b * np.log(d / ds.goal) + phi * c_ref + kappa * maximal_h for d in gv]
+        x_ref = ds.goal
+    elif covariate == "fitness":
+        slope, unit, x_log = pm, "ctl", False
+        pts_x = cc * CHRONIC_SCALE + CHRONIC_REF                         # CTL
+        pts_y = np.exp(lt - bm * xlog - km * (hh - maximal_h))           # net out distance + effort
+        gv = np.linspace(cc.min() - 0.5, cc.max() + 0.5, n_grid)
+        grid_x = gv * CHRONIC_SCALE + CHRONIC_REF
+        mu_grid = [a + phi * c + kappa * maximal_h for c in gv]          # at goal distance (x=0)
+        x_ref = c_ref * CHRONIC_SCALE + CHRONIC_REF
+    elif covariate == "effort":
+        slope, unit, x_log = km, "bpm", False
+        pts_x = hh * H_DIV                                               # bpm above LTHR
+        pts_y = np.exp(lt - bm * xlog - pm * (cc - c_ref))              # net out distance + fitness
+        gv = np.linspace(hh.min() - 0.3, hh.max() + 0.3, n_grid)
+        grid_x = gv * H_DIV
+        mu_grid = [a + phi * c_ref + kappa * h for h in gv]             # at goal distance + current fitness
+        x_ref = maximal_h * H_DIV                                        # the assumed race effort
+    else:
+        raise ValueError(f"unknown covariate {covariate!r}")
+
+    # Each point carries its distance/finish-time/date so the chart can colour it by distance
+    # (matching the durability collapse) and identify the run on hover.
+    points = [{"x": float(x), "minutes": float(y), "d": float(dd), "t": float(tt), "date": dt}
+              for x, y, dd, tt, dt in zip(pts_x, pts_y, dist, actual, dates)]
+    line, lo, hi = [], [], []
+    for xv, mu in zip(grid_x, mu_grid):
+        mins = np.exp(mu)
+        line.append({"x": float(xv), "minutes": float(np.median(mins))})
+        lo.append({"x": float(xv), "minutes": float(np.percentile(mins, 5))})
+        hi.append({"x": float(xv), "minutes": float(np.percentile(mins, 95))})
+
+    # Slope triangle (rise/run on the fitted line) — the intuitive "this IS the slope":
+    # anchored low in range, run = one natural unit of the covariate, rise = the marathon impact.
+    if covariate == "distance":
+        d1 = float(np.exp(np.log(dist.min()) + 0.15 * (np.log(ds.goal) - np.log(dist.min()))))
+        d2 = d1 * 2.0
+        ty1 = float(np.exp(am + bm * np.log(d1 / ds.goal) + pm * c_ref + km * maximal_h))
+        ty2 = float(np.exp(am + bm * np.log(d2 / ds.goal) + pm * c_ref + km * maximal_h))
+        tri = {"x1": d1, "x2": d2, "y1": ty1, "y2": ty2,
+               "run": "×2 dist", "rise": "×%.2f time = 2^β_d (β_d %.2f)" % (2 ** bm, bm)}
+    elif covariate == "fitness":
+        c1 = float(cc.min() + 0.2 * (cc.max() - cc.min()))
+        c2 = c1 + 1.0
+        ty1 = float(np.exp(am + pm * c1 + km * maximal_h))
+        ty2 = float(np.exp(am + pm * c2 + km * maximal_h))
+        tri = {"x1": c1 * CHRONIC_SCALE + CHRONIC_REF, "x2": c2 * CHRONIC_SCALE + CHRONIC_REF,
+               "y1": ty1, "y2": ty2, "run": "+10 CTL", "rise": "%+.1f min" % (ty2 - ty1)}
+    else:  # effort
+        h1 = float(hh.min() + 0.2 * (hh.max() - hh.min()))
+        h2 = h1 + 1.0
+        ty1 = float(np.exp(am + pm * c_ref + km * h1))
+        ty2 = float(np.exp(am + pm * c_ref + km * h2))
+        tri = {"x1": h1 * H_DIV, "x2": h2 * H_DIV, "y1": ty1, "y2": ty2,
+               "run": "+5 bpm", "rise": "%+.1f%%" % ((ty2 / ty1 - 1) * 100)}
+
+    recent = None      # the most-recent effort — a temporal reference marked in every panel
+    if any(d is not None for d in dates):
+        ri = max(range(len(dates)), key=lambda k: dates[k] or "")
+        recent = {"x": float(pts_x[ri]), "y": float(pts_y[ri]), "d": float(dist[ri]),
+                  "t": float(actual[ri]), "date": dates[ri]}
+
+    return {"points": points, "line": line, "lo": lo, "hi": hi, "slope": slope,
+            "x_ref": float(x_ref), "x_unit": unit, "x_log": x_log, "triangle": tri, "recent": recent,
+            "dmin": float(dist.min()), "goal": float(ds.goal)}
+
+
+def distance_panel(idata, ds, *, c_ref, maximal_h, n_grid=40):
+    """β_d panel — marathon-equivalent time vs distance (log); slope = β_d. See `_coeff_panel`."""
+    return _coeff_panel(idata, ds, covariate="distance", c_ref=c_ref, maximal_h=maximal_h, n_grid=n_grid)
+
+
+def fitness_panel(idata, ds, *, c_ref, maximal_h, n_grid=40):
+    """φ panel — marathon-equivalent time vs fitness (CTL); slope = φ. See `_coeff_panel`."""
+    return _coeff_panel(idata, ds, covariate="fitness", c_ref=c_ref, maximal_h=maximal_h, n_grid=n_grid)
+
+
+def effort_panel(idata, ds, *, c_ref, maximal_h, n_grid=40):
+    """κ panel — marathon-equivalent time vs effort (bpm above LTHR); slope = κ. See `_coeff_panel`."""
+    return _coeff_panel(idata, ds, covariate="effort", c_ref=c_ref, maximal_h=maximal_h, n_grid=n_grid)
 
 
 def residuals(idata, ds):
