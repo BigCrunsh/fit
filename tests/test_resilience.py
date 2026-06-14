@@ -60,14 +60,23 @@ class TestResilienceBestOnset:
         assert r["confidence"]["level"] == "low"            # one run → low confidence
         assert (r["band"]["hi"] - r["current_value"]) >= (r["current_value"] - r["band"]["lo"])  # asymmetric (up)
 
-    def test_band_is_asymmetric_and_brackets_estimate(self, db):
+    def test_ci_brackets_estimate_and_is_a_real_interval(self, db):
+        # The band is now a Bayesian-bootstrap sampling CI (option 1): it brackets the estimate
+        # and is non-degenerate. (It can lean either way — the bootstrap reflects which runs the
+        # resample weights, not a fixed one-sided shape.)
         _seed_run(db, "a", days_ago=3, n_splits=18, onset_split=99)   # no drift, 18 km
         _seed_run(db, "b", days_ago=10, n_splits=16, onset_split=12)  # drift at 12
         _seed_run(db, "c", days_ago=17, n_splits=14, onset_split=10)  # drift at 10
         r = _compute_resilience(db)
         lo, hi, est = r["band"]["lo"], r["band"]["hi"], r["current_value"]
-        assert lo <= est <= hi
-        assert (hi - est) >= (est - lo)                     # upside ≥ downside (censored, one-sided)
+        assert lo <= est <= hi and hi > lo
+
+    def test_thinner_sample_gives_a_wider_interval(self, db):
+        # Bootstrap CI widens when fewer runs feed it (the resample spread grows).
+        _seed_run(db, "p", days_ago=4, n_splits=16, onset_split=12)
+        _seed_run(db, "q", days_ago=9, n_splits=14, onset_split=9)
+        r = _compute_resilience(db)
+        assert (r["band"]["hi"] - r["band"]["lo"]) / r["current_value"] > 0.15  # genuinely uncertain
 
     def test_censored_points_flagged(self, db):
         _seed_run(db, "nodrift", days_ago=4, n_splits=16, onset_split=99)  # held to the end

@@ -5,6 +5,8 @@ import math
 import sqlite3
 from datetime import date
 
+import numpy as np
+
 from fit.analysis import RUNNING_TYPES_SQL, RIEGEL_EXPONENT
 
 logger = logging.getLogger(__name__)
@@ -287,32 +289,43 @@ def _compute_resilience(conn: sqlite3.Connection) -> dict:
         return _empty_dimension("No usable drift data from recent long runs")
 
     weights = [p["weight"] for p in points]
-    sw, sw2 = sum(weights), sum(w * w for w in weights)
-    n_eff = (sw * sw / sw2) if sw2 > 0 else 0.0   # Kish effective sample size
-
-    # Weighted best-demonstrated onset (75th pct — an upper, one-sided quantity, robust to a
-    # single stale outlier; recency/length weights discount old + short runs).
-    weighted_best = _weighted_quantile([(p["value"], p["weight"]) for p in points], 0.75) or 0.0
+    values = [p["value"] for p in points]
 
     # Cold-start prior: a conservative fraction of the typical recent long run.
     dists = sorted(p["dist"] for p in points)
-    median_dist = dists[len(dists) // 2]
-    prior = max(RESILIENCE_PRIOR_FLOOR_KM, RESILIENCE_PRIOR_FRAC * median_dist)
+    prior = max(RESILIENCE_PRIOR_FLOOR_KM, RESILIENCE_PRIOR_FRAC * dists[len(dists) // 2])
 
-    # Shrink toward the prior when the effective sample is thin/stale (mirrors T₀).
-    lam = n_eff / (n_eff + RESILIENCE_SHRINK_K) if (n_eff + RESILIENCE_SHRINK_K) > 0 else 0.0
-    est = lam * weighted_best + (1 - lam) * prior
+    def _estimate(ws):
+        """The shrunk, weighted best-demonstrated onset (75th pct, one-sided) for a weight vector,
+        plus its Kish N_eff. Used for the point estimate AND each bootstrap resample."""
+        s1, s2 = sum(ws), sum(w * w for w in ws)
+        ne = (s1 * s1 / s2) if s2 > 0 else 0.0
+        wb = _weighted_quantile(list(zip(values, ws)), 0.75) or 0.0
+        lam = ne / (ne + RESILIENCE_SHRINK_K) if (ne + RESILIENCE_SHRINK_K) > 0 else 0.0
+        return lam * wb + (1 - lam) * prior, ne
 
-    # ── Asymmetric band: tight floor (demonstrated), wider upside (censored / unobserved km) ──
+    est, n_eff = _estimate(weights)
+
+    # ── Confidence interval — Bayesian bootstrap (sampling uncertainty) + the censored upside ──
+    # Reweight the points by Dirichlet(1..1) draws and recompute the estimate; the 5–95% spread is
+    # the sampling CI (wide when few runs feed it). A bootstrap can't see distance you've never run,
+    # so the UPPER bound also carries the coverage gap to the goal long-run. A small-N floor keeps a
+    # 1–2-run history from looking falsely precise (the bootstrap degenerates there). Seeded →
+    # deterministic report.
+    # Option 3 (deferred — see memory `resilience-bayesian-ci`): a censored-likelihood Bayesian
+    # posterior (KM / parametric survival) would unify the shrink-to-prior and the interval.
     longest = max(p["dist"] for p in points)
     best_age = min(p["age"] for p in points)            # recency of the freshest evidence
     stale_hl = best_age / RESILIENCE_HALF_LIFE_DAYS
     goal_long = _goal_long_km(conn)
     coverage_gap = max(0.0, goal_long - longest) if goal_long else 0.0
-    thin = 1.0 / math.sqrt(max(n_eff, 0.5))
-    base = est * (0.08 + 0.12 * thin)                   # relative width, shrinks with N_eff
-    lo = max(0.0, est - base * 0.5 * (1 + 0.5 * stale_hl))
-    hi = est + base * (1 + 0.5 * stale_hl) + 0.4 * coverage_gap   # ≥ lo gap → asymmetric (up)
+    rng = np.random.default_rng(0)
+    boot = sorted(_estimate(list(np.asarray(weights) * g))[0]
+                  for g in rng.dirichlet(np.ones(len(points)), size=400))
+    lo_bs, hi_bs = float(np.percentile(boot, 5)), float(np.percentile(boot, 95))
+    floor = est * (0.05 + 0.08 / math.sqrt(max(n_eff, 0.5)))   # min width when the bootstrap degenerates
+    lo = max(0.0, min(lo_bs, est - 0.5 * floor))
+    hi = max(hi_bs, est + floor) + 0.4 * coverage_gap          # asymmetric: censored / unobserved upside
 
     # Confidence: enough recent long runs near the goal distance → high; thin/stale/short → low.
     recent = best_age <= RESILIENCE_HALF_LIFE_DAYS
