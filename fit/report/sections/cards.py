@@ -836,7 +836,7 @@ def _definitions(conn):
         "zones": "HR zones by training TIME (minutes per week), not run count. Compared to your active training phase targets. Blue = Z1+Z2 (easy), amber = Z3 (moderate), orange = Z4+Z5 (hard). Phase 1 targets ~90% easy.",
         "volume": "Total running km per week. The darker segment shows the longest single run. For marathon training: long run should build gradually to 30-32 km, weekly volume to 50-60 km at peak.",
         "cadence": f"Your 30d avg cadence: {avg_cadence_val} spm. Below 165 often indicates overstriding. Target: 170-180. Tends to improve with fatigue resilience and form work.",
-        "cardiac_drift": "<strong>Cardiac drift</strong> = HR rising while pace stays constant, caused by glycogen depletion, core temp rise, and plasma volume loss. <strong>Top chart:</strong> per-km pace + HR for steady aerobic runs (≥8 km — tempo/intervals/progression/race excluded, since they decouple early by design), averaged across 4 weeks (thin = individual runs, thick = average); the x-axis is real cumulative km. <strong>Drift onset</strong> = the first km where the HR : grade-adjusted-pace ratio exceeds the first-half baseline by 5%. <strong>Bottom chart:</strong> drift onset per run over time. Onset is a <em>one-sided lower bound</em> — a no-drift run (▲) only shows durability is <em>at least</em> that far (we can't see past the run); an observed onset (●) is where HR decoupled, and a short/hot/tired run only pushes it earlier. The dashed line + amber band are the resilience estimate: a recency- and length-weighted best-demonstrated onset that shrinks toward a prior when data is thin or stale, with a <em>Bayesian-bootstrap 90% interval</em> (wide when few runs feed it; the upper bound also carries the unobserved km past your longest run). Higher is better; onset after km 15 (green) = strong aerobic base.",
+        "cardiac_drift": "<strong>Cardiac drift</strong> = HR rising while pace stays constant, caused by glycogen depletion, core temp rise, and plasma volume loss. <strong>Top chart:</strong> per-km pace + HR for steady aerobic runs (≥8 km — tempo/intervals/progression/race excluded, since they decouple early by design), averaged across recent long runs (thin = individual runs, thick = average); the x-axis is real cumulative km. <strong>Drift onset</strong> = the first km where the HR : grade-adjusted-pace ratio exceeds the first-half baseline by 5%. <strong>Bottom chart:</strong> drift onset per run over time. Onset is a <em>one-sided lower bound</em> — a no-drift run (▲) only shows durability is <em>at least</em> that far (we can't see past the run); an observed onset (●) is where HR decoupled, and a short/hot/tired run only pushes it earlier. The dashed line + amber band are the resilience estimate: a recency- and length-weighted best-demonstrated onset that shrinks toward a prior when data is thin or stale, with a <em>Bayesian-bootstrap 90% interval</em> (wide when few runs feed it; the upper bound also carries the unobserved km past your longest run). Higher is better; onset after km 15 (green) = strong aerobic base.",
         "race_prediction": "The race-day forecast from the Bayesian durability model: a <strong>median</strong> finish time, a <strong>90% interval</strong>, and <strong>P(goal)</strong>. <strong>Extrapolation penalty</strong>: the interval widens the further the race is past your longest run — honesty about unproven distance. <strong>Maximal-HR input</strong>: it assumes a race run at your duration-appropriate maximal effort (LTHR-relative), not an easy pace. <strong>Interval ≠ race-day spread</strong>: the band is parameter uncertainty (how well the model knows your fitness), not the variance of race-day outcomes. <strong>P(goal)</strong> is a fitness-sufficiency ceiling — the probability your fitness is enough for the goal, not a bet on the day. Degrades to the calibrated-VDOT anchor estimate when the model isn't fit.",
         "acwr": f"Acute:Chronic Workload Ratio. Current: {acwr_val}. This week's load ÷ avg of previous 4 weeks. <strong style='color:var(--safe)'>0.8-1.3 = safe</strong>, <strong style='color:var(--caution)'>1.3-1.5 = caution</strong>, <strong style='color:var(--danger)'>> 1.5 = injury risk (spike)</strong>, < 0.6 = detraining. Critical for comeback training.",
         "pacecv": "Coefficient of Variation of pace within a run — how even your pacing is. Lower = more consistent. <strong style='color:var(--safe)'>< 5% = very even</strong>, <strong style='color:var(--caution)'>5-10% = moderate variation</strong>, <strong style='color:var(--danger)'>> 10% = erratic pacing</strong>. Even pacing is a key predictor of marathon success. Interval sessions naturally have higher CV.",
@@ -1389,7 +1389,7 @@ _HUB_SEV = {"danger": 2, "caution": 1, "safe": 0, "neutral": -1}
 _HUB_LEVER = {
     "Fitness": ("training", "train-objectives", "build weekly volume toward the phase target"),
     "Recovery": ("readiness", "readiness-acwr", "ease back — your load is spiking; add recovery"),
-    "Physiology": ("profile", "prof-pace-zones", "sharpen race-pace work to close the VDOT gap"),
+    "Physiology": ("profile", "prof-vo2max", "sharpen race-pace work to close the VDOT gap"),
 }
 
 
@@ -1398,16 +1398,19 @@ HUB_VDOT_WATCH, HUB_VDOT_OFF = 1.0, 3.0
 
 
 def _hub_volume_status(vol, km_min, km_max):
-    """Weekly volume vs the active phase's [min, max] km range → (status, gap-fraction).
-    In range = safe; outside = caution; beyond a full range-width outside = danger. The
-    reference is the phase range itself — no fixed-percentage tolerance."""
+    """Weekly volume vs the active phase's [min, max] km range → (status, gap-fraction). Only
+    UNDER the min is the goal-limiting case (not enough training to build fitness): caution, or
+    danger past a full range-width under. At or ABOVE the min the volume need is met → safe — the
+    overload risk of running ABOVE the max is a load-spike signal carried by the Recovery card
+    (ACWR), NOT a Fitness 'build more volume' limiter (direction-aware, mirroring _hub_acwr_status:
+    the Fitness lever only ever says 'build', so an over-volume week must not select it)."""
     if not vol or km_min is None or km_max is None:
         return "neutral", 0.0
-    if km_min <= vol <= km_max:
+    if vol >= km_min:
         return "safe", 0.0
-    over = (km_min - vol) if vol < km_min else (vol - km_max)
+    under = km_min - vol
     width = max(km_max - km_min, 1.0)
-    return ("danger" if over > width else "caution"), (over / km_min if km_min else 0.0)
+    return ("danger" if under > width else "caution"), (under / km_min if km_min else 0.0)
 
 
 def _hub_vdot_status(eff, req, watch=HUB_VDOT_WATCH, off=HUB_VDOT_OFF):

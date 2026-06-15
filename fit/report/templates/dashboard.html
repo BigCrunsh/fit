@@ -540,7 +540,7 @@
   <div class="chart-box chart-canvas-xl"><canvas id="chart-drift"></canvas></div>
   {% set drift_chart = charts | selectattr('id', 'equalto', 'chart-drift') | first %}
   {% if drift_chart and drift_chart.n_runs is defined %}
-  <div class="sec-method">Averaged over {{ drift_chart.n_runs }} run{{ 's' if drift_chart.n_runs != 1 else '' }} from last 4 weeks. Individual runs shown as thin lines.{% if split_data and split_data.drift and split_data.drift.drift_onset_km %} Drift onset at km {{ split_data.drift.drift_onset_km }}.{% endif %}</div>
+  <div class="sec-method">Averaged over {{ drift_chart.n_runs }} recent long run{{ 's' if drift_chart.n_runs != 1 else '' }} (same steady-aerobic population as the Resilience estimate). Individual runs shown as thin lines.{% if split_data and split_data.drift and split_data.drift.drift_onset_km %} Drift onset at km {{ split_data.drift.drift_onset_km }}.{% endif %}</div>
   {% endif %}
   <div class="chart-box chart-canvas-md"><canvas id="chart-drift-trend"></canvas></div>
   <div class="sec-method"><strong>●</strong> = observed onset, <strong>▲</strong> = held to the end (a "≥" lower bound). The amber dashed line + band are the recency/length-weighted resilience estimate and its asymmetric uncertainty (tight floor, wider upside). The grey dashed "raw" line is onset without the grade correction — the gap is how much terrain was distorting it. Higher = better aerobic endurance; green band = onset after km 15.</div>

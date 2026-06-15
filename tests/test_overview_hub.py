@@ -36,10 +36,17 @@ class TestVolumeStatus:
         assert _hub_volume_status(40, 40, 60)[0] == "safe"     # at min (boundary)
         assert _hub_volume_status(60, 40, 60)[0] == "safe"     # at max (boundary)
 
-    def test_outside_range(self):
+    def test_under_min_flags_under_only(self):
+        # Only UNDER the min is the goal-limiting case (the Fitness lever only says "build").
         assert _hub_volume_status(35, 40, 60)[0] == "caution"  # 5 under min (< 20 width)
         assert _hub_volume_status(10, 40, 60)[0] == "danger"   # 30 under min (> 20 width)
-        assert _hub_volume_status(70, 40, 60)[0] == "caution"  # 10 over max (< 20 width)
+
+    def test_over_max_is_safe_not_a_build_limiter(self):
+        # Direction-aware: above the min the volume need is met → safe. The overload risk of
+        # running above the max is a load-spike (ACWR) signal on the Recovery card, NOT a Fitness
+        # "build more volume" limiter — mirrors the low-ACWR rule.
+        assert _hub_volume_status(70, 40, 60)[0] == "safe"     # over max → safe (not "build")
+        assert _hub_volume_status(100, 40, 60)[0] == "safe"    # far over → still safe
 
     def test_neutral_without_range(self):
         assert _hub_volume_status(40, None, None)[0] == "neutral"

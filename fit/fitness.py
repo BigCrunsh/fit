@@ -16,6 +16,16 @@ logger = logging.getLogger(__name__)
 # No lookup table needed — the formula is the source of truth.
 
 
+# Single-entry cache keyed by CONNECTION IDENTITY (mirrors predict._CTX_CACHE): a dashboard
+# render calls get_fitness_profile ~7× (cards + charts) and the resilience dimension now runs a
+# 400-iteration bootstrap + per-run drift compute, so one render would otherwise redo all of it
+# 7×. One render = one connection → the first call computes, the rest hit the cache. A new
+# connection (next render / a different caller) recomputes. (Mutations on the SAME connection
+# followed by a re-read would see the cached value — acceptable for the read-only render path,
+# same trade-off as the forecast-context cache.)
+_PROFILE_CACHE: dict = {"conn": None, "profile": None}
+
+
 def get_fitness_profile(conn: sqlite3.Connection) -> dict:
     """Compute the 4-dimension fitness profile from current data.
 
@@ -29,6 +39,8 @@ def get_fitness_profile(conn: sqlite3.Connection) -> dict:
         race_vdot: float (latest from race results)
         race_vdot_date: str
     """
+    if _PROFILE_CACHE["conn"] is conn:
+        return _PROFILE_CACHE["profile"]
     profile = {
         "aerobic": _compute_aerobic(conn),
         "threshold": _compute_threshold(conn),
@@ -47,6 +59,7 @@ def get_fitness_profile(conn: sqlite3.Connection) -> dict:
     profile["race_vdot_date"] = race_vdot_date
     profile["effective_vdot"] = effective
 
+    _PROFILE_CACHE["conn"], _PROFILE_CACHE["profile"] = conn, profile
     return profile
 
 
@@ -202,6 +215,16 @@ RESILIENCE_PRIOR_FLOOR_KM = 8.0    # … floored here (the qualifying-run thresh
 # before HR decouples. Hard-effort runs decouple early BY DESIGN (run above aerobic pace), so
 # they're excluded; a NULL/unclassified run_type is kept (assumed steady). (Durability knob B.)
 RESILIENCE_HARD_TYPES = ("tempo", "intervals", "progression", "race")
+RESILIENCE_MIN_KM = 8              # only long runs probe durability
+
+
+def resilience_run_filter(alias="a"):
+    """SQL predicate selecting runs eligible for the durability/resilience signal: steady aerobic
+    only — RESILIENCE_HARD_TYPES decouple early by design and are excluded; NULL/unclassified is
+    kept (assumed steady). Single-sourced so the resilience dimension AND the drift charts score
+    the SAME population (pair with each surface's distance/window gates, e.g. RESILIENCE_MIN_KM)."""
+    hard = ", ".join(f"'{t}'" for t in RESILIENCE_HARD_TYPES)
+    return f"({alias}.run_type IS NULL OR {alias}.run_type NOT IN ({hard}))"
 
 
 def _weighted_quantile(pairs, q):
@@ -242,13 +265,12 @@ def _compute_resilience(conn: sqlite3.Connection) -> dict:
     conservative prior when the effective sample is thin or stale, so a lone/old run is never
     reported as a confident durability figure.
     """
-    _hard = ", ".join(f"'{t}'" for t in RESILIENCE_HARD_TYPES)
     splits_runs = conn.execute(f"""
         SELECT a.id, a.date, a.distance_km FROM activities a
         WHERE a.type IN {RUNNING_TYPES_SQL}
         AND a.splits_status = 'done'
-        AND a.distance_km >= 8
-        AND (a.run_type IS NULL OR a.run_type NOT IN ({_hard}))
+        AND a.distance_km >= {RESILIENCE_MIN_KM}
+        AND {resilience_run_filter()}
         AND a.date >= date('now', '-{RESILIENCE_LOOKBACK_DAYS} days')
         ORDER BY a.date
     """).fetchall()

@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from fit.marathon.features import EffortDataset, CHRONIC_SCALE, H_DIV
-from fit.marathon.predict import fitness_panel, effort_panel, distance_panel
+from fit.marathon.predict import fitness_panel, effort_panel
 from fit.report.sections.charts import _param_panel_chart
 
 
@@ -65,14 +65,6 @@ class TestSlopeEqualsCoefficient:
         p = effort_panel(_idata(kappa=-0.025), _ds(), c_ref=0.0, maximal_h=-1.0)
         assert abs(p["slope"] - (-0.025)) < 1e-6
         assert abs(_line_log_slope(p, H_DIV) - (-0.025)) < 1e-3
-
-    def test_betad_panel_line_slope_is_beta_d(self):
-        # x-axis is distance (log); the slope per log-distance is β_d.
-        p = distance_panel(_idata(beta_d=1.08), _ds(), c_ref=0.0, maximal_h=-1.0)
-        assert abs(p["slope"] - 1.08) < 1e-6
-        L = p["line"]
-        emp = (np.log(L[-1]["minutes"]) - np.log(L[0]["minutes"])) / (np.log(L[-1]["x"]) - np.log(L[0]["x"]))
-        assert abs(emp - 1.08) < 1e-3
 
     def test_points_carry_distance_time_date_for_tooltip(self):
         p = fitness_panel(_idata(), _ds(), c_ref=0.0, maximal_h=-1.0)

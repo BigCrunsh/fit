@@ -300,12 +300,20 @@ def compute_cardiac_drift(splits):
         return {"drift_pct": None, "drift_onset_km": None,
                 "status": "insufficient_data", "pace_cv_pct": pace_cv}
 
+    # Cumulative real distance (km) at each valid split — so the onset is reported in actual
+    # kilometres, not the lap INDEX (split_num only equals km for 1 km auto-laps; manual/sub-km
+    # laps made onset overstate distance). Falls back to split_num if splits carry no distance.
+    cum, cum_km = 0.0, []
+    for s in valid:
+        cum += s.get("distance_km") or 0
+        cum_km.append(cum)
+
     # Find drift onset: slide through splits looking for >5% deviation
     drift_onset_km = None
     for i in range(half, len(ratios)):
         deviation_pct = (ratios[i] - first_half_avg) / first_half_avg * 100
         if deviation_pct > 5.0:
-            drift_onset_km = valid[i]["split_num"]
+            drift_onset_km = round(cum_km[i], 1) if cum_km[i] > 0 else valid[i]["split_num"]
             break
 
     # Overall drift: first half vs second half

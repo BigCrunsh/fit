@@ -643,15 +643,18 @@ def _all_charts(conn):
     # many short laps can't stretch or mislabel the x-axis. Inclusion matches the Resilience
     # dimension: >=8 km, last 28d, and compute_cardiac_drift (the ONE grade-adjusted source)
     # classifies it 'detected'/'none'; its pace-CV gate drops interval / variable-pace runs.
-    from fit.fitness import RESILIENCE_HARD_TYPES   # exclude hard-effort runs (knob B) — same as the dimension
-    _steady = "(a.run_type IS NULL OR a.run_type NOT IN (%s))" % ", ".join(f"'{t}'" for t in RESILIENCE_HARD_TYPES)
+    # Same population as the Resilience dimension (single-sourced): steady aerobic, >= min km,
+    # over the same lookback — so the per-km curves, the "best onset" marker, and the dimension
+    # value all describe one set of runs.
+    from fit.fitness import resilience_run_filter, RESILIENCE_MIN_KM, RESILIENCE_LOOKBACK_DAYS
+    _steady = resilience_run_filter()
     drift_runs = conn.execute(f"""
         SELECT a.id, a.date, a.name
         FROM activities a
         JOIN activity_splits s ON s.activity_id = a.id
         WHERE a.type IN ('running','track_running','trail_running')
-          AND a.date >= date('now', '-28 days')
-          AND a.distance_km >= 8
+          AND a.date >= date('now', '-{RESILIENCE_LOOKBACK_DAYS} days')
+          AND a.distance_km >= {RESILIENCE_MIN_KM}
           AND {_steady}
         GROUP BY a.id HAVING COUNT(s.split_num) >= 4
         ORDER BY a.date
@@ -786,6 +789,7 @@ def _all_charts(conn):
         SELECT a.id, a.date, a.distance_km, a.duration_min, a.avg_hr FROM activities a
         JOIN activity_splits s ON s.activity_id = a.id
         WHERE a.type IN ('running','track_running','trail_running')
+          AND a.distance_km >= {RESILIENCE_MIN_KM}
           AND {_steady}
         GROUP BY a.id HAVING COUNT(s.split_num) >= 6
         ORDER BY a.date

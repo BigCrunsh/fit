@@ -428,15 +428,7 @@ def _coeff_panel(idata, ds, *, covariate, c_ref, maximal_h, n_grid=40):
     actual = np.exp(lt)                                 # the run's (grade-adjusted) finish time, min
     dates = [str(d)[:10] for d in eff["date"]] if "date" in eff.columns else [None] * len(dist)
 
-    if covariate == "distance":
-        slope, unit, x_log = bm, "km", True
-        pts_x = dist
-        pts_y = np.exp(lt - pm * (cc - c_ref) - km * (hh - maximal_h))   # net out fitness + effort
-        gv = np.exp(np.linspace(np.log(dist.min() * 0.95), np.log(ds.goal * 1.02), n_grid))
-        grid_x = gv
-        mu_grid = [a + b * np.log(d / ds.goal) + phi * c_ref + kappa * maximal_h for d in gv]
-        x_ref = ds.goal
-    elif covariate == "fitness":
+    if covariate == "fitness":
         slope, unit, x_log = pm, "ctl", False
         pts_x = cc * CHRONIC_SCALE + CHRONIC_REF                         # CTL
         pts_y = np.exp(lt - bm * xlog - km * (hh - maximal_h))           # net out distance + effort
@@ -468,14 +460,7 @@ def _coeff_panel(idata, ds, *, covariate, c_ref, maximal_h, n_grid=40):
 
     # Slope triangle (rise/run on the fitted line) — the intuitive "this IS the slope":
     # anchored low in range, run = one natural unit of the covariate, rise = the marathon impact.
-    if covariate == "distance":
-        d1 = float(np.exp(np.log(dist.min()) + 0.15 * (np.log(ds.goal) - np.log(dist.min()))))
-        d2 = d1 * 2.0
-        ty1 = float(np.exp(am + bm * np.log(d1 / ds.goal) + pm * c_ref + km * maximal_h))
-        ty2 = float(np.exp(am + bm * np.log(d2 / ds.goal) + pm * c_ref + km * maximal_h))
-        tri = {"x1": d1, "x2": d2, "y1": ty1, "y2": ty2,
-               "run": "×2 dist", "rise": "×%.2f time = 2^β_d (β_d %.2f)" % (2 ** bm, bm)}
-    elif covariate == "fitness":
+    if covariate == "fitness":
         c1 = float(cc.min() + 0.2 * (cc.max() - cc.min()))
         c2 = c1 + 1.0
         ty1 = float(np.exp(am + pm * c1 + km * maximal_h))
@@ -499,11 +484,6 @@ def _coeff_panel(idata, ds, *, covariate, c_ref, maximal_h, n_grid=40):
     return {"points": points, "line": line, "lo": lo, "hi": hi, "slope": slope,
             "x_ref": float(x_ref), "x_unit": unit, "x_log": x_log, "triangle": tri, "recent": recent,
             "dmin": float(dist.min()), "goal": float(ds.goal)}
-
-
-def distance_panel(idata, ds, *, c_ref, maximal_h, n_grid=40):
-    """β_d panel — marathon-equivalent time vs distance (log); slope = β_d. See `_coeff_panel`."""
-    return _coeff_panel(idata, ds, covariate="distance", c_ref=c_ref, maximal_h=maximal_h, n_grid=n_grid)
 
 
 def fitness_panel(idata, ds, *, c_ref, maximal_h, n_grid=40):
