@@ -211,6 +211,17 @@ RESILIENCE_LENGTH_REF_KM = 32.0    # length-weight reference (~marathon long run
 RESILIENCE_SHRINK_K = 2.0          # shrink strength: λ = N_eff / (N_eff + K)
 RESILIENCE_PRIOR_FRAC = 0.6        # cold-start prior = this × typical recent long run …
 RESILIENCE_PRIOR_FLOOR_KM = 8.0    # … floored here (the qualifying-run threshold)
+# Confidence-interval shape. The CI is a Bayesian bootstrap (sampling spread) widened on the
+# upside by the unobserved-distance gap. These four are THREE ORTHOGONAL small-N safeguards, not
+# one knob: shrink-to-prior (RESILIENCE_SHRINK_K) governs the POINT estimate; the floor sets a
+# MINIMUM CI width when the bootstrap degenerates at 1–2 runs; the coverage term adds the censored
+# UPSIDE (distance you've never run). The principled unification — one censored-likelihood
+# posterior — is the deferred option-3 (memory `resilience-bayesian-ci`); these are pinned by
+# test_resilience until then.
+RESILIENCE_BAND_FLOOR = 0.05       # min CI half-width as a fraction of the estimate …
+RESILIENCE_BAND_FLOOR_THIN = 0.08  # … plus this / √N_eff (wider when few runs feed it)
+RESILIENCE_BAND_FLOOR_LO = 0.5     # floor applies at half strength on the well-supported low side
+RESILIENCE_BAND_COVERAGE = 0.4     # fraction of the longest-run→goal gap added to the upper bound
 # Resilience = AEROBIC durability: how far you hold marathon-style (sub-threshold) effort
 # before HR decouples. Hard-effort runs decouple early BY DESIGN (run above aerobic pace), so
 # they're excluded; a NULL/unclassified run_type is kept (assumed steady). (Durability knob B.)
@@ -345,9 +356,9 @@ def _compute_resilience(conn: sqlite3.Connection) -> dict:
     boot = sorted(_estimate(list(np.asarray(weights) * g))[0]
                   for g in rng.dirichlet(np.ones(len(points)), size=400))
     lo_bs, hi_bs = float(np.percentile(boot, 5)), float(np.percentile(boot, 95))
-    floor = est * (0.05 + 0.08 / math.sqrt(max(n_eff, 0.5)))   # min width when the bootstrap degenerates
-    lo = max(0.0, min(lo_bs, est - 0.5 * floor))
-    hi = max(hi_bs, est + floor) + 0.4 * coverage_gap          # asymmetric: censored / unobserved upside
+    floor = est * (RESILIENCE_BAND_FLOOR + RESILIENCE_BAND_FLOOR_THIN / math.sqrt(max(n_eff, 0.5)))
+    lo = max(0.0, min(lo_bs, est - RESILIENCE_BAND_FLOOR_LO * floor))
+    hi = max(hi_bs, est + floor) + RESILIENCE_BAND_COVERAGE * coverage_gap   # censored / unobserved upside
 
     # Confidence: enough recent long runs near the goal distance → high; thin/stale/short → low.
     recent = best_age <= RESILIENCE_HALF_LIFE_DAYS

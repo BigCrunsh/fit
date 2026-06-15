@@ -58,19 +58,17 @@ def _line_log_slope(panel, scale):
 class TestSlopeEqualsCoefficient:
     def test_phi_panel_line_slope_is_phi(self):
         p = fitness_panel(_idata(phi=-0.013), _ds(), c_ref=0.0, maximal_h=-1.0)
-        assert abs(p["slope"] - (-0.013)) < 1e-6                 # reported slope = φ median
         assert abs(_line_log_slope(p, CHRONIC_SCALE) - (-0.013)) < 1e-3   # the line literally IS φ
 
     def test_kappa_panel_line_slope_is_kappa(self):
         p = effort_panel(_idata(kappa=-0.025), _ds(), c_ref=0.0, maximal_h=-1.0)
-        assert abs(p["slope"] - (-0.025)) < 1e-6
-        assert abs(_line_log_slope(p, H_DIV) - (-0.025)) < 1e-3
+        assert abs(_line_log_slope(p, H_DIV) - (-0.025)) < 1e-3           # the line literally IS κ
 
-    def test_points_carry_distance_time_date_for_tooltip(self):
+    def test_points_carry_distance_for_colour_and_tooltip(self):
         p = fitness_panel(_idata(), _ds(), c_ref=0.0, maximal_h=-1.0)
         pt = p["points"][0]
-        assert {"d", "t", "date"} <= pt.keys() and pt["d"] > 0 and pt["t"] > 0
-        assert "dmin" in p and "goal" in p           # colour domain for distance encoding
+        assert "d" in pt and pt["d"] > 0             # distance → colour + "<d>km · <h:mm>" hover
+        assert "dmin" in p and "goal" in p           # colour domain for the distance encoding
 
 
 class TestUncertaintyAndNetOut:
@@ -127,7 +125,7 @@ class TestSlopeTriangleAndRecent:
         t = p["triangle"]
         assert {"x1", "x2", "y1", "y2", "run", "rise"} <= t.keys()
         assert "CTL" in t["run"]                       # the natural run unit (+10 CTL)
-        assert p["recent"] is not None and "date" in p["recent"]
+        assert p["recent"] is not None and {"x", "y"} <= p["recent"].keys()
 
     def test_chart_draws_triangle_legs_and_recent_ring(self):
         panel = {"points": [{"x": 50, "minutes": 240, "d": 10.0, "t": 55.0, "date": "2026-05-01"}],

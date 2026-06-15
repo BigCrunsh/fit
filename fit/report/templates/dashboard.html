@@ -449,7 +449,7 @@
       <span><b class="pf-c">φ</b> fitness — <b>chronic load (CTL)</b>: avg daily training load over the prior ~4 weeks</span>
       <span><b class="pf-d">κ</b> effort — <b>avg HR vs LTHR</b> (per 5 bpm; how hard the run was)</span>
     </div>
-    <div class="param-formula-note">Each coefficient below is the <em>slope</em> of its term — its covariate vs marathon-equivalent time with the other two netted out, posterior median + 90% band (greyed when the data can't inform it). The white <strong>rise/run triangle</strong> reads the slope; points are coloured by distance (blue → red); a <span style="color:var(--danger)">red ring</span> marks your most-recent run; hover any point for the run.</div>
+    <div class="param-formula-note">Each coefficient below is the <em>slope</em> of its term — its covariate vs marathon-equivalent time with the other two netted out, posterior median + 90% band (greyed when the data can't inform it). The white <strong>rise/run triangle</strong> reads the slope; points are coloured by distance (blue → red); a <span style="color:var(--danger)">red ring</span> marks your most-recent run; hover a point for its distance and marathon-equivalent.</div>
   </div>
 
   <!-- β_d — durability: the collapse (distance vs time; slope = β_d) -->
@@ -1166,6 +1166,9 @@ function resolveAnnotationCollisions(annotations) {
   }
   return annotations;
 }
+// One shared minute→h:mm formatter for every time-axis chart (marathon-pred, durability, the
+// param panels, the prediction-trend preview) — replaces the per-chart fmtHM/fmtHM2/fmtT copies.
+function fmtHM(v) { return Math.floor(v/60) + ':' + ('0' + Math.floor(v%60)).slice(-2); }
 const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-stress','chart-efficiency','chart-cadence','chart-acwr','chart-pacecv','chart-effort-gap','chart-vo2','chart-zones','chart-drift-trend','chart-volume','chart-compliance']);
 const weeklyCharts = new Set(['chart-volume']);
 // chart-weight has its own time scale config (set in charts.py) — not in this set to avoid double-applying
@@ -1344,10 +1347,9 @@ const chartInstances = {};
   // Panel B (marathon-equivalent): H:MM y-axis, hide band/whisker helpers from legend +
   // tooltip, and show the effort dots' distance in the tooltip.
   if ('{{ chart.id }}' === 'chart-marathon-pred' && cfg.options) {
-    var fmtHM = function(v) { return Math.floor(v/60) + ':' + ('0' + Math.floor(v%60)).slice(-2); };
     cfg.options.scales = cfg.options.scales || {}; cfg.options.scales.y = cfg.options.scales.y || {};
     cfg.options.scales.y.ticks = cfg.options.scales.y.ticks || {};
-    cfg.options.scales.y.ticks.callback = function(v) { return fmtHM(v); };
+    cfg.options.scales.y.ticks.callback = fmtHM;
     cfg.options.plugins = cfg.options.plugins || {};
     cfg.options.plugins.legend = cfg.options.plugins.legend || {};
     cfg.options.plugins.legend.labels = cfg.options.plugins.legend.labels || {};
@@ -1364,7 +1366,7 @@ const chartInstances = {};
   // Panel A (durability collapse): log-axis ticks at running distances + h:mm time,
   // hide the band's helper "_lo" dataset from the legend, time-formatted tooltips.
   if ('{{ chart.id }}' === 'chart-durability' && cfg.options) {
-    const fmtT = function(v){ return v >= 60 ? Math.floor(v/60)+':'+('0'+Math.round(v%60)).slice(-2) : Math.round(v)+'m'; };
+    const fmtT = function(v){ return v >= 60 ? fmtHM(v) : Math.round(v)+'m'; };   // sub-60min → "Nm"
     const kmTicks = [3,5,10,15,21,30,42], minTicks = [15,20,30,45,60,90,120,180,240];
     cfg.options.scales.x.afterBuildTicks = function(a){ a.ticks = kmTicks.map(function(v){return {value:v};}); };
     cfg.options.scales.x.ticks = Object.assign(cfg.options.scales.x.ticks||{}, {callback:function(v){return v;}});
@@ -1395,9 +1397,8 @@ const chartInstances = {};
   // Durability-param panels (chart-param-*): log-time y-axis → h:mm ticks; tooltips identify the
   // hover IDENTICAL to the Marathon Prediction Trend (same fmtHM, same "<dist>km · <h:mm>").
   if ('{{ chart.id }}'.indexOf('chart-param-') === 0 && cfg.options) {
-    var fmtHM2 = function(v) { return Math.floor(v/60) + ':' + ('0' + Math.floor(v%60)).slice(-2); };
     cfg.options.scales = cfg.options.scales || {}; cfg.options.scales.y = cfg.options.scales.y || {};
-    cfg.options.scales.y.ticks = Object.assign(cfg.options.scales.y.ticks || {}, { callback: fmtHM2 });
+    cfg.options.scales.y.ticks = Object.assign(cfg.options.scales.y.ticks || {}, { callback: fmtHM });
     // Log y-axis auto-ticks crowd/overlap at the low end — pin a clean 10-min-spaced set in range.
     cfg.options.scales.y.afterBuildTicks = function(axis){
       var step = 10, lo = Math.ceil(axis.min/step)*step, out = [];
@@ -1411,8 +1412,8 @@ const chartInstances = {};
     cfg.options.plugins.tooltip.callbacks = cfg.options.plugins.tooltip.callbacks || {};
     cfg.options.plugins.tooltip.callbacks.label = function(ctx) {
       var v = ctx.parsed.y;
-      if (ctx.raw && ctx.raw.d != null) return ctx.raw.d + 'km · ' + fmtHM2(v);
-      return ctx.dataset.label + ': ' + fmtHM2(v);
+      if (ctx.raw && ctx.raw.d != null) return ctx.raw.d + 'km · ' + fmtHM(v);
+      return ctx.dataset.label + ': ' + fmtHM(v);
     };
   }
   const el = document.getElementById('{{ chart.id }}');
@@ -1788,7 +1789,7 @@ function _zoneStyle(zone) {
           min: yMin, max: yMax,
           grid: { color: cssVar('--grid') },
           ticks: {
-            callback: function(v) { return Math.floor(v/60) + ':' + ('0'+Math.floor(v%60)).slice(-2); },
+            callback: fmtHM,
             stepSize: 10
           }
         },
@@ -1807,8 +1808,7 @@ function _zoneStyle(zone) {
           filter: function(ctx) { return ctx.datasetIndex >= 2; },
           callbacks: {
             label: function(ctx) {
-              var v = ctx.parsed.y;
-              var t = Math.floor(v/60) + ':' + ('0'+Math.floor(v%60)).slice(-2);
+              var t = fmtHM(ctx.parsed.y);
               if (ctx.datasetIndex === 3) {
                 var cp = (d.checkpoints || [])[ctx.dataIndex];
                 if (cp) return cp.num + ' ' + (cp.name || '') + ' → ' + t + (cp.done ? ' ✓' : '');

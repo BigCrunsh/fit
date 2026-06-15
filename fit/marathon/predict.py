@@ -425,11 +425,9 @@ def _coeff_panel(idata, ds, *, covariate, c_ref, maximal_h, n_grid=40):
     dist = np.asarray(eff["distance_km"], float)
     cc, hh, lt = np.asarray(eff["c"], float), np.asarray(eff["h"], float), np.asarray(eff["logt"], float)
     xlog = np.log(dist / ds.goal)                       # distance term per effort
-    actual = np.exp(lt)                                 # the run's (grade-adjusted) finish time, min
     dates = [str(d)[:10] for d in eff["date"]] if "date" in eff.columns else [None] * len(dist)
 
     if covariate == "fitness":
-        slope, unit, x_log = pm, "ctl", False
         pts_x = cc * CHRONIC_SCALE + CHRONIC_REF                         # CTL
         pts_y = np.exp(lt - bm * xlog - km * (hh - maximal_h))           # net out distance + effort
         gv = np.linspace(cc.min() - 0.5, cc.max() + 0.5, n_grid)
@@ -437,7 +435,6 @@ def _coeff_panel(idata, ds, *, covariate, c_ref, maximal_h, n_grid=40):
         mu_grid = [a + phi * c + kappa * maximal_h for c in gv]          # at goal distance (x=0)
         x_ref = c_ref * CHRONIC_SCALE + CHRONIC_REF
     elif covariate == "effort":
-        slope, unit, x_log = km, "bpm", False
         pts_x = hh * H_DIV                                               # bpm above LTHR
         pts_y = np.exp(lt - bm * xlog - pm * (cc - c_ref))              # net out distance + fitness
         gv = np.linspace(hh.min() - 0.3, hh.max() + 0.3, n_grid)
@@ -447,10 +444,9 @@ def _coeff_panel(idata, ds, *, covariate, c_ref, maximal_h, n_grid=40):
     else:
         raise ValueError(f"unknown covariate {covariate!r}")
 
-    # Each point carries its distance/finish-time/date so the chart can colour it by distance
-    # (matching the durability collapse) and identify the run on hover.
-    points = [{"x": float(x), "minutes": float(y), "d": round(float(dd), 1), "t": float(tt), "date": dt}
-              for x, y, dd, tt, dt in zip(pts_x, pts_y, dist, actual, dates)]
+    # Each point carries its distance so the chart colours it by distance (matching the collapse).
+    points = [{"x": float(x), "minutes": float(y), "d": round(float(dd), 1)}
+              for x, y, dd in zip(pts_x, pts_y, dist)]
     line, lo, hi = [], [], []
     for xv, mu in zip(grid_x, mu_grid):
         mins = np.exp(mu)
@@ -475,15 +471,13 @@ def _coeff_panel(idata, ds, *, covariate, c_ref, maximal_h, n_grid=40):
         tri = {"x1": h1 * H_DIV, "x2": h2 * H_DIV, "y1": ty1, "y2": ty2,
                "run": "+5 bpm", "rise": "%+.1f%%" % ((ty2 / ty1 - 1) * 100)}
 
-    recent = None      # the most-recent effort — a temporal reference marked in every panel
+    recent = None      # the most-recent effort — a temporal reference (red ring) marked in every panel
     if any(d is not None for d in dates):
         ri = max(range(len(dates)), key=lambda k: dates[k] or "")
-        recent = {"x": float(pts_x[ri]), "y": float(pts_y[ri]), "d": float(dist[ri]),
-                  "t": float(actual[ri]), "date": dates[ri]}
+        recent = {"x": float(pts_x[ri]), "y": float(pts_y[ri])}
 
-    return {"points": points, "line": line, "lo": lo, "hi": hi, "slope": slope,
-            "x_ref": float(x_ref), "x_unit": unit, "x_log": x_log, "triangle": tri, "recent": recent,
-            "dmin": float(dist.min()), "goal": float(ds.goal)}
+    return {"points": points, "line": line, "lo": lo, "hi": hi, "x_ref": float(x_ref),
+            "triangle": tri, "recent": recent, "dmin": float(dist.min()), "goal": float(ds.goal)}
 
 
 def fitness_panel(idata, ds, *, c_ref, maximal_h, n_grid=40):

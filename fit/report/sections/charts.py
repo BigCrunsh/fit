@@ -152,7 +152,7 @@ def _param_panel_chart(chart_id, panel, *, x_label, x_log, prior_dominated, colo
     ribbon, on a log-time y-axis so the slope reads straight. Greyed/dashed + tagged when
     prior-dominated. A vertical "you are here" marks the operating point; a faint flat ("no
     effect") line at the operating-point time shows whether the slope is distinguishable from 0.
-    `panel` carries points/line/lo/hi as [{x, minutes}], plus x_ref + slope."""
+    `panel` carries points/line/lo/hi as [{x, minutes}], plus x_ref/triangle/recent/dmin/goal."""
     def xy(rows):
         return [{"x": r["x"], "y": r["minutes"]} for r in rows]
     line_c = "rgba(148,163,184,0.75)" if prior_dominated else color
@@ -163,7 +163,7 @@ def _param_panel_chart(chart_id, panel, *, x_label, x_log, prior_dominated, colo
     pts = panel["points"]
     pt_colors = (["rgba(148,163,184,0.55)"] * len(pts) if prior_dominated
                  else [_distance_color(p["d"], panel["dmin"], panel["goal"]) for p in pts])
-    pt_data = [{"x": p["x"], "y": p["minutes"], "d": p["d"], "t": p["t"], "date": p["date"]} for p in pts]
+    pt_data = [{"x": p["x"], "y": p["minutes"], "d": p["d"]} for p in pts]
     xs, ys = [p["x"] for p in panel["line"]], [p["minutes"] for p in panel["line"]]
     y_ref = ys[min(range(len(xs)), key=lambda k: abs(xs[k] - panel["x_ref"]))]  # time at operating point
     annots = {
