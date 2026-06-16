@@ -326,6 +326,191 @@ class TestEffortSchedule:
         assert recent["t0"] > old["t0"]
 
 
+def _race_ds(goal=42.195, max_hr=195.0):
+    """A schedule-anchored ds (several at/above-threshold HM/10K races) for effort-propagation."""
+    import pandas as pd
+    from datetime import date, timedelta
+    from collections import namedtuple
+    today = date.today()
+    rows = [(20, 21.1, 118, 173), (40, 21.1, 120, 174), (70, 10.0, 47, 179), (110, 21.1, 119, 172)]
+    recs = [{"date": pd.Timestamp(today - timedelta(days=da)), "run_type": "race",
+             "distance_km": dist, "avg_hr": hr, "logt": np.log(dur)} for da, dist, dur, hr in rows]
+    DS = namedtuple("DS", "efforts lthr goal d_max max_hr")
+    return DS(efforts=pd.DataFrame(recs), lthr=171.0, goal=goal, d_max=21.1, max_hr=max_hr)
+
+
+class TestEffortScheduleUncertainty:
+    """effort-schedule-uncertainty: σ_β (the documented prior constant) and σ_T0 (a precision-
+    weighted POSTERIOR log-SD) attach to the schedule. σ_T0 goes WIDE at cold-start and NEVER
+    collapses to ~0 on a single / identical-implied race (the floor)."""
+
+    def _ds(self, rows, lthr=171.0, goal=42.195):
+        import pandas as pd
+        from datetime import date, timedelta
+        from collections import namedtuple
+        today = date.today()
+        recs = [{"date": pd.Timestamp(today - timedelta(days=da)), "run_type": rt,
+                 "distance_km": dist, "avg_hr": hr, "logt": np.log(dur)}
+                for da, dist, dur, hr, rt in rows]
+        DS = namedtuple("DS", "efforts lthr goal d_max max_hr")
+        return DS(efforts=pd.DataFrame(recs), lthr=lthr, goal=goal, d_max=21.1, max_hr=195.0)
+
+    def test_beta_sd_is_the_documented_prior(self):
+        from fit.marathon.predict import effort_schedule, EFFORT_BETA_PRIOR_SD
+        s = effort_schedule(self._ds([(30, 21.1, 120, 173, "race"), (60, 10.0, 48, 178, "race")]))
+        assert s["beta_sd"] == EFFORT_BETA_PRIOR_SD          # β SD is the hand-set prior, always
+
+    def test_cold_start_t0_sd_is_the_wide_prior(self):
+        from fit.marathon.predict import effort_schedule, EFFORT_T0_PRIOR_LOG_SD
+        # only a sub-threshold race → defaulted → σ_T0 = the wide prior (we barely know T0)
+        s = effort_schedule(self._ds([(30, 21.1, 120, 160, "race")]))
+        assert s["defaulted"] is True
+        assert s["t0_sd"] == EFFORT_T0_PRIOR_LOG_SD
+
+    def test_no_efforts_still_carries_sds(self):
+        from fit.marathon.predict import effort_schedule, EFFORT_BETA_PRIOR_SD, EFFORT_T0_PRIOR_LOG_SD
+        from collections import namedtuple
+        DS = namedtuple("DS", "efforts lthr goal d_max max_hr")
+        s = effort_schedule(DS(efforts=None, lthr=171.0, goal=42.195, d_max=21.1, max_hr=195.0))
+        assert s["defaulted"] is True
+        assert s["beta_sd"] == EFFORT_BETA_PRIOR_SD and s["t0_sd"] == EFFORT_T0_PRIOR_LOG_SD
+
+    def test_single_hard_race_does_not_collapse_t0_sd(self):
+        from fit.marathon.predict import effort_schedule, EFFORT_T0_PRIOR_LOG_SD
+        s = effort_schedule(self._ds([(30, 21.1, 120, 173, "race")]))   # ONE hard race
+        assert s["defaulted"] is False
+        assert s["t0_sd"] > 0.05                              # NOT ~0 — the obs floor prevents collapse
+        assert s["t0_sd"] < EFFORT_T0_PRIOR_LOG_SD            # one race still tightens below the prior
+
+    def test_more_consistent_races_tighten_t0_sd(self):
+        from fit.marathon.predict import effort_schedule, EFFORT_T0_PRIOR_LOG_SD
+        few = effort_schedule(self._ds([(30, 21.1, 120, 173, "race"), (50, 21.1, 120, 173, "race")]))
+        many = effort_schedule(self._ds([(30 + 10 * i, 21.1, 120, 173, "race") for i in range(8)]))
+        assert many["t0_sd"] < few["t0_sd"] < EFFORT_T0_PRIOR_LOG_SD   # more evidence → tighter, both < prior
+
+
+class TestEffortPropagation:
+    """The (σ_β, σ_T0) overlay widens the INTERVAL only: the median is pinned to the point (β,T0),
+    the wall-penalty draws are byte-untouched (RNG isolation), and the widening grows with the
+    extrapolation from T0."""
+
+    def _setup(self, kappa=-0.04):
+        # alpha=log(240): a realistic ~4h marathon at the goal, so the marathon lands FAR past T0
+        # (~120 min here) and the half lands near it — the real extrapolation geometry.
+        return _synthetic_idata(alpha=np.log(240), beta_d=1.06, kappa=kappa), _race_ds()
+
+    def _bands(self, idata, ds, d, *, scale=0.04, nu=4, seed=3):
+        from fit.marathon.predict import effort_h_for_distance, predict
+        x = float(np.log(d / ds.goal)); gap = max(0.0, float(np.log(d / ds.d_max)))
+        h_pt, h_dr = effort_h_for_distance(idata, ds, d, c=0.0, extrapolation_scale=scale,
+                                           nu=nu, seed=seed, draws=True)
+        pt = predict(idata, x=x, c=0.0, h=h_pt, gap=gap, extrapolation_scale=scale, nu=nu, seed=seed)
+        eff = predict(idata, x=x, c=0.0, h=h_pt, h_draws=h_dr, gap=gap,
+                      extrapolation_scale=scale, nu=nu, seed=seed)
+        return pt, eff
+
+    def test_median_exactly_unchanged(self):
+        pt, eff = self._bands(*self._setup(), 42.195)
+        assert eff["median"] == pt["median"]                 # EXACT — median uses the point h
+
+    def test_marathon_interval_widens(self):
+        pt, eff = self._bands(*self._setup(), 42.195)
+        assert (eff["hi"] - eff["lo"]) > (pt["hi"] - pt["lo"])
+
+    def test_zero_sigma_is_byte_identical_to_point_path(self):
+        # σ_β=σ_T0=0 → h_draws is the point h repeated → band IDENTICAL; also proves the effort RNG
+        # never perturbs the wall-penalty draws (the isolation guard).
+        from fit.marathon.predict import effort_h_for_distance, predict
+        idata, ds = self._setup()
+        sched = {"t0": 95.0, "beta": -6.5, "beta_sd": 0.0, "t0_sd": 0.0, "defaulted": False, "reason": "x"}
+        d = 42.195; x = 0.0; gap = float(np.log(d / ds.d_max))
+        h_pt, h_dr = effort_h_for_distance(idata, ds, d, c=0.0, extrapolation_scale=0.04, nu=4,
+                                           seed=3, schedule=sched, draws=True)
+        eff = predict(idata, x=x, c=0.0, h=h_pt, h_draws=h_dr, gap=gap, extrapolation_scale=0.04, nu=4, seed=3)
+        pt = predict(idata, x=x, c=0.0, h=h_pt, gap=gap, extrapolation_scale=0.04, nu=4, seed=3)
+        assert eff == pt                                     # identical lo/hi/median
+
+    def test_widening_grows_with_extrapolation_from_t0(self):
+        idata, ds = self._setup()
+        pt_m, eff_m = self._bands(idata, ds, 42.195)
+        pt_h, eff_h = self._bands(idata, ds, 21.0975)
+        widen_m = (eff_m["hi"] - eff_m["lo"]) - (pt_m["hi"] - pt_m["lo"])
+        widen_h = (eff_h["hi"] - eff_h["lo"]) - (pt_h["hi"] - pt_h["lo"])
+        assert widen_m > widen_h > 0                         # marathon widens MORE (absolute minutes)
+
+    def test_dropping_t0_understates_the_marathon_interval(self):
+        # β-only (σ_T0 forced to 0) is narrower than β+T0 at the marathon → T0 contributes materially
+        from fit.marathon.predict import effort_h_for_distance, predict, effort_schedule
+        idata, ds = self._setup()
+        full = effort_schedule(ds); beta_only = {**full, "t0_sd": 0.0}
+        d = 42.195; gap = float(np.log(d / ds.d_max))
+        hp_f, h_full = effort_h_for_distance(idata, ds, d, c=0.0, extrapolation_scale=0.04, nu=4,
+                                             seed=3, schedule=full, draws=True)
+        hp_b, h_bonly = effort_h_for_distance(idata, ds, d, c=0.0, extrapolation_scale=0.04, nu=4,
+                                              seed=3, schedule=beta_only, draws=True)
+        b_full = predict(idata, x=0.0, c=0.0, h=hp_f, h_draws=h_full, gap=gap, extrapolation_scale=0.04, nu=4, seed=3)
+        b_bonly = predict(idata, x=0.0, c=0.0, h=hp_b, h_draws=h_bonly, gap=gap, extrapolation_scale=0.04, nu=4, seed=3)
+        assert (b_full["hi"] - b_full["lo"]) > (b_bonly["hi"] - b_bonly["lo"])
+
+    def test_seed_determinism(self):
+        idata, ds = self._setup()
+        assert self._bands(idata, ds, 42.195, seed=7)[1] == self._bands(idata, ds, 42.195, seed=7)[1]
+
+    def test_combined_width_stays_sane(self):
+        # effort uncertainty must WIDEN the band but not BLOW IT UP — combined < 2× the point width.
+        # Guards a regression where σ_T0's collapse-protection over-inflates, or wall+effort double-count.
+        pt, eff = self._bands(*self._setup(), 42.195)
+        pt_w, eff_w = pt["hi"] - pt["lo"], eff["hi"] - eff["lo"]
+        assert pt_w < eff_w < 2.0 * pt_w
+
+    def test_reserve_cap_binds_elementwise(self):
+        # a tiny MaxHR reserve clamps EVERY per-draw offset (np.minimum on the array, not scalar min)
+        from fit.marathon.predict import effort_h_for_distance
+        from fit.marathon.features import H_DIV
+        idata = _synthetic_idata(alpha=np.log(60), kappa=-0.04)        # short predicted duration → high offset
+        ds = _race_ds(max_hr=174.0)                                    # reserve = 3 bpm → binds
+        _, h_dr = effort_h_for_distance(idata, ds, 5.0, c=0.0, extrapolation_scale=0.0, nu=4, seed=3, draws=True)
+        assert np.all(np.asarray(h_dr) * H_DIV <= 3.0 + 1e-9)          # vectorised cap held for ALL draws
+
+
+class TestEffortSchedulePanel:
+    """The inspection-panel data builder (offset-vs-duration): line + 90% band + race dots +
+    std-distance markers at predicted durations + the hard-effort count for the render gate."""
+
+    def test_shape_band_pinches_at_t0_and_markers_ordered(self):
+        from fit.marathon.predict import effort_schedule_panel
+        idata, ds = _synthetic_idata(alpha=np.log(150), kappa=-0.04), _race_ds()
+        p = effort_schedule_panel(idata, ds, c=0.0)
+        assert p["defaulted"] is False and p["n_hard"] >= 2
+        # markers cover the four std distances, ordered by predicted duration (5K < 10K < HM < M)
+        labels = [m["label"] for m in p["markers"]]
+        assert labels == ["5K", "10K", "HM", "M"]
+        xs = [m["x"] for m in p["markers"]]
+        assert xs == sorted(xs)
+        # band is narrowest near T0 (its zero-crossing) and wider out at the marathon marker
+        def width_at(t):
+            i = min(range(len(p["line"])), key=lambda k: abs(p["line"][k]["x"] - t))
+            return p["hi"][i]["y"] - p["lo"][i]["y"]
+        assert width_at(p["t0"]) < width_at(xs[-1])          # pinched at T0, fans out to the marathon
+
+    def test_dots_split_hard_and_subthreshold(self):
+        from fit.marathon.predict import effort_schedule_panel
+        idata = _synthetic_idata(alpha=np.log(150), kappa=-0.04)
+        # one clearly sub-threshold race (avg_hr far below LTHR) → a hollow dot, excluded from the fit
+        import pandas as pd
+        from datetime import date, timedelta
+        from collections import namedtuple
+        today = date.today()
+        rows = [(20, 21.1, 118, 173, True), (40, 10.0, 47, 179, True), (60, 21.1, 130, 150, False)]
+        recs = [{"date": pd.Timestamp(today - timedelta(days=da)), "run_type": "race",
+                 "distance_km": dist, "avg_hr": hr, "logt": np.log(dur)} for da, dist, dur, hr, _ in rows]
+        DS = namedtuple("DS", "efforts lthr goal d_max max_hr")
+        ds = DS(efforts=pd.DataFrame(recs), lthr=171.0, goal=42.195, d_max=21.1, max_hr=195.0)
+        p = effort_schedule_panel(idata, ds, c=0.0)
+        assert sum(d["hard"] for d in p["dots"]) == 2
+        assert sum(not d["hard"] for d in p["dots"]) == 1
+
+
 class TestForecastContext:
     """forecast_context loads (posterior + efforts + prior) ONCE per connection — the
     dashboard/CLI/MCP share it instead of each re-reading the zarr posterior + feature SQL."""

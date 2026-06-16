@@ -273,7 +273,8 @@ flowchart LR
 | Daniels VDOT from race | `fitness.compute_vdot_from_race` (`fitness.py:247`) | `_oxygen_cost`,`_vo2max_fraction` | VDOT = O2cost(v)/%VO2max(t) |
 | VDOT → race time (inverse) | `fitness.vdot_to_race_time` (`fitness.py:285`) | `compute_vdot_from_race` | binary search |
 | ~~VDOT → marathon seconds (TABLE)~~ | — | — | **DELETED** (D1) — superseded by the durability model |
-| marathon forecast | `fit.marathon.predict.forecast` + `durability_panel`/`trend_series`/`derived_metrics` | `model.fit` posterior · `preparedness.extrapolation_prior` · `chronic_load` · `maximal_effort_h` | median + 90% interval + P(goal); the single forecast source |
+| marathon forecast | `fit.marathon.predict.forecast` + `durability_panel`/`trend_series`/`derived_metrics` | `model.fit` posterior · `preparedness.extrapolation_prior` · `chronic_load` · `maximal_effort_h` · `effort_schedule` (β,T₀,σ) | median + 90% interval (posterior + wall + effort-schedule uncertainty) + P(goal); the single forecast source |
+| effort-schedule panel | `fit.marathon.predict.effort_schedule_panel` → `charts._effort_schedule_panel_chart` | `effort_schedule` · `effort_h_for_distance` | inspection panel: `offset(t)` fade law + (σ_β,σ_T₀) band + race dots + std-distance markers |
 | chronic load (fitness state) | `fit.training_load.chronic_load[_before]` | daily `training_load` trailing-28d mean | shared with ACWR's chronic denominator |
 | race-time prediction (Riegel) | `analysis.predict_race_time` (`analysis.py`) | Riegel `T·(D₂/D₁)^1.06`; vdot leg via the anchor | per-race extrapolation; the cold-start fallback only |
 | **grade-adjusted pace / duration** | `fit_file.grade_adjusted_pace_sec` / `grade_adjusted_duration_min` | per-split elevation_gain/loss · distance | flat-equivalent (linearised Minetti: +12 s/km per +1% climb, −6 per 1% descent); strips terrain (Anstieg). Falls back to raw when no elevation |
@@ -313,6 +314,17 @@ fitted Riegel slope (the optimistic cross-distance bound) · **φ** = fitness (c
 effect, flagged when prior-dominated · **κ** = HR↔pace coupling · **γ** = the extrapolation
 penalty that widens the band past `d_max` (driven by long-run distance + pace-fade). Degrades
 to the calibrated-VDOT anchor (`anchor_race_time`) when the model isn't fit.
+
+**Forecast interval = mean-curve posterior + wall penalty + effort-schedule uncertainty.**
+The 90% interval is *estimation* uncertainty (not race-day residual): the posterior spread of
+α/β_d/φ/κ, plus the one-sided **wall penalty** (γ past `d_max`), plus the **effort-schedule
+(β, T₀) uncertainty** — `σ_β` a documented prior constant (`EFFORT_BETA_PRIOR_SD`) and `σ_T₀`
+a precision-weighted posterior log-SD of the T₀ estimate (`EFFORT_T0_PRIOR_LOG_SD` prior,
+data-tightened). Propagated as a per-draw NumPy overlay alongside the wall penalty (the
+**median** uses point β/T₀, so it never moves); the added width grows with `|log t_goal − log
+T₀|`. The **effort-schedule inspection panel** (Profile tab) visualises this — `offset(t)` vs
+duration with the (σ_β, σ_T₀) band, race dots, and the std-distance markers. β/T₀ are drawn
+independently (a documented approximation; they're negatively correlated in truth).
 
 ---
 

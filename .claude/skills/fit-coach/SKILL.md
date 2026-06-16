@@ -51,7 +51,10 @@ Do not continue until all four tools are available.
    workouts, and a digest of your *previous* coaching notes.
 
    **Using the forecast** (when present): it's median + 90% interval +
-   **P(goal)**. Read P(goal) as a *fitness-sufficiency ceiling* — "is current
+   **P(goal)**. The interval is estimation uncertainty = mean-curve posterior +
+   extrapolation wall + effort-assumption (β, T₀) uncertainty (it widens for
+   goals far past your raced distances/durations), **not** race-day spread.
+   Read P(goal) as a *fitness-sufficiency ceiling* — "is current
    fitness enough under a maximal, well-executed effort" — **not race-day odds**
    (it excludes weather, pacing, fuelling); never tell the athlete "you have an
    X% chance on the day". If the line says **UNVALIDATED** (longest effort below

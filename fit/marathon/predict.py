@@ -1,13 +1,21 @@
 """Marathon forecast from the fitted posterior — predict + derived readouts.
 
 The headline interval is **estimation uncertainty (the posterior of the mean curve) +
-the extrapolation wall penalty** — NOT race-day spread (so the residual σ is deliberately
-excluded; design Decision 3). P(goal) is a fitness-SUFFICIENCY ceiling, not race-day odds.
+the extrapolation wall penalty + the effort-schedule (β, T₀) uncertainty** — NOT race-day
+spread (so the residual σ is deliberately excluded; design Decision 3). P(goal) is a
+fitness-SUFFICIENCY ceiling, not race-day odds.
 
 The wall penalty is applied HERE, at predict time, as a NumPy overlay (design Decision 2):
 for each posterior draw, draw γ ~ HalfStudentT(ν, extrapolation_scale) and add
 γ·max(0, log(d/d_max)) to the predicted log-time. It is 0 for any distance within the
 observed range (interpolation), and grows with the goal/d_max gap (goal-adaptive).
+
+Effort-schedule uncertainty (effort-schedule-uncertainty change) rides the SAME per-draw overlay:
+`effort_h_for_distance(..., draws=True)` samples (β_i, log T0_i) ~ N(·) per draw → an array
+`h_draws`; `predict` takes the **median from the point h** (so the headline never moves) and the
+**5/95 percentiles from `h_draws`** (so the band widens). The effort draws use a SEPARATE RNG
+substream from the wall penalty, so the wall draws are byte-identical regardless. The added width
+grows with |log t_goal − log T0| (largest at the marathon, smallest near a half).
 """
 
 from __future__ import annotations
@@ -34,9 +42,21 @@ EFFORT_PRIOR_PSEUDO = 1.0    # prior strength in "effective races"; data past th
 _EFFORT_T0_CLAMP = (20.0, 240.0)
 _EFFORT_BETA_CLAMP = (-12.0, -2.0)
 
+# ── Schedule uncertainty (design: effort-schedule-uncertainty) ──
+# Attached to (beta, T0) so the forecast interval reflects "we don't know the fade exactly".
+# beta_sd is a single HAND-SET prior (NOT measured): justified from the within-curve segment-slope
+# spread (−6.50/−6.04/−7.63, SD≈0.8 — a floor, conflating curvature with noise) plus Riegel-exponent
+# literature analogues → ~1.0–1.5. T0's SD is data-derived: a precision-weighted POSTERIOR log-SD
+# blending the prior width below with the per-race scatter (see effort_schedule). The obs floor stops
+# a single / identical-implied race from pinning T0 to ~0 width (the cold-start-collapse trap).
+EFFORT_BETA_PRIOR_SD = 1.25        # bpm/log-unit — documented judgment-informed prior, not measured
+EFFORT_T0_PRIOR_LOG_SD = 0.35      # prior log-SD on T0 (~40–80 min around the 55-min prior); WIDE at cold-start
+EFFORT_T0_OBS_FLOOR_LOG = 0.15     # min per-race log-scatter so one/identical race can't pin T0 exactly
+
 
 def effort_schedule(ds):
-    """(T0, beta) for the maximal-effort fade law. Returns {t0, beta, defaulted, reason}.
+    """(T0, beta) for the maximal-effort fade law.
+    Returns {t0, beta, t0_sd, beta_sd, defaulted, reason}.
 
     **beta** stays the population prior. The slope CANNOT be reliably fit from this data: the
     athlete's short races are mostly sub-maximal parkruns run *at* threshold (offset ≈ 0, not the
@@ -50,9 +70,11 @@ def effort_schedule(ds):
     With beta fixed, each such race implies T0_i = exp(log t_i − offset_i/beta); T0 is the
     prior-shrunk weighted mean. Cold-start / no hard race → the prior, labelled ``defaulted``."""
     beta, t0_p = EFFORT_BETA_PRIOR, EFFORT_T0_PRIOR_MIN
+    # cold-start uncertainty: beta at its prior SD; T0 at the WIDE prior log-SD (we barely know it).
+    cold = {"beta_sd": EFFORT_BETA_PRIOR_SD, "t0_sd": EFFORT_T0_PRIOR_LOG_SD}
     eff = getattr(ds, "efforts", None)
     if eff is None or "run_type" not in getattr(eff, "columns", []):
-        return {"t0": t0_p, "beta": beta, "defaulted": True, "reason": "no efforts"}
+        return {"t0": t0_p, "beta": beta, **cold, "defaulted": True, "reason": "no efforts"}
     races = eff[eff["run_type"] == "race"]
     if len(races) >= 1:
         dur = np.exp(races["logt"].to_numpy())            # grade-adjusted minutes (model time-space)
@@ -67,14 +89,25 @@ def effort_schedule(ds):
             n_eff = float(w.sum())
             implied_t0 = np.exp(np.log(dur) - offset / beta)          # offset = beta·(log t − log T0)
             if n_eff > 0:
+                log_implied = np.log(implied_t0)
+                mean_log = float(np.average(log_implied, weights=w))
                 t0_data = float(np.average(implied_t0, weights=w))
-                lam = n_eff / (n_eff + EFFORT_PRIOR_PSEUDO)           # data weight vs prior
+                lam = n_eff / (n_eff + EFFORT_PRIOR_PSEUDO)           # data weight vs prior (MEAN shrink)
                 t0 = float(np.clip(np.exp((1 - lam) * np.log(t0_p) + lam * np.log(t0_data)),
                                    *_EFFORT_T0_CLAMP))
-                return {"t0": t0, "beta": beta, "defaulted": False,
+                # σ_T0 = precision-weighted POSTERIOR log-SD: combine the prior precision with the
+                # data precision of the MEAN (n_eff / per-race scatter). NOT λ·spread — λ is a mean
+                # weight; applied to the SD it would collapse the band to ~0 at cold-start. The obs
+                # floor keeps a single / identical-implied race from pinning T0 to zero width.
+                obs_var = max(float(np.average((log_implied - mean_log) ** 2, weights=w)),
+                              EFFORT_T0_OBS_FLOOR_LOG ** 2)
+                prec = 1.0 / EFFORT_T0_PRIOR_LOG_SD ** 2 + n_eff / obs_var
+                t0_sd = float(np.sqrt(1.0 / prec))
+                return {"t0": t0, "beta": beta, "t0_sd": t0_sd, "beta_sd": EFFORT_BETA_PRIOR_SD,
+                        "defaulted": False,
                         "reason": f"{int(hard.sum())}/{len(races)} at-threshold races, "
                                   f"λ={lam:.2f} (T0_data≈{t0_data:.0f}min, β=population)"}
-    return {"t0": t0_p, "beta": beta, "defaulted": True,
+    return {"t0": t0_p, "beta": beta, **cold, "defaulted": True,
             "reason": "population prior (no at-threshold race to anchor T0)"}
 
 
@@ -100,11 +133,18 @@ def _reserve(ds):
     return (mh - ds.lthr) if mh else None
 
 
-def effort_h_for_distance(idata, ds, d, *, c, extrapolation_scale=0.0, nu=4, seed=0, schedule=None):
+def effort_h_for_distance(idata, ds, d, *, c, extrapolation_scale=0.0, nu=4, seed=0,
+                          schedule=None, draws=False):
     """Maximal-effort `h` at distance `d`, keyed on the model's OWN predicted duration via a
     two-pass coupling (design Decision 2): predict t(d) with seed h=0, recompute h from t(d),
     predict once more — the correction is <0.1 bpm because κ is small. Pass `schedule` to reuse
-    one `effort_schedule(ds)` across a loop (it's d-independent)."""
+    one `effort_schedule(ds)` across a loop (it's d-independent).
+
+    `draws=False` (default) → the scalar point `h` (pre-change behaviour). `draws=True` →
+    `(h_point, h_draws)` where `h_draws` is a length-n array sampling (β_i, log T0_i) around the
+    converged operating duration (effort-schedule-uncertainty); feed both into `predict` so the
+    median uses the point and the interval uses the draws. The (β_i, log T0_i) RNG is a SEPARATE
+    substream from the wall penalty's, so the wall draws are byte-identical with or without `draws`."""
     sched = schedule or effort_schedule(ds)
     t0, beta, reserve = sched["t0"], sched["beta"], _reserve(ds)
     x = float(np.log(d / ds.goal))
@@ -116,8 +156,24 @@ def effort_h_for_distance(idata, ds, d, *, c, extrapolation_scale=0.0, nu=4, see
         return r["median"] / 60.0
 
     h = maximal_effort_h(_t_min(0.0), t0, beta, reserve)         # pass 1 from seed h=0
-    h = maximal_effort_h(_t_min(h), t0, beta, reserve)           # pass 2 (converged)
-    return h
+    t_star = _t_min(h)                                           # converged operating duration
+    h = maximal_effort_h(t_star, t0, beta, reserve)              # pass 2 — point h at t_star
+    if not draws:
+        return h
+    # Per-draw effort uncertainty: sample (β_i, log T0_i) around the SAME operating duration t_star
+    # that defines the point h, so σ=0 collapses the draws to h EXACTLY (byte-identical interval).
+    # One scalar 2-pass, NOT a nested per-draw 2-pass — κ is small so the coupling barely moves.
+    from fit.marathon.features import H_DIV
+    n = _flat(idata, "alpha").shape[0]
+    # SEPARATE substream from the wall penalty (which uses default_rng(seed) inside predict): spawn a
+    # child SeedSequence so the effort draws are deterministic yet never shift the wall draw order.
+    eff_rng = np.random.default_rng(seed).spawn(1)[0]
+    beta_i = beta + sched["beta_sd"] * eff_rng.standard_normal(n)
+    logt0_i = np.log(t0) + sched["t0_sd"] * eff_rng.standard_normal(n)
+    off = beta_i * (np.log(t_star) - logt0_i)                    # β_i, log T0_i drawn independently
+    if reserve is not None:
+        off = np.minimum(off, reserve)                           # vectorised cap (not scalar min)
+    return h, off / H_DIV
 
 
 def _flat(idata, name):
@@ -133,27 +189,31 @@ def _wall_penalty_draws(nu, scale, gap, n, rng):
 
 
 def predict(idata, *, x, c, h, gap, extrapolation_scale, nu,
-            goal_seconds=None, seed=0):
+            goal_seconds=None, seed=0, h_draws=None):
     """Predicted time (seconds) at covariates (x, c, h) with the wall-penalty overlay.
 
     `gap` = max(0, log(distance / d_max)) — 0 within the observed range. Returns
     {median, lo, hi (90% credible), p_ceiling}. `p_ceiling` (P the time beats
     `goal_seconds`) is a fitness-sufficiency ceiling, present only when goal_seconds given.
+
+    `h` is the POINT effort and drives the **median** (so the headline never moves). `h_draws`
+    (optional length-n array; effort-schedule-uncertainty) is the per-draw effort and drives the
+    **interval** (5/95 percentiles + p_ceiling), so (β, T0) uncertainty widens the band without
+    shifting the median. `h_draws=None` → both use `h` (the pre-change behaviour, exactly).
     """
     a, b, phi, kappa = (_flat(idata, p) for p in ("alpha", "beta_d", "phi", "kappa"))
     n = a.shape[0]
-    mu = a + b * x + phi * c + kappa * h            # posterior of the MEAN log-minutes
     rng = np.random.default_rng(seed)
-    mu = mu + _wall_penalty_draws(nu, extrapolation_scale, gap, n, rng)
-    minutes = np.exp(mu)
-    secs = minutes * 60.0
+    base = a + b * x + phi * c + _wall_penalty_draws(nu, extrapolation_scale, gap, n, rng)
+    secs_med = np.exp(base + kappa * h) * 60.0                              # point effort → median
+    secs_int = np.exp(base + kappa * (h if h_draws is None else h_draws)) * 60.0  # per-draw → interval
     out = {
-        "median": float(np.median(secs)),
-        "lo": float(np.percentile(secs, 5)),
-        "hi": float(np.percentile(secs, 95)),
+        "median": float(np.median(secs_med)),
+        "lo": float(np.percentile(secs_int, 5)),
+        "hi": float(np.percentile(secs_int, 95)),
     }
     if goal_seconds is not None:
-        out["p_ceiling"] = float(np.mean(secs <= goal_seconds))
+        out["p_ceiling"] = float(np.mean(secs_int <= goal_seconds))
     return out
 
 
@@ -223,10 +283,12 @@ def forecast(conn, *, avg_hr=None, goal_seconds=None, seed=0, posterior=None):
     # Maximal-goal effort: the duration-keyed, LTHR-relative maximal HR for the goal (read off the
     # model's own predicted time at the goal, capped at the MaxHR reserve). An explicit avg_hr overrides.
     from fit.marathon.features import H_DIV
-    h = (effort_h_for_distance(idata, ds, ds.goal, c=c, extrapolation_scale=prior["scale"],
-                               nu=prior["nu"], seed=seed)
-         if avg_hr is None else (avg_hr - ds.lthr) / H_DIV)
-    res = predict(idata, x=0.0, c=c, h=h, gap=gap,
+    if avg_hr is None:
+        h, h_draws = effort_h_for_distance(idata, ds, ds.goal, c=c, extrapolation_scale=prior["scale"],
+                                           nu=prior["nu"], seed=seed, draws=True)
+    else:
+        h, h_draws = (avg_hr - ds.lthr) / H_DIV, None   # explicit HR is certain → no effort-schedule spread
+    res = predict(idata, x=0.0, c=c, h=h, h_draws=h_draws, gap=gap,
                   extrapolation_scale=prior["scale"], nu=prior["nu"],
                   goal_seconds=goal_seconds, seed=seed)
     res["extrapolation"] = prior
@@ -281,9 +343,9 @@ def derived_metrics(idata, ds, *, c, extrapolation_scale=0.0, nu=4, seed=0):
     for label, d in _STD_DISTANCES:
         x = float(np.log(d / ds.goal))
         gap = max(0.0, float(np.log(d / ds.d_max)))
-        h = effort_h_for_distance(idata, ds, d, c=c, extrapolation_scale=extrapolation_scale,
-                                  nu=nu, seed=seed, schedule=sched)
-        r = predict(idata, x=x, c=c, h=h, gap=gap,
+        h, h_draws = effort_h_for_distance(idata, ds, d, c=c, extrapolation_scale=extrapolation_scale,
+                                           nu=nu, seed=seed, schedule=sched, draws=True)
+        r = predict(idata, x=x, c=c, h=h, h_draws=h_draws, gap=gap,
                     extrapolation_scale=extrapolation_scale, nu=nu, seed=seed)
         equiv.append({"label": label, "distance_km": d, **r})
 
@@ -368,8 +430,11 @@ def durability_panel(idata, ds, *, c_ref=0.0, maximal_h=None, extrapolation_scal
     would disagree with a current-fitness headline.
     """
     if maximal_h is None:                       # goal's maximal-effort h at the reference fitness
-        maximal_h = effort_h_for_distance(idata, ds, ds.goal, c=c_ref,
-                                          extrapolation_scale=extrapolation_scale, nu=nu, seed=seed)
+        maximal_h, maximal_h_draws = effort_h_for_distance(
+            idata, ds, ds.goal, c=c_ref, extrapolation_scale=extrapolation_scale,
+            nu=nu, seed=seed, draws=True)       # per-draw normaliser → effort uncertainty in the band
+    else:
+        maximal_h_draws = None                  # explicit normaliser → band fans via the wall only
     a, b, phi, kappa = (_flat(idata, p) for p in ("alpha", "beta_d", "phi", "kappa"))
     am, bm, pm, km = (float(np.median(v)) for v in (a, b, phi, kappa))
     eff = ds.efforts
@@ -384,11 +449,12 @@ def durability_panel(idata, ds, *, c_ref=0.0, maximal_h=None, extrapolation_scal
     curve = []
     for d in grid:
         x = np.log(d / ds.goal)
-        mu = a + b * x + phi * c_ref + kappa * maximal_h   # draws of the mean at c_ref + maximal effort
         gap = max(0.0, float(np.log(d / ds.d_max)))
-        mins = np.exp(mu + _wall_penalty_draws(nu, extrapolation_scale, gap, mu.shape[0], rng))
-        curve.append({"distance_km": float(d), "median": float(np.median(mins)),
-                      "lo": float(np.percentile(mins, 5)), "hi": float(np.percentile(mins, 95))})
+        base = a + b * x + phi * c_ref + _wall_penalty_draws(nu, extrapolation_scale, gap, a.shape[0], rng)
+        mins_med = np.exp(base + kappa * maximal_h)        # point effort → median (matches the headline)
+        mins_int = np.exp(base + kappa * (maximal_h if maximal_h_draws is None else maximal_h_draws))
+        curve.append({"distance_km": float(d), "median": float(np.median(mins_med)),
+                      "lo": float(np.percentile(mins_int, 5)), "hi": float(np.percentile(mins_int, 95))})
     # Most-recent effort (a temporal reference, marked in every panel) + the β_d slope triangle.
     dts = [str(x)[:10] for x in eff["date"]] if "date" in eff.columns else [None] * len(points)
     recent = points[max(range(len(dts)), key=lambda k: dts[k] or "")] if any(dts) else None
@@ -490,6 +556,84 @@ def effort_panel(idata, ds, *, c_ref, maximal_h, n_grid=40):
     return _coeff_panel(idata, ds, covariate="effort", c_ref=c_ref, maximal_h=maximal_h, n_grid=n_grid)
 
 
+def effort_schedule_panel(idata, ds, *, c=0.0, extrapolation_scale=0.0, nu=4, seed=0, n_grid=48):
+    """Data for the effort-schedule inspection panel (effort-schedule-uncertainty, Decision 5).
+
+    Visualises the maximal-effort fade law `offset(t) = β·(log t − log T0)` in its OWN coordinates —
+    HR relative to LTHR (bpm) vs effort DURATION (minutes) — so the otherwise-hidden effort
+    assumption (the `h` covariate the forecast leans on) is auditable. Returns:
+      - `line`:  median fade `[{x: duration_min, y: offset_bpm}]` across the plotted duration range
+      - `lo`/`hi`: the 90% `(σ_β, σ_T0)` band, `±1.645·sqrt((log t−log T0)²·σ_β² + β²·σ_logT0²)`
+      - `dots`:  race efforts `[{x, y, d, date, hard}]` — `hard` = at/above-threshold (offset≥0,
+        the efforts that anchor T0); sub-threshold parkruns (offset<0) are the ones a fitted slope
+        would flatten on, so the panel shows WHY β is the population prior, not a fit
+      - `t0`/`t0_sd`/`beta`/`defaulted`: the anchor + slope + T0's log-SD + bare-prior flag
+      - `markers`: 5K/10K/HM/M at their MODEL-PREDICTED durations `[{label, x, y}]` (so they agree
+        with Panel A/B; `y` is the model's capped maximal `h·H_DIV`) — the M marker lands far right
+        where the band is widest, the visual punch line
+      - `triangle`/`recent`/`n_hard`: the β slope triangle, most-recent-hard-effort ring, hard count
+
+    The band is estimation uncertainty of the ASSUMED maximal-effort HR (bpm) — NOT race-day HR
+    variability, and NOT comparable to the minutes interval on the trend chart.
+    """
+    from fit.marathon.features import H_DIV
+    sched = effort_schedule(ds)
+    t0, beta, beta_sd, t0_sd = sched["t0"], sched["beta"], sched["beta_sd"], sched["t0_sd"]
+    eff = ds.efforts
+    races = eff[eff["run_type"] == "race"] if "run_type" in getattr(eff, "columns", []) else eff.iloc[0:0]
+
+    # Race-effort dots in (duration, offset) space; hard = genuine at/above-threshold effort.
+    dots = []
+    for _, r in races.iterrows():
+        off = float(r["avg_hr"] - ds.lthr)
+        dt = r["date"]
+        date_s = dt.date().isoformat() if hasattr(dt, "date") else str(dt)[:10]
+        dots.append({"x": float(np.exp(r["logt"])), "y": off, "d": float(r["distance_km"]),
+                     "date": date_s, "hard": bool(off >= 0)})
+
+    # Standard distances at their MODEL-PREDICTED maximal-effort durations (point estimates, so the
+    # markers agree with the race-equivalency table and Panels A/B; the offset is the capped h·H_DIV).
+    markers = []
+    for label, d in _STD_DISTANCES:
+        x = float(np.log(d / ds.goal)); gap = max(0.0, float(np.log(d / ds.d_max)))
+        h = effort_h_for_distance(idata, ds, d, c=c, extrapolation_scale=extrapolation_scale,
+                                  nu=nu, seed=seed, schedule=sched)
+        t_pred = predict(idata, x=x, c=c, h=h, gap=gap, extrapolation_scale=extrapolation_scale,
+                         nu=nu, seed=seed)["median"] / 60.0
+        markers.append({"label": label, "x": float(t_pred), "y": float(h * H_DIV)})
+
+    # Duration grid: a touch below the shortest data to a touch past the marathon marker.
+    durs = [dd["x"] for dd in dots] + [m["x"] for m in markers]
+    lo_d, hi_d = max(5.0, min(durs) * 0.9), max(durs) * 1.05
+    grid = np.exp(np.linspace(np.log(lo_d), np.log(hi_d), n_grid))
+    line, lo, hi = [], [], []
+    for t in grid:
+        dl = float(np.log(t) - np.log(t0))
+        off = beta * dl
+        sd = float(np.sqrt(dl ** 2 * beta_sd ** 2 + beta ** 2 * t0_sd ** 2))   # offset SD (bpm)
+        line.append({"x": float(t), "y": float(off)})
+        lo.append({"x": float(t), "y": float(off - 1.645 * sd)})
+        hi.append({"x": float(t), "y": float(off + 1.645 * sd)})
+
+    # β slope triangle (rise/run on the fade line): run = ×2 duration, rise = β·log2 bpm.
+    d1 = float(np.exp(np.log(lo_d) + 0.15 * (np.log(hi_d) - np.log(lo_d)))); d2 = d1 * 2.0
+    triangle = {"x1": d1, "x2": d2,
+                "y1": float(beta * (np.log(d1) - np.log(t0))),
+                "y2": float(beta * (np.log(d2) - np.log(t0))),
+                "run": "×2 duration", "rise": "%.1f bpm (β)" % (beta * np.log(2.0))}
+
+    hard_dots = [dd for dd in dots if dd["hard"]]
+    recent = None
+    if hard_dots:
+        rd = max(hard_dots, key=lambda dd: dd["date"] or "")
+        recent = {"x": rd["x"], "y": rd["y"]}
+
+    return {"line": line, "lo": lo, "hi": hi, "dots": dots, "markers": markers,
+            "t0": float(t0), "t0_sd": float(t0_sd), "beta": float(beta),
+            "defaulted": bool(sched["defaulted"]), "triangle": triangle, "recent": recent,
+            "n_hard": int(len(hard_dots))}
+
+
 def residuals(idata, ds):
     """Day-quality residual per effort: observed log-time − model-predicted mean, with
     distance/fitness/effort netted out (design §11 G). A cleaner correlation input than
@@ -524,10 +668,14 @@ def trend_series(conn, idata, ds, *, days=420, step_days=14, maximal_h=None,
     for back in range(days, -1, -step_days):
         d = today - timedelta(days=back)
         c = (chronic_load_before(d.toordinal(), day_ord, day_load) - CHRONIC_REF) / CHRONIC_SCALE
-        h = (maximal_h if maximal_h is not None
-             else effort_h_for_distance(idata, ds, ds.goal, c=c, extrapolation_scale=extrapolation_scale,
-                                        nu=nu, seed=seed, schedule=sched))
-        r = predict(idata, x=0.0, c=c, h=h, gap=gap,
+        # σ_T0 is held at today's value (the schedule is resolved once and reused across weeks, like
+        # the existing point path); the per-step h_draws widens each step's band identically.
+        if maximal_h is not None:
+            h, h_draws = maximal_h, None
+        else:
+            h, h_draws = effort_h_for_distance(idata, ds, ds.goal, c=c, extrapolation_scale=extrapolation_scale,
+                                               nu=nu, seed=seed, schedule=sched, draws=True)
+        r = predict(idata, x=0.0, c=c, h=h, h_draws=h_draws, gap=gap,
                     extrapolation_scale=extrapolation_scale, nu=nu, seed=seed)
         out.append({"date": d.isoformat(), "median": r["median"], "lo": r["lo"], "hi": r["hi"]})
     return out

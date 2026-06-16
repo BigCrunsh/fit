@@ -208,6 +208,92 @@ def _param_panel_chart(chart_id, panel, *, x_label, x_log, prior_dominated, colo
     }, ensure_ascii=False)}
 
 
+def _effort_schedule_panel_chart(chart_id, panel):
+    """Effort-schedule inspection panel (effort-schedule-uncertainty, Decision 5): the maximal-effort
+    fade law offset(t)=β·(log t−log T0) in its OWN coordinates — HR vs LTHR (bpm, linear, 0=threshold)
+    against effort DURATION (min, log). Band-FIRST (the (σ_β,σ_T0) uncertainty), then a DASHED prior
+    line (β is the population prior, NOT a per-athlete fit), the race-effort dots (at/above-threshold
+    filled + distance-coloured; sub-threshold parkruns hollow — so 'why β isn't fitted' is
+    self-evident), the T0 anchor, and the 5K/10K/HM/M markers at their model-predicted durations (M
+    far right where the band is widest — the extrapolation punch line). A DEDICATED builder, not an
+    overload of `_param_panel_chart`: its duration axis and markers don't map onto that function's
+    partial-residual furniture ('no effect' line, 'you are here', netted points)."""
+    def xy(rows):
+        return [{"x": r["x"], "y": r["y"]} for r in rows]
+    dots = panel["dots"]
+    hard = [d for d in dots if d["hard"]]
+    soft = [d for d in dots if not d["hard"]]
+    ds_all = [d["d"] for d in dots] or [1.0, 42.2]
+    dmin, dmax = min(ds_all), max(ds_all)
+    hard_colors = [_distance_color(d["d"], dmin, dmax) for d in hard]
+
+    # Marker labels (5K/10K/HM/M) sitting on the curve at their predicted duration; M emphasised.
+    mk_annots = {}
+    for m in panel["markers"]:
+        is_m = m["label"] == "M"
+        mk_annots["mk_" + m["label"]] = {
+            "type": "label", "xValue": m["x"], "yValue": m["y"], "content": m["label"],
+            "font": {"size": (10 if is_m else 8), "weight": ("bold" if is_m else "normal")},
+            "color": (ACCENT if is_m else "rgba(148,163,184,0.9)"),
+            "backgroundColor": "rgba(0,0,0,0.45)", "padding": 2, "yAdjust": -13}
+    annots = {
+        "thr": {"type": "line", "yMin": 0, "yMax": 0, "borderColor": "rgba(226,232,240,0.4)",
+                "borderWidth": 1, "borderDash": [2, 3],
+                "label": {"content": "threshold (LTHR)", "display": True, "position": "end",
+                          "font": {"size": 8}, "color": "rgba(226,232,240,0.7)",
+                          "backgroundColor": "rgba(0,0,0,0)"}},
+        "t0": {"type": "line", "xMin": panel["t0"], "xMax": panel["t0"],
+               "borderColor": "rgba(226,232,240,0.55)", "borderWidth": 1, "borderDash": [2, 2],
+               "label": {"content": "T₀ ≈ %d min" % round(panel["t0"]), "display": True,
+                         "position": "end", "rotation": 90, "font": {"size": 8},
+                         "color": "rgba(226,232,240,0.8)", "backgroundColor": "rgba(0,0,0,0)"}},
+        **mk_annots,
+        **_slope_triangle_annots(panel.get("triangle")),
+        **_recent_marker_annot(panel.get("recent")),
+    }
+    datasets = [
+        {"label": "90% band", "data": xy(panel["hi"]), "showLine": True, "fill": "+1",
+         "backgroundColor": ACCENT + "33", "borderColor": "rgba(0,0,0,0)", "pointRadius": 0, "order": 4},
+        {"label": "_lo", "data": xy(panel["lo"]), "showLine": True, "fill": False,
+         "borderColor": "rgba(0,0,0,0)", "pointRadius": 0, "order": 4},
+        {"label": "fade law (β = population prior)", "data": xy(panel["line"]), "showLine": True,
+         "borderColor": ACCENT, "borderWidth": 2, "borderDash": [5, 4], "pointRadius": 0,
+         "tension": 0.1, "order": 3},
+        {"label": "races (at/above threshold)",
+         "data": [{"x": d["x"], "y": d["y"], "d": d["d"]} for d in hard],
+         "showLine": False, "pointBackgroundColor": hard_colors, "pointBorderColor": "#0008",
+         "pointBorderWidth": 1, "pointRadius": 5, "order": 1},
+    ]
+    if soft:
+        datasets.append(
+            {"label": "races (sub-threshold, excluded)",
+             "data": [{"x": d["x"], "y": d["y"], "d": d["d"]} for d in soft],
+             "showLine": False, "pointBackgroundColor": "rgba(0,0,0,0)",
+             "pointBorderColor": "rgba(148,163,184,0.75)", "pointBorderWidth": 1.5,
+             "pointRadius": 4, "order": 2})
+    datasets.append(
+        {"label": "_markers", "data": [{"x": m["x"], "y": m["y"]} for m in panel["markers"]],
+         "showLine": False, "pointStyle": "rectRot", "pointRadius": 6,
+         "pointBackgroundColor": "rgba(226,232,240,0.9)", "pointBorderColor": "#000",
+         "pointBorderWidth": 1, "order": 0})
+
+    return {"id": chart_id, "config": json.dumps({
+        "type": "scatter",
+        "data": {"datasets": datasets},
+        "options": {"responsive": True, "maintainAspectRatio": False,
+            "plugins": {"legend": {"display": True, "position": "bottom",
+                                   "labels": {"boxWidth": 12, "font": {"size": 9}}},
+                        "annotation": {"annotations": annots}},
+            "scales": {
+                "x": {"type": "logarithmic",
+                      "title": {"display": True, "text": "effort duration (min)", "font": {"size": 9}},
+                      "grid": {"color": "rgba(255,255,255,0.04)"}},
+                "y": {"type": "linear",
+                      "title": {"display": True, "text": "HR vs threshold (bpm; 0 = LTHR)", "font": {"size": 9}},
+                      "grid": {"color": "rgba(255,255,255,0.04)"}}}}
+    }, ensure_ascii=False)}
+
+
 def _all_charts(conn):
     charts = []
 
@@ -1275,6 +1361,14 @@ def _all_charts(conn):
             charts.append(_param_panel_chart(
                 "chart-param-kappa", _ep, x_label="effort (bpm above LTHR)", x_log=False,
                 prior_dominated=bool(_dm["effort_kappa"]["prior_dominated"]), color=Z4))
+
+            # Effort-schedule inspection panel — the assumed maximal-effort HR (the h covariate) with
+            # its (σ_β, σ_T0) uncertainty. Gate: anchored schedule (not the bare prior) with ≥2
+            # at/above-threshold races, else a lone prior line through no data is value-free.
+            from fit.marathon.predict import effort_schedule_panel
+            _esp = effort_schedule_panel(_post, _ds, c=_cref, extrapolation_scale=_pr["scale"], nu=_pr["nu"])
+            if not _esp["defaulted"] and _esp["n_hard"] >= 2:
+                charts.append(_effort_schedule_panel_chart("chart-effort-schedule", _esp))
     except Exception as e:  # never break the report on the forecast chart
         logger.debug("durability chart skipped: %s", e)
 

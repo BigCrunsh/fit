@@ -29,6 +29,8 @@ def _generated_chart_ids() -> set[str]:
     # Charts built via the _param_panel_chart(id, ...) helper (durability-param-panels): the id
     # is the first arg, not an inline "id": literal, but they ARE generated in charts.py.
     ids |= set(re.findall(r'_param_panel_chart\(\s*\n?\s*"(chart-[a-z0-9-]+)"', text))
+    # Same shape: _effort_schedule_panel_chart(id, ...) (effort-schedule-uncertainty inspection panel).
+    ids |= set(re.findall(r'_effort_schedule_panel_chart\(\s*\n?\s*"(chart-[a-z0-9-]+)"', text))
     return ids
 
 
