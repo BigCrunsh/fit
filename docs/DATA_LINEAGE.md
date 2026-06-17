@@ -245,7 +245,7 @@ flowchart LR
 
 ## 1. Sources
 
-- **`activities`** — distance_km, duration_min, pace_sec_per_km, avg_hr, max_hr, avg_cadence, vo2max, aerobic_te, rpe, srpe, training_load, speed_per_bpm, speed_per_bpm_z2, hr_zone(_lthr/_maxhr), effort_class, run_type, type, compliance_score, temp_at_start_c, splits_status, lthr_used/max_hr_used.
+- **`activities`** — distance_km, duration_min, pace_sec_per_km, avg_hr, max_hr, avg_cadence, vo2max, aerobic_te, rpe, srpe, training_load, speed_per_bpm, speed_per_bpm_z2, hr_zone(_lthr/_maxhr), effort_class, run_type, type, compliance_score, temp_at_start_c, splits_status, lthr_used/max_hr_used, is_maximal/max_effort_source.
 - **`activity_splits`** — split_num, pace_sec_per_km, avg_hr, elevation_gain/loss_m.
 - **`daily_health`** — training_readiness, hrv_last_night, resting_heart_rate, sleep_*_hours, avg_stress_level, body_battery_*.
 - **`weekly_agg`** — run_km, run_count, longest_run_km, total_load, z1..z5_min, z12_pct, z45_pct, acwr, monotony, strain, consecutive_weeks_3plus.
@@ -291,6 +291,7 @@ flowchart LR
 | canonical calibration anchor | `calibration.get_calibration_anchor` (`calibration.py:301`) | AGGREGATION_POLICY; calibration; `_max_in_window`/`_median_in_window` | sticky confirmed + windowed max/median suggestion + stale |
 | active calibration (asof) | `calibration.get_active_calibration` (`calibration.py:154`) | calibration; STALENESS_THRESHOLDS | non-stale→confidence→recency; point-in-time |
 | sRPE | `analysis.compute_srpe` (`analysis.py:761`) | activities.rpe,duration | rpe×duration |
+| maximal-effort flag | `analysis.derive_maximal_effort` (sync + `fit backfill maximal`) | activities.rpe | RPE≥9→is_maximal=1 ('rpe'); <9→0; none→NULL; manual sticky. Feeds the β-fit (races) |
 | training gap / RTR cap | `analysis.detect_training_gap` (`analysis.py:792`) | activities | ≥14d gap → 50% cap +12.5%/wk |
 | phase status / readiness | `periodization.advance_phase_status` (`:159`) / `evaluate_phase_readiness` (`:193`) | training_phases, weekly_agg, race_calendar | by date; advance/extend/deload/taper |
 | heat acclimatization | `periodization.compute_heat_acclimatization` (`:322`) | activities (spb,temp 56d) | hot-run efficiency Δ% |
@@ -307,9 +308,13 @@ flowchart LR
 model. Its assumed race HR is **duration-keyed**: `offset(t) = β·(log t − log T₀)` on the
 model's predicted *duration* `t` (not distance), where **T₀** (threshold-duration) is
 data-driven — a ~55-min prior updated by the athlete's at-or-above-threshold races,
-recency/representativeness-weighted — and **β** stays the population **−6.5** prior (race HRs
-are too contaminated by sub-maximal short efforts to fit per-athlete; fitting it is a
-follow-on gated on a maximality flag). Coefficients surfaced on the dashboard: **β_d** =
+recency/representativeness-weighted — and **β** is **fitted (prior-regularized) from maximal
+RACES** (`is_maximal=1`; maximal-effort-flag): a weighted-regression slope of offset vs
+log-duration Bayes-combined with the −6.5 population prior, so it stays ≈ −6.5 on thin/narrow
+data and personalises as maximal evidence accrues. Maximality = RPE ≥ 9 (Garmin), or a sticky
+manual override (`fit effort maximal`); `feel` is NOT a signal (strong↔weak, not exertion) and the
+HR heuristic is a deferred follow-on. Only sustained RACES feed β (a tempo/interval's recovery-
+diluted avg HR would flatten the slope). Coefficients surfaced on the dashboard: **β_d** =
 fitted Riegel slope (the optimistic cross-distance bound) · **φ** = fitness (chronic-load)
 effect, flagged when prior-dominated · **κ** = HR↔pace coupling · **γ** = the extrapolation
 penalty that widens the band past `d_max` (driven by long-run distance + pace-fade). Degrades

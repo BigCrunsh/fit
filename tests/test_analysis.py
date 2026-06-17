@@ -1392,3 +1392,66 @@ class TestDanielsPaces:
         p_no_lthr = compute_daniels_paces(vo2max=48)
         p_with_lthr = compute_daniels_paces(vo2max=48, lthr=172)
         assert p_no_lthr == p_with_lthr
+
+
+class TestDeriveMaximalEffort:
+    """derive_maximal_effort (maximal-effort-flag): RPE ≥ 9 → maximal; a recorded RPE below →
+    explicitly not; no RPE → undetermined. Garmin `feel` is NOT a signal. Manual overrides are
+    sticky and re-derivation is idempotent."""
+
+    def _run(self, conn, aid, rpe=None, **kw):
+        d = {"id": aid, "date": "2025-06-01", "type": "running", "name": "Run",
+             "distance_km": 10, "duration_min": 45, "avg_hr": 165, "run_type": "race", "rpe": rpe}
+        d.update(kw)
+        cols = ", ".join(d)
+        conn.execute(f"INSERT INTO activities ({cols}) VALUES ({', '.join(['?'] * len(d))})",
+                     list(d.values()))
+        conn.commit()
+
+    def test_rpe_threshold_sets_maximal_and_not(self, db):
+        from fit.analysis import derive_maximal_effort
+        self._run(db, "a", rpe=9); self._run(db, "b", rpe=10); self._run(db, "c", rpe=7)
+        derive_maximal_effort(db)
+        rows = {r["id"]: (r["is_maximal"], r["max_effort_source"]) for r in
+                db.execute("SELECT id, is_maximal, max_effort_source FROM activities").fetchall()}
+        assert rows["a"] == (1, "rpe") and rows["b"] == (1, "rpe")
+        assert rows["c"] == (0, "rpe")                       # recorded RPE below threshold → explicitly NOT
+
+    def test_no_rpe_left_undetermined(self, db):
+        from fit.analysis import derive_maximal_effort
+        self._run(db, "a", rpe=None)
+        derive_maximal_effort(db)
+        r = db.execute("SELECT is_maximal, max_effort_source FROM activities WHERE id='a'").fetchone()
+        assert r["is_maximal"] is None and r["max_effort_source"] is None
+
+    def test_feel_is_not_a_signal(self, db):
+        # an all-out race (RPE 10) that "felt weak" (feel 1) is STILL maximal — feel is ignored
+        from fit.analysis import derive_maximal_effort
+        self._run(db, "a", rpe=10, feel=1)
+        derive_maximal_effort(db)
+        assert db.execute("SELECT is_maximal FROM activities WHERE id='a'").fetchone()[0] == 1
+
+    def test_manual_override_is_sticky(self, db):
+        from fit.analysis import derive_maximal_effort
+        self._run(db, "a", rpe=4)                            # would derive is_maximal=0
+        db.execute("UPDATE activities SET is_maximal=1, max_effort_source='manual' WHERE id='a'")
+        db.commit()
+        derive_maximal_effort(db)                            # must NOT clobber the manual flag
+        r = db.execute("SELECT is_maximal, max_effort_source FROM activities WHERE id='a'").fetchone()
+        assert r["is_maximal"] == 1 and r["max_effort_source"] == "manual"
+
+    def test_idempotent(self, db):
+        from fit.analysis import derive_maximal_effort
+        self._run(db, "a", rpe=9)
+        derive_maximal_effort(db)
+        first = tuple(db.execute("SELECT is_maximal, max_effort_source FROM activities WHERE id='a'").fetchone())
+        derive_maximal_effort(db)
+        second = tuple(db.execute("SELECT is_maximal, max_effort_source FROM activities WHERE id='a'").fetchone())
+        assert first == second
+
+    def test_non_running_activity_not_flagged(self, db):
+        # a cycling activity with RPE must not be flagged — the marathon model is running-only
+        from fit.analysis import derive_maximal_effort
+        self._run(db, "a", rpe=10, type="cycling")
+        derive_maximal_effort(db)
+        assert db.execute("SELECT is_maximal FROM activities WHERE id='a'").fetchone()[0] is None

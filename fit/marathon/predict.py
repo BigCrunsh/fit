@@ -53,29 +53,93 @@ EFFORT_BETA_PRIOR_SD = 1.25        # bpm/log-unit — documented judgment-inform
 EFFORT_T0_PRIOR_LOG_SD = 0.35      # prior log-SD on T0 (~40–80 min around the 55-min prior); WIDE at cold-start
 EFFORT_T0_OBS_FLOOR_LOG = 0.15     # min per-race log-scatter so one/identical race can't pin T0 exactly
 
+# ── β fitted from maximal efforts (design: maximal-effort-flag) ──
+# β is fit from genuinely all-out RACES (is_maximal=1 AND run_type='race') — sustained efforts where
+# avg HR IS the effort. NOT from tempos/intervals: even at RPE 9 their avg HR is dragged below the
+# sustained-effort HR by recoveries/warmup, which would wreck the slope. The fit is a prior-regularized
+# weighted regression of offset(=avg_hr−LTHR) on log(duration): the data slope (with a floored SE) is
+# Bayes-combined with the N(EFFORT_BETA_PRIOR, EFFORT_BETA_PRIOR_SD) prior, so thin/narrow-range data
+# stays ≈ the prior (Decision 2/4 — never less robust) and personalises only as maximal evidence
+# accrues. The posterior SE becomes beta_sd, replacing the hand-set prior SD in the forecast interval.
+EFFORT_BETA_FIT_MIN_RACES = 3      # min maximal races for a slope fit (n−2 residual dof)
+EFFORT_BETA_OBS_FLOOR_BPM = 2.5    # min per-race offset scatter (bpm); race avg_hr day-to-day noise floor
+
+
+def _fit_beta(durations, offsets, weights):
+    """Prior-regularized fade slope β from maximal RACES (maximal-effort-flag).
+
+    Weighted least-squares slope of `offset` on `log(duration)`, then Bayes-combined with the
+    N(EFFORT_BETA_PRIOR, EFFORT_BETA_PRIOR_SD) prior: posterior precision = prior precision + data
+    precision (1/SE²), so a narrow-duration-range or noisy fit (large SE) stays ≈ the prior and a
+    wide, consistent one personalises. Returns (β, β_sd, fitted: bool). Falls back to the prior
+    (fitted=False) with < EFFORT_BETA_FIT_MIN_RACES races or no duration spread.
+
+    The SE uses a floored residual variance (EFFORT_BETA_OBS_FLOOR_BPM) so a near-perfect fit on
+    3–4 points can't claim a zero-SE slope and over-trust the data — the slope analogue of T0's
+    obs floor. Weights are normalised to sum to n (preserve the effective sample size for the dof).
+    """
+    prior_mean, prior_sd = EFFORT_BETA_PRIOR, EFFORT_BETA_PRIOR_SD
+    n = len(durations)
+    if n < EFFORT_BETA_FIT_MIN_RACES:
+        return prior_mean, prior_sd, False
+    x = np.log(np.asarray(durations, float))
+    o = np.asarray(offsets, float)
+    w = np.asarray(weights, float)
+    w = w * (n / w.sum()) if w.sum() > 0 else np.ones(n)      # normalise Σw = n (keep dof)
+    xbar = float(np.average(x, weights=w))
+    obar = float(np.average(o, weights=w))
+    sxx = float(np.sum(w * (x - xbar) ** 2))
+    if sxx <= 1e-9:                                           # all efforts ≈ one duration → no slope
+        return prior_mean, prior_sd, False
+    b = float(np.sum(w * (x - xbar) * (o - obar)) / sxx)      # WLS data slope
+    resid = o - (obar + b * (x - xbar))
+    sigma2 = max(float(np.sum(w * resid ** 2) / (n - 2)), EFFORT_BETA_OBS_FLOOR_BPM ** 2)
+    se2 = sigma2 / sxx                                        # variance of the slope estimate
+    post_prec = 1.0 / prior_sd ** 2 + 1.0 / se2               # prior precision + data precision
+    beta = (prior_mean / prior_sd ** 2 + b / se2) / post_prec
+    beta_sd = float(np.sqrt(1.0 / post_prec))
+    return float(np.clip(beta, *_EFFORT_BETA_CLAMP)), beta_sd, True
+
 
 def effort_schedule(ds):
     """(T0, beta) for the maximal-effort fade law.
     Returns {t0, beta, t0_sd, beta_sd, defaulted, reason}.
 
-    **beta** stays the population prior. The slope CANNOT be reliably fit from this data: the
-    athlete's short races are mostly sub-maximal parkruns run *at* threshold (offset ≈ 0, not the
-    ~+10 a maximal 5 K would show), so a weighted fit flattens to ≈ −2 to −3 and distorts the whole
-    curve (validated: 5 K would read +3 instead of +10). Fitting beta is gated on a maximality flag
-    (mark which races were all-out) — the Decision-4 follow-on. See the CLAUDE.md note.
+    **beta** is fitted (prior-regularized) from genuinely all-out RACES (`is_maximal=1`) via
+    `_fit_beta` — the maximal-effort-flag unlock. Sparse/narrow maximal data → β stays ≈ the
+    population −6.5 prior (never less robust); consistent maximal races across a duration range
+    personalise it. Only RACES feed the slope: a tempo/interval at RPE 9 has its avg HR dragged
+    below the sustained-effort HR, which would flatten β spuriously. β's posterior SD is `beta_sd`.
 
     **T0** (the athlete's threshold-duration) IS data-driven: population prior updated by a
     recency- and representativeness-weighted estimate over the athlete's *at-or-above-threshold*
-    races (offset ≥ 0 — a sub-threshold race was run easy and would drag T0 down spuriously).
-    With beta fixed, each such race implies T0_i = exp(log t_i − offset_i/beta); T0 is the
-    prior-shrunk weighted mean. Cold-start / no hard race → the prior, labelled ``defaulted``."""
-    beta, t0_p = EFFORT_BETA_PRIOR, EFFORT_T0_PRIOR_MIN
-    # cold-start uncertainty: beta at its prior SD; T0 at the WIDE prior log-SD (we barely know it).
-    cold = {"beta_sd": EFFORT_BETA_PRIOR_SD, "t0_sd": EFFORT_T0_PRIOR_LOG_SD}
+    races (offset ≥ 0 — a sub-threshold race was run easy and would drag T0 down spuriously),
+    using the (possibly fitted) β: each such race implies T0_i = exp(log t_i − offset_i/beta); T0 is
+    the prior-shrunk weighted mean. Cold-start / no hard race → the prior, labelled ``defaulted``."""
+    t0_p = EFFORT_T0_PRIOR_MIN
     eff = getattr(ds, "efforts", None)
     if eff is None or "run_type" not in getattr(eff, "columns", []):
-        return {"t0": t0_p, "beta": beta, **cold, "defaulted": True, "reason": "no efforts"}
+        return {"t0": t0_p, "beta": EFFORT_BETA_PRIOR, "beta_sd": EFFORT_BETA_PRIOR_SD,
+                "t0_sd": EFFORT_T0_PRIOR_LOG_SD, "beta_fitted": False, "defaulted": True,
+                "reason": "no efforts"}
     races = eff[eff["run_type"] == "race"]
+
+    # β: fit from maximal RACES (is_maximal=1), prior-regularized; recency-weighted (NOT
+    # duration-weighted — that would bias a slope toward the long end). Sparse → the prior.
+    beta, beta_sd, beta_fitted, n_max = EFFORT_BETA_PRIOR, EFFORT_BETA_PRIOR_SD, False, 0
+    if "is_maximal" in races.columns:
+        mr = races[races["is_maximal"] == 1]
+        n_max = len(mr)
+        if n_max:
+            today = date.today()
+            m_age = np.array([(today - d.date()).days if hasattr(d, "date") else 0.0
+                              for d in mr["date"]], dtype=float)
+            beta, beta_sd, beta_fitted = _fit_beta(
+                np.exp(mr["logt"].to_numpy()), mr["avg_hr"].to_numpy() - ds.lthr,
+                np.exp(-m_age / EFFORT_TAU_DAYS))
+    beta_note = (f"β={beta:.2f}±{beta_sd:.2f} fitted from {n_max} maximal race(s)" if beta_fitted
+                 else f"β=population prior ({n_max} maximal race(s); need ≥{EFFORT_BETA_FIT_MIN_RACES})")
+
     if len(races) >= 1:
         dur = np.exp(races["logt"].to_numpy())            # grade-adjusted minutes (model time-space)
         offset = races["avg_hr"].to_numpy() - ds.lthr     # bpm vs LTHR
@@ -103,12 +167,13 @@ def effort_schedule(ds):
                               EFFORT_T0_OBS_FLOOR_LOG ** 2)
                 prec = 1.0 / EFFORT_T0_PRIOR_LOG_SD ** 2 + n_eff / obs_var
                 t0_sd = float(np.sqrt(1.0 / prec))
-                return {"t0": t0, "beta": beta, "t0_sd": t0_sd, "beta_sd": EFFORT_BETA_PRIOR_SD,
-                        "defaulted": False,
+                return {"t0": t0, "beta": beta, "t0_sd": t0_sd, "beta_sd": beta_sd,
+                        "beta_fitted": beta_fitted, "defaulted": False,
                         "reason": f"{int(hard.sum())}/{len(races)} at-threshold races, "
-                                  f"λ={lam:.2f} (T0_data≈{t0_data:.0f}min, β=population)"}
-    return {"t0": t0_p, "beta": beta, **cold, "defaulted": True,
-            "reason": "population prior (no at-threshold race to anchor T0)"}
+                                  f"λ={lam:.2f} (T0_data≈{t0_data:.0f}min; {beta_note})"}
+    return {"t0": t0_p, "beta": beta, "beta_sd": beta_sd, "t0_sd": EFFORT_T0_PRIOR_LOG_SD,
+            "beta_fitted": beta_fitted, "defaulted": True,
+            "reason": f"population T0 prior (no at-threshold race); {beta_note}"}
 
 
 def maximal_effort_h(predicted_minutes, t0, beta, hr_reserve=None):
@@ -579,6 +644,7 @@ def effort_schedule_panel(idata, ds, *, c=0.0, extrapolation_scale=0.0, nu=4, se
     from fit.marathon.features import H_DIV
     sched = effort_schedule(ds)
     t0, beta, beta_sd, t0_sd = sched["t0"], sched["beta"], sched["beta_sd"], sched["t0_sd"]
+    beta_fitted = bool(sched.get("beta_fitted", False))
     eff = ds.efforts
     races = eff[eff["run_type"] == "race"] if "run_type" in getattr(eff, "columns", []) else eff.iloc[0:0]
 
@@ -628,8 +694,10 @@ def effort_schedule_panel(idata, ds, *, c=0.0, extrapolation_scale=0.0, nu=4, se
         rd = max(hard_dots, key=lambda dd: dd["date"] or "")
         recent = {"x": rd["x"], "y": rd["y"]}
 
+    n_maximal = int((races["is_maximal"] == 1).sum()) if "is_maximal" in getattr(races, "columns", []) else 0
     return {"line": line, "lo": lo, "hi": hi, "dots": dots, "markers": markers,
-            "t0": float(t0), "t0_sd": float(t0_sd), "beta": float(beta),
+            "t0": float(t0), "t0_sd": float(t0_sd), "beta": float(beta), "beta_sd": float(beta_sd),
+            "beta_fitted": beta_fitted, "n_maximal": n_maximal,
             "defaulted": bool(sched["defaulted"]), "triangle": triangle, "recent": recent,
             "n_hard": int(len(hard_dots))}
 

@@ -511,6 +511,73 @@ class TestEffortSchedulePanel:
         assert sum(not d["hard"] for d in p["dots"]) == 1
 
 
+class TestBetaFit:
+    """β is fitted (prior-regularized) from maximal RACES only (maximal-effort-flag). Thin or
+    narrow-range data stays at the population prior; consistent maximal data personalises it."""
+
+    def _ds(self, rows, lthr=171.0, goal=42.195):
+        # rows: (days_ago, distance_km, duration_min, avg_hr, run_type, is_maximal)
+        import pandas as pd
+        from datetime import date, timedelta
+        from collections import namedtuple
+        today = date.today()
+        recs = [{"date": pd.Timestamp(today - timedelta(days=da)), "run_type": rt,
+                 "distance_km": dist, "avg_hr": hr, "logt": np.log(dur), "is_maximal": im}
+                for da, dist, dur, hr, rt, im in rows]
+        DS = namedtuple("DS", "efforts lthr goal d_max max_hr")
+        return DS(efforts=pd.DataFrame(recs), lthr=lthr, goal=goal, d_max=21.1, max_hr=195.0)
+
+    def _slope_rows(self, slope, durs, lthr=171.0):
+        # maximal races lying on offset = slope·(log dur − log 60), so the data slope == `slope`
+        return [(30 + 5 * i, 10.0, d, lthr + slope * (np.log(d) - np.log(60.0)), "race", 1)
+                for i, d in enumerate(durs)]
+
+    def test_two_maximal_races_stay_prior(self):
+        from fit.marathon.predict import effort_schedule, EFFORT_BETA_PRIOR, EFFORT_BETA_PRIOR_SD
+        s = effort_schedule(self._ds(self._slope_rows(-3.0, [15, 60])))   # only 2 < min 3
+        assert s["beta"] == EFFORT_BETA_PRIOR and s["beta_sd"] == EFFORT_BETA_PRIOR_SD
+        assert s["beta_fitted"] is False
+
+    def test_no_is_maximal_column_stays_prior(self):
+        # the pre-change ds (races but no is_maximal column) → β prior, backward compatible
+        from fit.marathon.predict import effort_schedule, EFFORT_BETA_PRIOR
+        ds = _race_ds()  # has run_type but no is_maximal column
+        s = effort_schedule(ds)
+        assert s["beta"] == EFFORT_BETA_PRIOR and s["beta_fitted"] is False
+
+    def test_consistent_maximal_races_move_beta_toward_data(self):
+        from fit.marathon.predict import effort_schedule, EFFORT_BETA_PRIOR, EFFORT_BETA_PRIOR_SD
+        s = effort_schedule(self._ds(self._slope_rows(-4.0, [12, 20, 35, 60, 100, 120])))
+        assert s["beta_fitted"] is True
+        assert EFFORT_BETA_PRIOR < s["beta"] < -4.0      # between the prior (−6.5) and data slope (−4)
+        assert s["beta_sd"] < EFFORT_BETA_PRIOR_SD       # data tightened the SE below the prior
+
+    def test_nonrace_maximal_excluded_from_fit(self):
+        # a maximal TEMPO (avg HR dragged low by recoveries) must NOT feed the slope — races only
+        from fit.marathon.predict import effort_schedule
+        races = self._slope_rows(-4.0, [12, 35, 100])
+        base = effort_schedule(self._ds(races))
+        with_tempo = effort_schedule(self._ds(races + [(20, 12.0, 60, 140, "tempo", 1)]))
+        assert with_tempo["beta"] == base["beta"]        # tempo excluded → β unchanged
+
+    def test_subthreshold_flagged_race_excluded_from_fit(self):
+        # an explicitly non-maximal race (is_maximal=0) doesn't feed the slope
+        from fit.marathon.predict import effort_schedule
+        races = self._slope_rows(-4.0, [12, 35, 100])
+        base = effort_schedule(self._ds(races))
+        with_easy = effort_schedule(self._ds(races + [(15, 21.0, 110, 160, "race", 0)]))
+        assert with_easy["beta"] == base["beta"]
+
+    def test_few_points_perfect_fit_stays_regularized(self):
+        # 3 maximal races on a PERFECT line → the obs floor keeps β regularized (NOT snapped to the
+        # data slope) and the SE doesn't collapse to ~0
+        from fit.marathon.predict import effort_schedule, EFFORT_BETA_PRIOR
+        s = effort_schedule(self._ds(self._slope_rows(-3.0, [15, 45, 120])))
+        assert s["beta_fitted"] is True
+        assert -3.0 > s["beta"] > EFFORT_BETA_PRIOR      # pulled toward −3 but not all the way
+        assert s["beta_sd"] > 0.3                        # SE not collapsed (floor held)
+
+
 class TestForecastContext:
     """forecast_context loads (posterior + efforts + prior) ONCE per connection — the
     dashboard/CLI/MCP share it instead of each re-reading the zarr posterior + feature SQL."""

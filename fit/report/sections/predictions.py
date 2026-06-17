@@ -74,6 +74,10 @@ def _marathon_forecast(conn, maximal_hr=None):
         kappa_pct = (math.exp(kap["median"]) - 1) * 100
         infl = influence(idata, ds)
         flagged = [e for e in infl["efforts"] if e["influential"]]
+        from fit.marathon.predict import effort_schedule
+        sched = effort_schedule(ds)
+        beta_fitted = bool(sched.get("beta_fitted", False))
+        n_maximal = int((ds.efforts["is_maximal"] == 1).sum()) if "is_maximal" in ds.efforts.columns else 0
         return {
             "available": True, "source": "model",
             "median": _hms(fc["median"]),
@@ -87,6 +91,11 @@ def _marathon_forecast(conn, maximal_hr=None):
             "phi_dominated": bool(phi["prior_dominated"]),
             "kappa_reading": f"{kappa_pct:+.1f}% pace per +5 bpm",
             "kappa_dominated": bool(kap["prior_dominated"]),
+            # effort-fade slope β (maximal-effort-flag): fitted from maximal races, else the prior
+            "effort_beta_fitted": beta_fitted, "n_maximal": n_maximal,
+            "effort_beta_reading": (f"β {sched['beta']:.2f} ± {sched['beta_sd']:.2f} "
+                                    f"(fitted from {n_maximal} maximal race{'' if n_maximal == 1 else 's'})"
+                                    if beta_fitted else f"β {sched['beta']:.1f} (population prior)"),
             "extrap_reason": ex["reason"], "extrap_defaulted": bool(ex["defaulted"]),
             "unvalidated": bool(ds.d_max < ds.goal), "d_max": round(ds.d_max, 1),
             "dist_min": round(float(ds.efforts["distance_km"].min()), 1),  # distance-colour legend domain

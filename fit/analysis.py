@@ -824,6 +824,38 @@ def compute_srpe(conn: sqlite3.Connection) -> int:
     return count
 
 
+# Maximal-effort flag (maximal-effort-flag): RPE at/above this is an all-out effort. RPE below it
+# is explicit evidence the effort was sub-maximal (is_maximal=0). Garmin `feel` is NOT used — it's
+# a strong↔weak subjective scale orthogonal to exertion (all-out RPE-10 races read feel 1–2).
+RPE_MAXIMAL_THRESHOLD = 9
+
+
+def derive_maximal_effort(conn: sqlite3.Connection) -> int:
+    """Derive ``activities.is_maximal`` from the explicit RPE signal (maximal-effort-flag).
+
+    RPE ≥ ``RPE_MAXIMAL_THRESHOLD`` → maximal (1); a recorded RPE below it → explicitly not (0);
+    activities with no RPE are left undetermined (NULL) for a manual override (or a future
+    heuristic) to fill. A manual override (``max_effort_source='manual'``) is sticky and never
+    clobbered, so re-running at sync/backfill is idempotent. Returns the count of rows touched.
+    """
+    cur = conn.execute(
+        f"""
+        UPDATE activities
+        SET is_maximal = CASE WHEN rpe >= ? THEN 1 ELSE 0 END,
+            max_effort_source = 'rpe'
+        WHERE type IN {RUNNING_TYPES_SQL}
+          AND rpe IS NOT NULL
+          AND (max_effort_source IS NULL OR max_effort_source != 'manual')
+        """,
+        (RPE_MAXIMAL_THRESHOLD,),
+    )
+    count = cur.rowcount or 0
+    if count > 0:
+        conn.commit()
+        logger.info("Derived is_maximal for %d activities (RPE)", count)
+    return count
+
+
 # ── Return-to-Run Protocol ──
 
 

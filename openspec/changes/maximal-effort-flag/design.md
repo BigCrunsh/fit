@@ -1,5 +1,25 @@
 # Design — maximal-effort-flag
 
+## As-built corrections (2026-06-17)
+
+Three deviations from the original design, forced by the data:
+
+1. **Feel is NOT a signal.** Garmin `feel` (directWorkoutFeel) is a strong↔weak subjective scale,
+   orthogonal to exertion — confirmed in-data (the athlete's RPE-10 all-out races read feel 1–2).
+   Maximality keys on **RPE only** (≥ 9) plus the manual override.
+2. **Heuristic deferred.** RPE covers only 2/21 races today, so the HR-near-ceiling heuristic
+   (the design's own flagged-fragile source) isn't worth its risk yet; manual flagging gives the
+   β-fit cleaner input. Shipped explicit-RPE + manual; the heuristic is a follow-on.
+3. **β fits from maximal RACES, not all maximal efforts.** An RPE-9 tempo/interval has its *average*
+   HR dragged below the sustained-effort HR by recoveries/warm-up, which would wreck a fade slope
+   keyed on avg HR. Only sustained continuous efforts (races) feed β. T₀ keeps its at-threshold
+   (offset≥0) proxy — more data, including HMs, than RPE-only maximal races today — but now uses the
+   **fitted** β in its implied-T₀ formula, so the curve stays self-consistent.
+
+The user's framing held: today β is a hard constant; this change makes it a prior-regularized fit
+(`β ~ N(−6.5, σ)` updated by maximal races), so it stays ≈ −6.5 on thin data and personalises as
+maximal evidence accrues — strictly an improvement, self-activating, never less robust.
+
 ## Context
 
 `effort_schedule(ds)` keeps β at the population prior because the athlete's race HRs mix maximal

@@ -406,6 +406,16 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     except Exception as e:
         logger.debug("sRPE computation skipped: %s", e)
 
+    # 8a1. Derive the maximal-effort flag from RPE (feeds the marathon model's β-fit).
+    #      Idempotent; preserves manual overrides.
+    try:
+        from fit.analysis import derive_maximal_effort
+        max_count = derive_maximal_effort(conn)
+        if max_count:
+            counts["maximal"] = max_count
+    except Exception as e:
+        logger.debug("maximal-effort derivation skipped: %s", e)
+
     # 8a2. Record VDOT observations from races ∪ hard efforts (informational
     #      rows feeding the standardized anchor + calibration history). Idempotent.
     try:

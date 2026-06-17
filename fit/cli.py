@@ -573,6 +573,78 @@ def backfill_vdot():
         conn.close()
 
 
+@backfill.command("maximal")
+def backfill_maximal():
+    """Backfill the maximal-effort flag (activities.is_maximal) from RPE.
+
+    RPE ≥ 9 → maximal; a recorded RPE below it → not maximal; no RPE → left undetermined for a
+    manual override (`fit effort maximal <id>`). Idempotent; preserves manual overrides. Garmin
+    `feel` is NOT used — it measures how an effort felt (strong↔weak), not how hard it was.
+    """
+    from fit.analysis import derive_maximal_effort
+
+    conn = _conn()
+    try:
+        n = derive_maximal_effort(conn)
+        flagged = conn.execute("SELECT COUNT(*) FROM activities WHERE is_maximal = 1").fetchone()[0]
+        if n:
+            console.print(f"  [green]✓ Derived is_maximal for {n} activities ({flagged} flagged maximal).[/green]")
+        else:
+            console.print("[dim]Nothing to derive — no RPE-scored activities (run `fit backfill rpe` first).[/dim]")
+    finally:
+        conn.close()
+
+
+@main.group()
+def effort():
+    """Per-effort overrides for the marathon model."""
+
+
+@effort.command("maximal")
+@click.argument("activity_id")
+@click.option("--no", "state", flag_value="no", help="Mark NOT maximal (e.g. a race you jogged).")
+@click.option("--auto", "state", flag_value="auto",
+              help="Clear the manual override and re-derive from RPE.")
+def effort_maximal(activity_id: str, state: str | None):
+    """Manually set whether an activity was an all-out (maximal) effort.
+
+    A sticky override (`source='manual'`) that beats RPE derivation and survives re-sync — use
+    when you know better: a race you jogged (`--no`), or a workout you secretly raced (default).
+    `--auto` removes the override and re-derives from RPE. The marathon model fits the
+    duration-intensity fade slope β from maximal-flagged efforts (prior-regularized).
+    """
+    conn = _conn()
+    try:
+        row = conn.execute(
+            "SELECT id, name, date, rpe, is_maximal FROM activities WHERE id = ?", (activity_id,)
+        ).fetchone()
+        if row is None:
+            console.print(f"[red]No activity with id {activity_id}.[/red]")
+            return
+        name = row["name"] or activity_id
+        if state == "auto":
+            conn.execute(
+                "UPDATE activities SET is_maximal = NULL, max_effort_source = NULL WHERE id = ?",
+                (activity_id,),
+            )
+            from fit.analysis import derive_maximal_effort
+            derive_maximal_effort(conn)   # re-derive this (now non-manual) row from RPE
+            new = conn.execute("SELECT is_maximal, max_effort_source FROM activities WHERE id = ?",
+                               (activity_id,)).fetchone()
+            derived = ("maximal" if new["is_maximal"] == 1 else "not maximal") if new["is_maximal"] is not None else "undetermined (no RPE)"
+            console.print(f"  [green]✓ {row['date']} {name}: override cleared → {derived} (source {new['max_effort_source'] or 'none'}).[/green]")
+        else:
+            val = 0 if state == "no" else 1
+            conn.execute(
+                "UPDATE activities SET is_maximal = ?, max_effort_source = 'manual' WHERE id = ?",
+                (val, activity_id),
+            )
+            conn.commit()
+            console.print(f"  [green]✓ {row['date']} {name} marked {'NOT maximal' if val == 0 else 'maximal'} (manual override).[/green]")
+    finally:
+        conn.close()
+
+
 @main.group(invoke_without_command=True)
 @click.pass_context
 def checkin(ctx):

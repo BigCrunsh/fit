@@ -256,9 +256,13 @@ def _effort_schedule_panel_chart(chart_id, panel):
          "backgroundColor": ACCENT + "33", "borderColor": "rgba(0,0,0,0)", "pointRadius": 0, "order": 4},
         {"label": "_lo", "data": xy(panel["lo"]), "showLine": True, "fill": False,
          "borderColor": "rgba(0,0,0,0)", "pointRadius": 0, "order": 4},
-        {"label": "fade law (β = population prior)", "data": xy(panel["line"]), "showLine": True,
-         "borderColor": ACCENT, "borderWidth": 2, "borderDash": [5, 4], "pointRadius": 0,
-         "tension": 0.1, "order": 3},
+        {"label": ("fade law (β fitted from %d maximal race%s)"
+                   % (panel.get("n_maximal", 0), "" if panel.get("n_maximal", 0) == 1 else "s")
+                   if panel.get("beta_fitted") else "fade law (β = population prior)"),
+         "data": xy(panel["line"]), "showLine": True,
+         "borderColor": ACCENT, "borderWidth": 2,
+         "borderDash": ([] if panel.get("beta_fitted") else [5, 4]),  # solid when fitted, dashed = prior
+         "pointRadius": 0, "tension": 0.1, "order": 3},
         {"label": "races (at/above threshold)",
          "data": [{"x": d["x"], "y": d["y"], "d": d["d"]} for d in hard],
          "showLine": False, "pointBackgroundColor": hard_colors, "pointBorderColor": "#0008",

@@ -42,7 +42,7 @@ LONG_RUN_MIN_KM = 15.0
 # a meaningful continuous effort). `IS NOT 'interval'` is NULL-safe — an unlabelled long run
 # still counts; only an explicit interval session is dropped.
 EFFORT_SQL = f"""
-SELECT id, date, run_type, distance_km, duration_min, avg_hr
+SELECT id, date, run_type, distance_km, duration_min, avg_hr, is_maximal
 FROM activities
 WHERE type IN ('running', 'track_running')
   AND ( run_type = 'race'
