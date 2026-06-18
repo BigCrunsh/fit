@@ -55,11 +55,16 @@ def main(verbose: bool):
 @click.option("--days", default=7, help="Number of days to sync.")
 @click.option("--full", is_flag=True, help="Sync all available history.")
 @click.option("--splits", is_flag=True, help="Download .fit files and compute per-km splits.")
-def sync(days: int, full: bool, splits: bool):
+@click.option("--backfill", is_flag=True, help="With --splits: bulk-process ALL activities missing splits (rate-controlled).")
+def sync(days: int, full: bool, splits: bool, backfill: bool):
     """Pull data from Garmin, enrich with weather, store in SQLite."""
     from fit.config import get_config
     from fit.db import get_db
     from fit.sync import run_sync
+
+    if backfill and not splits:
+        console.print("[yellow]--backfill applies to --splits; pass `fit sync --splits --backfill`.[/yellow]")
+        raise SystemExit(2)
 
     config = get_config()
     conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
@@ -76,6 +81,8 @@ def sync(days: int, full: bool, splits: bool):
             console.print(f"  [green]✓[/green] Synced {counts['planned_workouts']} planned workouts")
         for w in counts.get("warnings", []):
             console.print(f"  [yellow]⚠ {w}[/yellow]")
+        if backfill:
+            _backfill_splits(conn, config)        # bulk-process ALL activities missing splits
         console.print("[bold green]Done.[/bold green]")
     except Exception as e:
         console.print(f"[bold red]Sync failed:[/bold red] {e}")
@@ -405,13 +412,43 @@ def mcp_uninstall(client: str):
         console.print(f"[dim]fit server was not registered in {res['path']}[/dim]")
 
 
-@main.command("splits")
-@click.option("--backfill", is_flag=True, help="Process all running activities missing splits.")
-@click.option("--activity-id", default=None, help="Process a single activity by ID.")
-def splits(backfill: bool, activity_id: str):
-    """Download .fit files and compute per-km splits."""
+def _backfill_splits(conn, config):
+    """Bulk-process all running activities missing splits (rate-controlled). Shared by
+    `fit sync --splits --backfill` and the deprecated `fit splits --backfill`."""
     import time as _time
+    from fit import garmin
+    from fit.analysis import RUNNING_TYPES_SQL
+    from fit.fit_file import process_splits_for_activity
 
+    api = garmin.connect(config["sync"]["garmin_token_dir"])
+    max_downloads = config.get("sync", {}).get("max_fit_downloads", 20)
+    rows = conn.execute(f"""
+        SELECT id FROM activities
+        WHERE type IN {RUNNING_TYPES_SQL} AND (splits_status IS NULL OR splits_status = 'download_failed')
+        ORDER BY date DESC LIMIT ?
+    """, (max_downloads,)).fetchall()
+    console.print(f"[bold]Processing {len(rows)} activities (max {max_downloads} per batch)...[/bold]")
+    total = 0
+    for i, row in enumerate(rows):
+        n = process_splits_for_activity(conn, api, row["id"], config)
+        total += n
+        if n > 0:
+            console.print(f"  [green]✓[/green] {n} splits for {row['id']}")
+        if i < len(rows) - 1:
+            _time.sleep(2)  # Rate control: 2s delay between downloads
+    console.print(f"\n[bold green]Done.[/bold green] Processed {total} total splits across {len(rows)} activities.")
+    return total
+
+
+@main.command("splits")
+@click.option("--backfill", is_flag=True, help="[deprecated] use `fit sync --splits --backfill`.")
+@click.option("--activity-id", default=None, help="Process a single activity by ID (one-off replay).")
+def splits(backfill: bool, activity_id: str):
+    """Per-km splits for a single activity (one-off replay).
+
+    For the bulk backfill use `fit sync --splits --backfill`; `--backfill` here is a deprecated
+    alias that still runs for one release.
+    """
     from fit.config import get_config
     from fit.db import get_db
 
@@ -419,35 +456,19 @@ def splits(backfill: bool, activity_id: str):
     conn = get_db(config, migrations_dir=MIGRATIONS_DIR)
 
     try:
-        from fit import garmin
-        from fit.analysis import RUNNING_TYPES_SQL
-        from fit.fit_file import process_splits_for_activity
-
-        token_dir = config["sync"]["garmin_token_dir"]
-        api = garmin.connect(token_dir)
-        max_downloads = config.get("sync", {}).get("max_fit_downloads", 20)
-
         if activity_id:
+            from fit import garmin
+            from fit.fit_file import process_splits_for_activity
+            api = garmin.connect(config["sync"]["garmin_token_dir"])
             n = process_splits_for_activity(conn, api, activity_id, config)
             console.print(f"  [green]✓[/green] {n} splits for activity {activity_id}")
         elif backfill:
-            rows = conn.execute(f"""
-                SELECT id FROM activities
-                WHERE type IN {RUNNING_TYPES_SQL} AND (splits_status IS NULL OR splits_status = 'download_failed')
-                ORDER BY date DESC LIMIT ?
-            """, (max_downloads,)).fetchall()
-            console.print(f"[bold]Processing {len(rows)} activities (max {max_downloads} per batch)...[/bold]")
-            total = 0
-            for i, row in enumerate(rows):
-                n = process_splits_for_activity(conn, api, row["id"], config)
-                total += n
-                if n > 0:
-                    console.print(f"  [green]✓[/green] {n} splits for {row['id']}")
-                if i < len(rows) - 1:
-                    _time.sleep(2)  # Rate control: 2s delay between downloads
-            console.print(f"\n[bold green]Done.[/bold green] Processed {total} total splits across {len(rows)} activities.")
+            console.print("[yellow]`fit splits --backfill` is deprecated — use "
+                          "`fit sync --splits --backfill`.[/yellow]")
+            _backfill_splits(conn, config)
         else:
-            console.print("Use --backfill to process all missing, or --activity-id for one activity.")
+            console.print("Use `fit sync --splits --backfill` to process all missing, "
+                          "or `--activity-id` for one activity.")
     except Exception as e:
         console.print(f"[bold red]Splits failed:[/bold red] {e}")
         logger.exception("Splits failed")
@@ -1156,13 +1177,13 @@ def races_delete(race_id):
 
 @main.group(invoke_without_command=True)
 @click.pass_context
-def target(ctx):
-    """Manage target race."""
+def objective(ctx):
+    """Manage the target race and its derived objectives."""
     if ctx.invoked_subcommand is None:
         ctx.invoke(target_show)
 
 
-@target.command("set")
+@objective.command("set")
 @click.argument("race_id", type=int)
 def target_set(race_id):
     """Set the target race. Objectives re-derive automatically."""
@@ -1214,7 +1235,7 @@ def target_set(race_id):
         conn.close()
 
 
-@target.command("show")
+@objective.command("show")
 def target_show():
     """Show current target race, fitness profile, and objectives."""
     from rich.panel import Panel
@@ -1226,7 +1247,7 @@ def target_show():
     try:
         race = get_target_race(conn)
         if not race:
-            console.print("  No target race set. Use 'fit target set <race_id>' to set one.")
+            console.print("  No target race set. Use 'fit objective set <race_id>' to set one.")
             console.print("  [dim]Run 'fit races' to see available races.[/dim]")
             return
 
@@ -1379,7 +1400,7 @@ def target_show():
         conn.close()
 
 
-@target.command("clear")
+@objective.command("clear")
 def target_clear():
     """Remove the target race."""
     from fit.goals import clear_target_race
@@ -1390,6 +1411,35 @@ def target_clear():
         console.print("  [green]✓ Target race cleared[/green]")
     finally:
         conn.close()
+
+
+# Deprecated alias: `fit target …` → `fit objective …` (hidden; one release, then remove).
+@main.group("target", hidden=True, invoke_without_command=True)
+@click.pass_context
+def target(ctx):
+    """Deprecated — use `fit objective`."""
+    console.print("[yellow]`fit target` is deprecated — use `fit objective`.[/yellow]")
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(target_show)
+
+
+@target.command("set")
+@click.argument("race_id", type=int)
+@click.pass_context
+def _target_set_alias(ctx, race_id):
+    ctx.forward(target_set)
+
+
+@target.command("show")
+@click.pass_context
+def _target_show_alias(ctx):
+    ctx.invoke(target_show)
+
+
+@target.command("clear")
+@click.pass_context
+def _target_clear_alias(ctx):
+    ctx.invoke(target_clear)
 
 
 @main.group(invoke_without_command=True)
@@ -1555,9 +1605,9 @@ def plan_show(ctx, days: int, upcoming: int):
         conn.close()
 
 
-@plan.command("sync")
+@plan.command("sync-calendar")
 def plan_sync_cmd():
-    """Sync planned workouts from Garmin Calendar (Runna)."""
+    """Pull Runna planned workouts from the Garmin Calendar (not a re-sync of activities)."""
     from fit.garmin import connect
     from fit.plan import sync_planned_workouts, update_plan_statuses
 
@@ -1574,6 +1624,14 @@ def plan_sync_cmd():
             console.print("  [dim]No new workouts found in Garmin Calendar[/dim]")
     finally:
         conn.close()
+
+
+@plan.command("sync", hidden=True)
+@click.pass_context
+def _plan_sync_alias(ctx):
+    """Deprecated — use `fit plan sync-calendar`."""
+    console.print("[yellow]`fit plan sync` is deprecated — use `fit plan sync-calendar`.[/yellow]")
+    ctx.invoke(plan_sync_cmd)
 
 
 @plan.command("import")
@@ -1719,6 +1777,15 @@ def doctor():
         except Exception:
             t.add_row("[dim]—[/]", "Splits", "table missing")
 
+        # Coaching core (add-fit-coach-cli): the context-assembly `fit coach` reuses must stay wired.
+        try:
+            from fit.coaching.context import assemble_coaching_context
+            assert callable(assemble_coaching_context) and assemble_coaching_context(conn)
+            t.add_row("[green]✓[/]", "Coaching", "context core wired (fit coach)")
+        except Exception as e:
+            t.add_row("[red]✗[/]", "Coaching", f"context core broken: {str(e)[:60]}")
+            issues += 1
+
         status_str = "[green]healthy[/]" if issues == 0 else f"[yellow]{issues} issue(s)[/]"
         console.print(Panel(t, title=f"[bold]Doctor[/] {status_str}", border_style="blue" if issues == 0 else "yellow", padding=(0, 1)))
     finally:
@@ -1814,17 +1881,21 @@ def recompute(recompute_all: bool, force: bool):
 @main.command()
 @click.argument("metric", type=click.Choice(["max_hr", "lthr", "vdot"]))
 @click.argument("value", type=float, required=False)
+@click.option("--history", is_flag=True, help="Show this metric's reading history instead of confirming a value.")
 @click.option("--date", "cal_date", default=None,
               help="Effective-from date YYYY-MM-DD (default today). Use a PAST date to "
                    "record a historical correction, then `fit recompute --force` to "
                    "reclassify only that window with this value.")
-def calibrate(metric: str, value: float | None, cal_date: str | None):
+@click.pass_context
+def calibrate(ctx, metric: str, value: float | None, history: bool, cal_date: str | None):
     """Confirm a physiological metric (max_hr, lthr, or vdot).
 
     Pass VALUE to set it non-interactively (e.g. `fit calibrate vdot 41`);
     omit it for the guided prompt. A confirmed value becomes the active anchor
     and stays put until you confirm a new one. `--date` back-dates it so a
-    correction applies to the period it belongs to, not today.
+    correction applies to the period it belongs to, not today. `--history` shows
+    the reading trail (for the full metric set incl. aet/vo2max/weight, use
+    `fit calibrate-history`).
     """
     from datetime import date as d
 
@@ -1832,6 +1903,10 @@ def calibrate(metric: str, value: float | None, cal_date: str | None):
 
     from fit.calibration import (add_calibration, get_calibration_anchor,
                                  evaluate_suggestions, accept_suggestion, reject_suggestion)
+
+    if history:                                  # view the trail, don't confirm a value
+        ctx.invoke(calibrate_history, metric=metric)
+        return
 
     try:
         eff_date = d.fromisoformat(cal_date) if cal_date else d.today()
@@ -1988,7 +2063,7 @@ def status():
         else:
             header = (
                 f"[bold]fit[/]  ·  synced {last_sync}\n"
-                "[dim]No target race. Run: fit target set <race_id>[/]"
+                "[dim]No target race. Run: fit objective set <race_id>[/]"
             )
         console.print(Panel(
             header, border_style="bright_blue", padding=(0, 2),
@@ -2384,7 +2459,7 @@ def status():
             console.print("  [green]✓[/] All calibrations current")
 
         console.print(
-            "\n  [dim]Details: fit target show · Dashboard: fit report[/]"
+            "\n  [dim]Details: fit objective show · Dashboard: fit report[/]"
         )
     finally:
         conn.close()

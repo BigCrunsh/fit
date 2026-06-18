@@ -3372,7 +3372,7 @@ def _training_objectives(conn):
     return {
         "active": bool(race),
         "slots": slots,
-        "prompt": None if race else "Set a target race with `fit target set`",
+        "prompt": None if race else "Set a target race with `fit objective set`",
     }
 
 

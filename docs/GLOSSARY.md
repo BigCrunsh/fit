@@ -145,7 +145,8 @@ so the line's steepness *is* the coefficient (durability-param-panels).
 - **Objective** — the athlete-facing term for a training target (the UI says "objectives").
   Auto-derived from the target race via `derive_objectives()`; never manually CRUD'd. `goals`
   is only the persistence name — the domain term is *Objective*, and code should speak it.
-  *(Naming decision; code still mixes the two — a code rename is a candidate OpenSpec change.)*
+  *(CLI done: `fit objective set/show/clear` is canonical, `fit target` a deprecated alias —
+  tidy-cli-surface. The `goals` table + `goal_log` keep the persistence name.)*
 - **readiness** — reserved for Garmin's measured **training readiness**
   (`daily_health.training_readiness`). Two adjacent decisions are deliberately *not*
   "readiness": phase advancement (whether to progress the training phase) and today's

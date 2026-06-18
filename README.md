@@ -105,7 +105,7 @@ AFTER A RACE (automatic on next sync):
                             "S25 result: 22:15 → VDOT 45.5 → marathon projection: 3:55"
 
 WHEN CHANGING GOALS (rare):
-  fit target set <id>     ← switch target race, objectives recalculate
+  fit objective set <id>  ← switch target race, objectives recalculate
   fit races add           ← add a new race to the calendar
 ```
 

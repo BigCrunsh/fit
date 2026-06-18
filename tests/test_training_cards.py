@@ -91,7 +91,7 @@ class TestTrainingObjectives:
         assert result["active"] is False
         assert len(result["slots"]) == 4
         assert all(s["status"] == "deactivated" for s in result["slots"])
-        assert "fit target set" in result["prompt"]
+        assert "fit objective set" in result["prompt"]
 
     def test_active_with_race_and_goals(self, db):
         """With target race and derived goals, slots show current vs target."""
