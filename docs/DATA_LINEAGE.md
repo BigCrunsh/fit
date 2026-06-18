@@ -252,7 +252,7 @@ flowchart LR
 - **`calibration`** — metric, value, method, confidence, date, flags (read only via `get_active_calibration` / `get_calibration_anchor`).
 - **`race_calendar`**, **`training_phases`**, **`goals`**, **`planned_workouts`**, **`checkins`**, **`body_comp`**, **`weather`**, **`correlations`**.
 - **config** — `profile.zones_*`, `zone_model`, `max_hr`, `analysis.cycling_load_weight`, `coaching.readiness_gate_threshold`.
-- **external** — `reports/coaching.json` (coaching notes, written by the fit-coach skill).
+- **external** — `reports/coaching.json` (coaching notes, written by `fit coach` via `fit/coaching/`).
 
 ---
 
@@ -378,6 +378,7 @@ are in `charts.py:_all_charts`.
 |---|---|---|
 | Calibration panel / data-health | `_calibration_panel` (`cards.py:1254`), `_data_health_panel` (`:1261`) | `get_calibration_status`, `check_data_sources` |
 | Coaching insights | `_coaching` (`cards.py:1024`) | coaching.json |
+| Coaching analysis (producer) | `fit coach` → `fit.coaching.runner.run_coach` | `fit.coaching.context.assemble_coaching_context` + `fit.coaching.prompt` → claude CLI → `fit.coaching.save` → coaching.json |
 
 ### Charts (`charts.py:_all_charts`)
 `chart-volume` (Training, weekly_agg/activities) · `chart-readiness`/`chart-rhr-hrv`/`chart-sleep`/`chart-stress`/`chart-acwr` (Readiness, daily_health/weekly_agg) · `chart-weight`/`chart-efficiency`/`chart-vo2`/`chart-zones`/`chart-drift`/`chart-drift-trend`/`chart-pacecv`/`chart-effort-gap`/`chart-cadence`/`chart-marathon-pred`/`chart-cal-<metric>` (Profile) · `chart-plan-adherence`/`chart-compliance` (Training).

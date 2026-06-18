@@ -563,8 +563,8 @@ def _attention_items(conn):
                     _add(severity="info",
                          message=f"Coaching review is {age}d old",
                          tag="coaching_stale",
-                         command="/fit-coach",
-                         detail="Run the coaching skill in Claude Code to refresh insights.",
+                         command="fit coach",
+                         detail="Run `fit coach` to refresh insights, then `fit report`.",
                          source=f"coaching.json: report_date {rd}.")
     except Exception:
         pass  # missing/malformed coaching.json shouldn't block the panel

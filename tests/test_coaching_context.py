@@ -1,30 +1,24 @@
-"""Tests for the MCP coaching-context builders (mcp/server.py).
+"""Tests for the coaching-context builders (`fit/coaching/context.py`).
 
-The server module loads config at import time and `mcp/` shadows the
-installed `mcp` library name, so we path-load it once and monkeypatch the
-module-level `config` to isolate the zone-model logic. The regression that
-matters: the "IMPORTANT easy ceiling" line must reflect the ACTIVE zone
-model — emitting the max-HR ceiling (134) while zone_model is 'lthr' would
-make coaching flag legitimate Z2 easy runs (up to 153 at LTHR 172) as too
-hard.
+These moved out of `mcp/server.py` into the shared `fit/coaching/` core (add-fit-coach-cli) —
+it's a normal importable module now. We monkeypatch the module-level `config` to isolate the
+zone-model logic. The regression that matters: the "IMPORTANT easy ceiling" line must reflect the
+ACTIVE zone model — emitting the max-HR ceiling (134) while zone_model is 'lthr' would make coaching
+flag legitimate Z2 easy runs (up to 153 at LTHR 172) as too hard.
 """
 
-import importlib.util
 import sqlite3
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SERVER_PATH = REPO_ROOT / "mcp" / "server.py"
 
 
 @pytest.fixture(scope="module")
 def server():
-    spec = importlib.util.spec_from_file_location("fit_mcp_server", SERVER_PATH)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    import fit.coaching.context as ctx
+    return ctx
 
 
 @pytest.fixture

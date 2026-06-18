@@ -14,14 +14,15 @@ fit sync --full && fit recompute      # init: pull all history + re-enrich
 fit checkin                           # daily check-in (sleep, hydration, alcohol — RPE comes from Garmin)
 fit backfill rpe                      # one-shot: import directWorkoutRpe/Feel/ComplianceScore from Garmin for all running activities
 fit report                            # generate dashboard → ~/.fit/reports/dashboard.html
+fit coach                             # coaching analysis via the claude CLI → reports/coaching.json
 fit status                            # quick overview: countdown, phase, ACWR, last 7 days
 fit doctor                            # validate pipeline health
-fit mcp install                       # register MCP server with Claude Desktop / Code (needed for /fit-coach)
+fit mcp install                       # register the MCP data tools with Claude Desktop / Code (free-form exploration)
 ```
 
 ## Design Decisions That Prevent Mistakes
 
-- **Keep the MCP and the coaching skill in sync** — `mcp/server.py` (`get_coaching_context` et al.) and `.claude/skills/fit-coach/SKILL.md` consume the same zone model, metrics, calibrations, phases, and analysis semantics. Whenever you change any of those (or rename a metric, flip the default zone model, alter a calibration/anchor rule, etc.), check whether the coaching context **and** the skill need updating too — otherwise coaching silently drifts from the dashboard. They are a contract, not independent files.
+- **Coaching is CLI-owned (`fit/coaching/`)** — `fit coach` shells out to the `claude` CLI; the context-assembly (`context.py`), the coaching prompt (`prompt.py`), and the notes writer (`save.py`) are one source of truth. This **replaced** the former MCP-tools + `.claude/skills/fit-coach/SKILL.md` split (which had to be hand-synced; the skill is now a redirect stub). The MCP (`mcp/server.py`) now exposes only its 6 read-only data tools. The contract is now internal: `prompt.py`/`context.py` still encode the same zone model, metrics, calibrations, phases, and forecast semantics as the dashboard — change a zone/metric/anchor rule and update them too. A byte-for-byte test pins `assemble_coaching_context` to its prior output (the SSOT regression guard).
 - **INSERT ON CONFLICT**, not INSERT OR REPLACE — derived metrics are preserved on re-sync
 - **Rolling 7-day window, not ISO weeks** — `compute_rolling_week()` (today-6 → today). ACWR is hybrid: rolling 7d acute + ISO-week chronic. Streaks stay ISO-week.
 - **Phase-specific targets** — compare against active training phase targets, not fixed 80/20

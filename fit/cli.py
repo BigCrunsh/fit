@@ -327,7 +327,10 @@ def mcp(ctx):
 @click.option("--client", type=click.Choice(["desktop", "claude-code", "all"]),
               default="all", help="Which client to set up (default: all).")
 def mcp_install(client: str):
-    """Register the fit MCP server so /fit-coach and friends can reach it.
+    """Register the fit MCP server so Claude can reach the fitness data tools.
+
+    (Coaching now lives in the `fit coach` command, not the MCP — the server
+    exposes the 6 read-only data tools for free-form exploration.)
 
     Desktop gets an idempotent JSON merge into its app-support config using
     the current Python interpreter. Claude Code is already wired via the
@@ -2385,3 +2388,55 @@ def status():
         )
     finally:
         conn.close()
+
+
+@main.command()
+@click.option("--no-save", is_flag=True, help="Print the analysis without writing reports/coaching.json.")
+@click.option("--json", "as_json", is_flag=True, help="Print the raw insights JSON (implies --no-save).")
+@click.option("--days", type=int, default=None, help="Context window in days (default: all available).")
+@click.option("--model", default=None, help="Override the Claude model.")
+@click.option("--timeout", type=int, default=None, help="Claude CLI timeout in seconds (default 180).")
+@click.option("--force", is_flag=True, help="Skip the stale-data advisory.")
+def coach(no_save, as_json, days, model, timeout, force):
+    """Coaching analysis via the Claude CLI.
+
+    Assembles your training context, asks the headless `claude` CLI for a prioritized coach's read,
+    and saves notes to the dashboard (reports/coaching.json). Replaces the former MCP coaching tools
+    + /fit-coach skill. Fails closed: any error leaves coaching.json untouched.
+    """
+    import json as _json
+    from datetime import date as _date
+    from fit.coaching.runner import run_coach, CoachError
+
+    save = not (no_save or as_json)
+    conn = _conn()
+    try:
+        if not force:
+            last = conn.execute("SELECT MAX(date) FROM activities").fetchone()[0]
+            try:
+                if last and (_date.today() - _date.fromisoformat(str(last)[:10])).days > 3:
+                    console.print(f"[yellow]⚠ Latest activity is {last} — run `fit sync` for a current read "
+                                  "(or pass --force).[/yellow]")
+            except (ValueError, TypeError):
+                pass
+        with console.status("Asking Claude for a coaching read…"):
+            res = run_coach(conn, save=save, days=days, model=model, timeout=timeout)
+    except CoachError as e:
+        console.print(f"[red]coach: {e}[/red]")
+        raise SystemExit(1)
+    finally:
+        conn.close()
+
+    if as_json:
+        console.print(res["insights_json"])
+        return
+
+    _color = {"critical": "red", "warning": "yellow", "positive": "green", "info": "dim", "target": "magenta"}
+    for ins in _json.loads(res["insights_json"]):
+        t = ins.get("type", "info")
+        console.print(f"\n[{_color.get(t, 'white')}]● {t.upper()}[/] [bold]{ins.get('title', '')}[/bold]")
+        console.print(f"  {ins.get('body', '')}")
+    if save:
+        console.print("\n[green]✓ Saved to reports/coaching.json[/green] — run `fit report` to refresh the dashboard.")
+    else:
+        console.print("\n[dim](not saved — --no-save)[/dim]")
