@@ -2,11 +2,9 @@
 
 ## Purpose
 TBD — normalized from archived change deltas; update Purpose.
-
 ## Requirements
-
 ### Requirement: Auto-sync planned workouts from Garmin Calendar
-The system SHALL sync planned workouts by fetching Garmin Calendar items via `/calendar-service/year/{y}/month/{m}`. Filter for workout-type items. Parse Runna naming convention ("W 2 Mi. Intervalle - 1-km-Wiederholungen (7,5 km)") to extract: week number, day (Mo/Di/Mi/Do/Fr/Sa/So), workout type (Dauerlauf/Tempo/Intervalle/Langer Lauf), target distance. Fetch structured segments via `get_workout_by_id()` for warmup/intervals/cooldown detail.
+The system SHALL sync planned workouts by fetching Garmin Calendar items via `/calendar-service/year/{y}/month/{m}`. Filter for workout-type items. Parse Runna naming convention ("W 2 Mi. Intervalle - 1-km-Wiederholungen (7,5 km)") to extract: week number, day (Mo/Di/Mi/Do/Fr/Sa/So), workout type (Dauerlauf/Tempo/Intervalle/Langer Lauf), target distance. Fetch structured segments via `get_workout_by_id()` for warmup/intervals/cooldown detail. The manual trigger is `fit plan sync-calendar` (named for what it does — pull Runna workouts from the Garmin Calendar, not re-sync activities); `fit plan sync` remains a hidden, deprecated alias that forwards to it for one release.
 
 Garmin Calendar API is undocumented — implement as "best effort." CSV fallback (task 6.5) SHALL be equally robust, not an afterthought.
 
@@ -17,6 +15,10 @@ Garmin Calendar API is undocumented — implement as "best effort." CSV fallback
 #### Scenario: Garmin API unavailable
 - **WHEN** Garmin Calendar returns an error
 - **THEN** plan sync skipped with warning, existing planned_workouts preserved
+
+#### Scenario: Deprecated `fit plan sync` alias still works
+- **WHEN** user runs `fit plan sync` (the former subcommand name)
+- **THEN** it behaves identically to `fit plan sync-calendar` and prints a one-line deprecation notice
 
 ### Requirement: Planned workouts schema with versioning
 The `planned_workouts` table SHALL have columns: date, workout_name, workout_type, target_distance_km, target_zone, structure (JSON for segments), plan_week, plan_day, garmin_workout_id, plan_version, sequence_ordinal, imported_at, status. Unique constraint on (date, plan_version, sequence_ordinal) — allows multiple workouts per day.
@@ -93,7 +95,6 @@ The system SHALL detect phase transition readiness: "Phase 1 objectives met (Z2 
 - **WHEN** weekly km below phase target for 3+ consecutive weeks
 - **THEN** coaching: "Below volume target for 3 weeks — consider extending Phase 1"
 
-
 ### Requirement: Plan adherence tracks zone/intensity compliance
 Plan adherence SHALL track not just distance compliance but also zone and intensity compliance per workout. Two new fields per adherence record: `zone_match` (boolean: did actual HR zone match planned zone?) and `intensity_override` (boolean: was a planned easy/Z2 workout executed at Z3+ intensity?).
 
@@ -122,3 +123,4 @@ A compliance detail table SHALL render below the plan adherence chart, showing p
 #### Scenario: Missed workout in table
 - **WHEN** a planned Tempo workout was not executed
 - **THEN** table row shows: date, "Tempo", "7.5 km", "--", "--", "missed"
+

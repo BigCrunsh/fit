@@ -2,11 +2,9 @@
 
 ## Purpose
 TBD — normalized from archived change deltas; update Purpose.
-
 ## Requirements
-
 ### Requirement: .fit file download with opt-in and caching
-The system SHALL download .fit files gated behind `sync.download_fit_files` config toggle (default false) or `fit sync --splits` flag. Files cached in `~/.fit/fit-files/{activity_id}.fit`. Track status via `fit_file_path` and `splits_status` columns on activities (pending/parsed/failed/skipped). Max downloads per sync: configurable (default 20). Backfill: `fit splits --backfill` with rate control (max 20 per batch, 2s delay to avoid Garmin throttling).
+The system SHALL download .fit files gated behind `sync.download_fit_files` config toggle (default false) or `fit sync --splits` flag. Files cached in `~/.fit/fit-files/{activity_id}.fit`. Track status via `fit_file_path` and `splits_status` columns on activities (pending/parsed/failed/skipped). Max downloads per sync: configurable (default 20). Bulk backfill: `fit sync --splits --backfill` with rate control (max 20 per batch, 2s delay to avoid Garmin throttling). `fit splits --activity-id <id>` remains for one-off per-activity replay; `fit splits --backfill` is a deprecated alias of `fit sync --splits --backfill` (warns, still runs for one release).
 
 #### Scenario: Download disabled by default
 - **WHEN** `sync.download_fit_files` is false and user runs `fit sync`
@@ -17,8 +15,12 @@ The system SHALL download .fit files gated behind `sync.download_fit_files` conf
 - **THEN** splits_status='failed', error logged, sync continues
 
 #### Scenario: Rate-limited backfill
-- **WHEN** `fit splits --backfill` processes 200+ activities
+- **WHEN** `fit sync --splits --backfill` processes 200+ activities
 - **THEN** downloads 20 at a time with 2s delay between batches
+
+#### Scenario: Deprecated `fit splits --backfill` still works
+- **WHEN** user runs `fit splits --backfill` (the former command)
+- **THEN** it runs the same bulk backfill and prints a one-line deprecation notice pointing at `fit sync --splits --backfill`
 
 ### Requirement: Per-km split extraction with zone time
 The system SHALL parse .fit files into `activity_splits` table with: activity_id, split_num, distance_km, time_sec, pace_sec_per_km, avg_hr, avg_cadence, elevation_gain_m, avg_speed_m_s, time_above_z2_ceiling_sec, start_distance_m, end_distance_m. The time_above_z2_ceiling_sec per split fixes the "entire run = one zone" problem.
@@ -83,7 +85,6 @@ The system SHALL bundle a minimal synthetic .fit fixture in tests/fixtures/ (not
 - **WHEN** test parses the synthetic .fit fixture
 - **THEN** correct splits, drift detection, and DB storage verified
 
-
 ### Requirement: Garmin .fit file ZIP extraction
 Garmin downloads .fit files as ZIP archives, not raw .fit files. The system SHALL detect ZIP files using `zipfile.is_zipfile()` and automatically extract the .fit file before parsing.
 
@@ -98,3 +99,4 @@ Garmin downloads .fit files as ZIP archives, not raw .fit files. The system SHAL
 #### Scenario: ZIP with no .fit file inside
 - **WHEN** a downloaded ZIP does not contain a .fit file
 - **THEN** splits_status='failed', error logged, processing continues
+
