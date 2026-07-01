@@ -127,7 +127,7 @@ def get_health_summary(days: int = 7) -> str:
 
 @mcp.tool()
 def get_run_context(date: str) -> str:
-    """Get full context for a run on a specific date (activity + health + checkin + weather + weight)."""
+    """Get full context for a run on a specific date (activity + health + weather + weight)."""
     conn = _get_conn()
     try:
         rows = conn.execute("SELECT * FROM v_run_days WHERE date = ?", (date,)).fetchall()

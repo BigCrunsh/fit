@@ -87,7 +87,7 @@ class TestLongRunDualCondition:
 
 
 class TestSRPE:
-    """Test sRPE join: checkin RPE * activity duration."""
+    """Test sRPE: per-activity RPE (activities.rpe) * activity duration."""
 
     def _insert_activity(self, conn, id, date, duration_min=45, training_load=100, rpe=None):
         conn.execute("""
@@ -466,67 +466,3 @@ class TestAdaptiveReadinessGate:
         types = [a["type"] for a in alerts]
         assert "readiness_gate" in types
 
-
-# ════════════════════════════════════════════════════════════════
-# 4.14 Effect Size Filter
-# ════════════════════════════════════════════════════════════════
-
-
-class TestEffectSizeFilter:
-    """Test correlation actionability filter: n>=15 AND |r|>=0.2."""
-
-    def test_actionable(self, db):
-        """n>=15 and |r|>=0.3 should be actionable."""
-        db.execute("""
-            INSERT INTO correlations (metric_pair, spearman_r, sample_size, status, confidence)
-            VALUES ('test_pair', -0.35, 25, 'computed', 'high')
-        """)
-        db.commit()
-        from fit.correlations import get_actionable_correlations
-        results = get_actionable_correlations(db)
-        assert len(results) == 1
-        assert results[0]["is_actionable"] is True
-
-    def test_not_actionable_small_n(self, db):
-        """n<15 should not be actionable even with large |r|."""
-        db.execute("""
-            INSERT INTO correlations (metric_pair, spearman_r, sample_size, status, confidence)
-            VALUES ('test_pair2', -0.5, 10, 'computed', 'moderate')
-        """)
-        db.commit()
-        from fit.correlations import get_actionable_correlations
-        results = get_actionable_correlations(db)
-        assert len(results) == 0
-
-    def test_not_actionable_small_effect(self, db):
-        """n>=15 but |r|<0.2 should not be actionable."""
-        db.execute("""
-            INSERT INTO correlations (metric_pair, spearman_r, sample_size, status, confidence)
-            VALUES ('test_pair3', 0.1, 30, 'computed', 'high')
-        """)
-        db.commit()
-        from fit.correlations import get_actionable_correlations
-        results = get_actionable_correlations(db)
-        assert len(results) == 0
-
-    def test_boundary_exactly_15_and_0_2(self, db):
-        """Exactly n=15 and |r|=0.2 should be actionable."""
-        db.execute("""
-            INSERT INTO correlations (metric_pair, spearman_r, sample_size, status, confidence)
-            VALUES ('test_pair4', 0.2, 15, 'computed', 'moderate')
-        """)
-        db.commit()
-        from fit.correlations import get_actionable_correlations
-        results = get_actionable_correlations(db)
-        assert len(results) == 1
-
-    def test_null_spearman_r(self, db):
-        """NULL spearman_r should not be actionable."""
-        db.execute("""
-            INSERT INTO correlations (metric_pair, spearman_r, sample_size, status, confidence)
-            VALUES ('test_pair5', NULL, 20, 'computed', 'low')
-        """)
-        db.commit()
-        from fit.correlations import get_actionable_correlations
-        results = get_actionable_correlations(db)
-        assert len(results) == 0

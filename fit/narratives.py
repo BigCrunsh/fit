@@ -176,26 +176,3 @@ def generate_body_summary(conn: sqlite3.Connection) -> str | None:
             parts.append("Weight: at target")
 
     return ". ".join(parts) + "." if parts else None
-
-
-def generate_checkin_progress(conn: sqlite3.Connection) -> dict:
-    """Progress toward correlation unlock thresholds.
-
-    Returns dict with counts and progress percentages.
-    """
-    total = conn.execute("SELECT COUNT(*) FROM checkins").fetchone()[0]
-    with_alcohol = conn.execute("SELECT COUNT(*) FROM checkins WHERE alcohol IS NOT NULL").fetchone()[0]
-    with_sleep = conn.execute("SELECT COUNT(*) FROM checkins WHERE sleep_quality IS NOT NULL").fetchone()[0]
-    with_rpe = conn.execute("SELECT COUNT(*) FROM checkins WHERE rpe IS NOT NULL").fetchone()[0]
-
-    target = 20  # minimum for correlations
-
-    return {
-        "total": total,
-        "target": target,
-        "pct": min(total / target * 100, 100),
-        "remaining": max(0, target - total),
-        "with_alcohol": with_alcohol,
-        "with_sleep": with_sleep,
-        "with_rpe": with_rpe,
-    }

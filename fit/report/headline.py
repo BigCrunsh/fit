@@ -5,8 +5,6 @@ from datetime import date
 
 
 def generate_headline(readiness: int | None, acwr: float | None, phase: dict | None,
-                      last_checkin_date: str | None, today: str = None,
-                      sleep_quality: str | None = None,
                       conn: sqlite3.Connection | None = None,
                       config: dict | None = None) -> str:
     """Generate a daily headline sentence based on current state.
@@ -21,13 +19,13 @@ def generate_headline(readiness: int | None, acwr: float | None, phase: dict | N
         race_headline = _race_anchored_headline(conn, phase)
         if race_headline:
             # Append safety/recovery signal if needed
-            safety = _safety_signal(readiness, acwr, sleep_quality)
+            safety = _safety_signal(readiness, acwr)
             if safety:
                 return f"{race_headline} | {safety}"
             return race_headline
 
     # Fallback: original rule-based headline
-    return _classic_headline(readiness, acwr, phase, last_checkin_date, today, sleep_quality)
+    return _classic_headline(readiness, acwr, phase)
 
 
 def _race_anchored_headline(conn: sqlite3.Connection, phase: dict | None) -> str | None:
@@ -104,10 +102,8 @@ def _race_anchored_headline(conn: sqlite3.Connection, phase: dict | None) -> str
 
 
 def _safety_signal(readiness: int | None, acwr: float | None,
-                   sleep_quality: str | None, heat_affected: bool = False) -> str | None:
+                   heat_affected: bool = False) -> str | None:
     """Return a safety/recovery signal string, or None."""
-    if sleep_quality == "Poor":
-        return "Recovery day recommended"
     if readiness is not None and readiness < 50:
         return f"Recovery day (readiness {readiness})"
     if acwr is not None and acwr > 1.5:
@@ -119,14 +115,12 @@ def _safety_signal(readiness: int | None, acwr: float | None,
     return None
 
 
-def _classic_headline(readiness, acwr, phase, last_checkin_date, today, sleep_quality):
+def _classic_headline(readiness, acwr, phase):
     """Original rule-based headline (fallback when no race data)."""
     parts = []
 
     # Recovery signal
-    if sleep_quality == "Poor":
-        parts.append("Recovery day recommended (sleep quality Poor).")
-    elif readiness is not None:
+    if readiness is not None:
         if readiness < 50:
             parts.append(f"Recovery day recommended (readiness {readiness}).")
         elif readiness >= 75:
@@ -159,11 +153,6 @@ def _classic_headline(readiness, acwr, phase, last_checkin_date, today, sleep_qu
             parts.append(f"{phase_name}: a quality session (tempo or intervals) is appropriate today.")
         else:
             parts.append(f"{phase_name}: easy run today, save quality for a high-readiness day.")
-
-    # Stale checkin
-    if last_checkin_date and today:
-        if last_checkin_date < today:
-            parts.append("No check-in today \u2014 run `fit checkin` before training.")
 
     if not parts:
         parts.append("Sync data to see your training headline.")

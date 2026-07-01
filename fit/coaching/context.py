@@ -197,20 +197,9 @@ def _ctx_training(conn) -> list[str]:
     return s
 
 
-def _ctx_correlations(conn) -> list[str]:
-    """Top correlations + recent alerts."""
+def _ctx_alerts(conn) -> list[str]:
+    """Recent alerts."""
     s = []
-    try:
-        corrs = conn.execute("""
-            SELECT metric_pair, spearman_r, sample_size, confidence
-            FROM correlations WHERE status = 'computed' AND spearman_r IS NOT NULL
-            ORDER BY ABS(spearman_r) DESC LIMIT 5
-        """).fetchall()
-        if corrs:
-            s.append("Top correlations: " + ", ".join(
-                f"{c['metric_pair']} r={c['spearman_r']:+.2f} (n={c['sample_size']}, {c['confidence']})" for c in corrs))
-    except Exception:
-        pass
     try:
         from fit.alerts import get_recent_alerts
         alerts = get_recent_alerts(conn, days=7)
@@ -386,7 +375,7 @@ def assemble_coaching_context(conn) -> str:
     sections.extend(_ctx_profile(conn))
     sections.extend(_ctx_health(conn))
     sections.extend(_ctx_training(conn))
-    sections.extend(_ctx_correlations(conn))
+    sections.extend(_ctx_alerts(conn))
     sections.extend(_ctx_goals(conn))
     sections.extend(_ctx_forecast(conn))
     sections.extend(_ctx_plan(conn))

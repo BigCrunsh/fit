@@ -63,12 +63,8 @@ The Today tab SHALL display: (1) a **headline sentence** synthesizing readiness,
 - **THEN** headline reads: "Ready for training. Phase 2 allows a tempo session today. ACWR is safe at 1.1."
 
 #### Scenario: Recovery day recommended
-- **WHEN** readiness < 50 OR ACWR > 1.3 OR sleep_quality is "Poor"
+- **WHEN** readiness < 50 OR ACWR > 1.3
 - **THEN** headline reads: "Recovery day recommended. Readiness is 42, ACWR at 1.4. Easy walk or rest."
-
-#### Scenario: Stale check-in prompt
-- **WHEN** last check-in was > 1 day ago
-- **THEN** headline includes: "No check-in today. Run `fit checkin` before training."
 
 #### Scenario: Phase 1 with no quality sessions
 - **WHEN** active phase is Phase 1 (quality_sessions_per_week = 0) and readiness is high
@@ -87,13 +83,6 @@ The Today tab SHALL show unacknowledged alerts from the last 7 days, rendered as
 #### Scenario: Unacknowledged alert shown
 - **WHEN** an unacknowledged alert exists from within the last 7 days
 - **THEN** the Today tab renders it as a colored alert box with the alert message
-
-### Requirement: Correlation cards on Coach tab
-The Coach tab SHALL display correlation results as horizontal bar cards, sorted by absolute Spearman r. Each card shows: label (with underscores replaced and lag notation), r value (formatted as +/-0.XX), sample size, confidence level, bar width proportional to |r|, and color (green for positive, red for negative correlations).
-
-#### Scenario: Correlation card rendered
-- **WHEN** the Coach tab renders a negative correlation result
-- **THEN** a horizontal bar card shows its label, r value, sample size, confidence, bar width proportional to |r|, and red color
 
 ### Requirement: Journey timeline visualization
 The Today tab SHALL display a horizontal journey timeline for the primary goal, showing: all training phases as segments (colored by status: completed=solid, active=gradient, planned=outline), the current position marked ("You are here — Week 3 of Phase 1"), key metrics below each phase (current vs target), and the race date at the end. This provides emotional context — where you are in the story.
@@ -116,17 +105,6 @@ The Today tab header SHALL display status cards for: Readiness (latest, safety-c
 #### Scenario: Insufficient data for delta
 - **WHEN** fewer than 28 days of data
 - **THEN** delta annotations omitted
-
-### Requirement: Latest check-in displayed on Today tab
-The Today tab SHALL display the most recent check-in: hydration, alcohol, legs, sleep quality, RPE, and notes.
-
-#### Scenario: Check-in displayed
-- **WHEN** at least one check-in exists
-- **THEN** latest check-in date and values shown
-
-#### Scenario: No check-ins exist
-- **WHEN** no check-ins
-- **THEN** "No check-ins yet. Run `fit checkin` to start."
 
 ### Requirement: Calibration and data source health panel (collapsed by default)
 The Today tab SHALL include a collapsible calibration + data health panel. Collapsed by default (showing only a summary: "2 warnings" or "All healthy"). When expanded: calibration status per metric (value, method, date, staleness color), data source status per source (active/stale/missing with Garmin instructions), active test prompts.
@@ -186,11 +164,7 @@ All time-series charts (VO2max, weight, training load, volume, speed_per_bpm, ca
 - **THEN** a vertical marker labeled "Phase 2 start" appears on all time-series charts
 
 ### Requirement: Body tab shows recovery and physiology (last 14-21 days)
-The Body tab SHALL display recent-state data (last 14-21 days, configurable): readiness+RHR+HRV combo chart (readiness bars safety-colored, RHR line, HRV dashed line), sleep composition stacked bars (deep/REM/light) with average annotations, **sleep quality mismatch flags** (Garmin hours vs subjective quality), weight trend (with race target and event annotations), stress vs body battery chart.
-
-#### Scenario: Sleep quality mismatch
-- **WHEN** Garmin reports 8h sleep but checkin sleep_quality is "Poor"
-- **THEN** that day's sleep bar has a warning badge: "8h but felt Poor"
+The Body tab SHALL display recent-state data (last 14-21 days, configurable): readiness+RHR+HRV combo chart (readiness bars safety-colored, RHR line, HRV dashed line), sleep composition stacked bars (deep/REM/light) with average annotations, weight trend (with race target and event annotations), stress vs body battery chart.
 
 #### Scenario: Recovery charts render
 - **WHEN** 16 days of daily_health data
@@ -345,15 +319,7 @@ The dashboard generator SHALL be decomposed into a `fit/report/sections/` packag
 - **THEN** it gets the same API as before (backward compatible), delegating to sections/ internally
 
 ### Requirement: All sections always render with empty states
-Every dashboard section SHALL always render, even when data is insufficient. Empty states show actionable instructions (e.g., "Need 4+ weeks of data for efficiency trends", "Run `fit checkin` to enable RPE tracking"). Sections are NEVER hidden silently.
-
-#### Scenario: No check-in data
-- **WHEN** no check-ins exist
-- **THEN** RPE chart renders with message: "No check-in data. Run `fit checkin` after training to enable RPE tracking."
-
-#### Scenario: Insufficient correlation data
-- **WHEN** fewer than 20 check-ins exist
-- **THEN** correlation section shows a progress bar toward 20 check-in threshold: "12/20 check-ins — 8 more needed for correlation analysis"
+Every dashboard section SHALL always render, even when data is insufficient. Empty states show actionable instructions (e.g., "Need 4+ weeks of data for efficiency trends"). Sections are NEVER hidden silently.
 
 ### Requirement: Trend badges inside Race Anchor Card
 Trend badges (efficiency, VO2max, Z2 compliance, volume) SHALL be rendered inside the Race Anchor Card on the Today tab, not as a standalone section. This consolidates race-focused context in one place.
@@ -440,13 +406,6 @@ When coaching notes are stale (older than 7 days), the Coach tab SHALL show a fu
 #### Scenario: Recent coaching after multiple syncs
 - **WHEN** coaching.json report_date is 2 days ago but 3 syncs have occurred since
 - **THEN** no stale banner — coaching is fresh on a weekly cadence
-
-### Requirement: Correlation empty state with progress bar
-When insufficient check-in data exists for correlations, the correlation section SHALL show a progress bar toward the 20 check-in threshold, not just a text message.
-
-#### Scenario: Partial progress
-- **WHEN** 12 check-ins exist (threshold is 20)
-- **THEN** progress bar shows 12/20 with text: "8 more check-ins needed for correlation analysis"
 
 ### Requirement: Run type color palette
 Run types SHALL use specific colors: easy=#60a5fa, recovery=#93c5fd, long=#34d399, tempo=#fbbf24, intervals=#f97316, race=#c084fc. These are consistent across all charts (run timeline, run type breakdown, training load).
@@ -538,12 +497,12 @@ Each row SHALL display: severity icon (🔴/🟡/🔵), one-line description in 
 The panel SHALL cap visible items at 5; surplus rows collapse into a "+N more" expandable link.
 
 #### Scenario: All sources fresh, no attention items
-- **WHEN** all calibrations are within staleness threshold, coaching.json is <7 days old, latest checkin is from today, Apple Health export is <14 days old, and AeT is calibrated
+- **WHEN** all calibrations are within staleness threshold, coaching.json is <7 days old, Apple Health export is <14 days old, and AeT is calibrated
 - **THEN** the panel does not render at all
 
 #### Scenario: Multiple stale items rendered by severity
-- **WHEN** LTHR is 224 days stale (warning), AeT not measured (info), Apple Health export is 30 days old (warning), latest checkin is 3 days old (info)
-- **THEN** the panel renders 4 rows ordered: 2 warning rows first (LTHR retest, Apple Health re-export), then 2 info rows (AeT drift test, checkin reminder)
+- **WHEN** LTHR is 224 days stale (warning), AeT not measured (info), Apple Health export is 30 days old (warning)
+- **THEN** the panel renders 3 rows ordered: 2 warning rows first (LTHR retest, Apple Health re-export), then 1 info row (AeT drift test)
 
 #### Scenario: Same fact deduplicated across sources
 - **WHEN** LTHR is stale according to both `calibration.is_stale('lthr')` and `data_health.check_data_sources()` (which both check the same row)
@@ -769,7 +728,7 @@ When there is no goal race, the model is not fit, or history is too thin for a v
 - **THEN** the Overview shows the anchor-based estimate (or a prompt to set a goal / log runs) and a neutral status strip — not empty cards, NaNs, or a broken layout
 
 ### Requirement: Each tab has one defined job
-Every dashboard tab SHALL have a single, stated purpose — framed as the decision it supports — and its content SHALL match that purpose: **Overview** = synthesis (on track? + the one move), **Readiness** = can I absorb training (recovery & freshness), **Training** = am I doing the work (fitness build & plan execution), **Profile** = who am I + what will race day give (physiology, dimensions, anchors, the forecast/decomposition), **Coach** = the plan & why (narrative, levers, correlations). Content that belongs to a tab's job SHALL live in that tab, not be duplicated elsewhere.
+Every dashboard tab SHALL have a single, stated purpose — framed as the decision it supports — and its content SHALL match that purpose: **Overview** = synthesis (on track? + the one move), **Readiness** = can I absorb training (recovery & freshness), **Training** = am I doing the work (fitness build & plan execution), **Profile** = who am I + what will race day give (physiology, dimensions, anchors, the forecast/decomposition), **Coach** = the plan & why (narrative, levers). Content that belongs to a tab's job SHALL live in that tab, not be duplicated elsewhere.
 
 #### Scenario: Detail lives in its owning tab, not on Overview
 - **WHEN** the dashboard renders

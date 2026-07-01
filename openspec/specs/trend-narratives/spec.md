@@ -16,8 +16,8 @@ The system SHALL generate a rule-based monthly summary displayed as compact pill
 - **WHEN** fewer than 4 weeks of data
 - **THEN** fallback message: "Keep logging — N more weeks until trends emerge"
 
-### Requirement: "Why" connectors linking correlations to experiences
-The system SHALL find the N worst and best runs by efficiency, then check their preceding checkin data (sleep <6h, cycling >30km, alcohol >1) and sleep mismatches (Garmin hours vs subjective quality). Output: "Your 3 worst runs all followed <6h sleep nights." These runs SHALL be annotated on the Training Load chart via Chart.js annotation markers.
+### Requirement: "Why" connectors linking conditions to experiences
+The system SHALL find the N worst and best runs by efficiency, then check their preceding conditions from Garmin/activity data (Garmin sleep <6h, previous-day cycling >30km). Output: "Your 3 worst runs all followed <6h sleep nights." These runs SHALL be annotated on the Training Load chart via Chart.js annotation markers.
 
 #### Scenario: Sleep pattern detected
 - **WHEN** 3 of the 5 worst efficiency runs were preceded by <6h sleep
@@ -29,8 +29,8 @@ The system SHALL find the N worst and best runs by efficiency, then check their 
 - **THEN** narrative includes cycling as a factor
 
 #### Scenario: Insufficient data
-- **WHEN** fewer than 10 runs with checkin data
-- **THEN** "Need 10+ runs with checkin data to detect patterns"
+- **WHEN** fewer than 10 runs with sleep data
+- **THEN** "Need 10+ runs with data to detect patterns"
 
 ### Requirement: Week-over-week with phase context
 WoW comparison SHALL annotate against the active phase targets: "Volume up 15% — Phase 1 target is ≤10%." Uses phase's weekly_km_range and z12_pct_target for context.
@@ -38,17 +38,6 @@ WoW comparison SHALL annotate against the active phase targets: "Volume up 15% �
 #### Scenario: Volume exceeds phase target increase
 - **WHEN** volume increased 15% and phase target is ≤10% increase
 - **THEN** WoW shows warning: "Volume up 15% — Phase 1 target is ≤10%"
-
-### Requirement: Rolling 8-week correlation windows
-Correlations SHALL be computed over a rolling 8-week window (not all-time) showing trend direction. Displayed as sparkline small-multiples grid (one per pair, not spaghetti chart). Incremental computation: only recompute if new data arrived for the window.
-
-#### Scenario: Rolling window shows strengthening correlation
-- **WHEN** alcohol→HRV correlation was r=-0.2 eight weeks ago and is now r=-0.5
-- **THEN** sparkline shows downward trend with arrow, labeled "getting stronger"
-
-#### Scenario: Less than 8 weeks of data
-- **WHEN** fewer than 8 weeks of checkin data
-- **THEN** show static correlation with note "Rolling window available after 8 weeks"
 
 ### Requirement: Race countdown narrative with taper model
 Race countdown SHALL include phase position and objective progress. For the final 2-3 weeks: include taper rules (volume drop 40-60%, intensity stays, last quality session ~10 days out).
@@ -96,14 +85,6 @@ When multiple Chart.js annotations target the same or nearby data points (e.g., 
 #### Scenario: Multiple annotations on same run
 - **WHEN** a run is both "worst efficiency" and "heat affected"
 - **THEN** two annotation markers stacked vertically, both visible without overlap
-
-### Requirement: Sparkline axis consistency
-All sparklines in the rolling correlation grid SHALL use a consistent y-axis range (-1.0 to +1.0) across all pairs. This allows visual comparison of correlation strength between pairs. Individual sparklines do NOT auto-scale to their own data range.
-
-#### Scenario: Weak vs strong correlation visual comparison
-- **WHEN** alcohol→HRV is r=-0.6 and sleep→efficiency is r=0.2
-- **THEN** both sparklines use -1 to +1 y-axis, making the alcohol effect visually stronger
-
 
 ### Requirement: Run Timeline zone color legend
 The Run Timeline visualization SHALL display a color legend mapping zone ranges to colors: Z1-Z2 (blue), Z3 (amber), Z4-Z5 (orange). The legend is rendered inline above or below the timeline chart.

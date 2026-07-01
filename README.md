@@ -11,8 +11,8 @@ Two interfaces: a **self-contained HTML dashboard** (visual, daily glance) and *
    ────────────                    ──────────────                  ───────
 
    Garmin watch ─┐                ┌──────────────┐
-   Apple Health ─┤── fit sync ───▶│ FITNESS      │     ┌──────────────────┐
-   fit checkin  ─┘                │ PROFILE      │     │ DASHBOARD        │
+   Apple Health ─┴── fit sync ───▶│ FITNESS      │     ┌──────────────────┐
+                                  │ PROFILE      │     │ DASHBOARD        │
                                   │              │     │                  │
                                   │ Aerobic  ██░░│────▶│ Today: easy day  │
                                   │ Threshold █░░│     │ VO2max: 49/50 ✓  │
@@ -41,18 +41,16 @@ Two interfaces: a **self-contained HTML dashboard** (visual, daily glance) and *
   Morning routine:
   1. fit sync            Garmin → enrich →        
                          weather → DB              
-  2. fit checkin         hydration, legs,          
-                         sleep quality, RPE        
-  3. fit report          → dashboard.html          
-  4. Open dashboard      Today tab: headline,      
+  2. fit report          → dashboard.html          
+  3. Open dashboard      Today tab: headline,      
                          cards, journey            
                                                    
   Deep analysis:                                   
-  5.                                              "Analyze my training"
+  4.                                              "Analyze my training"
                                                    → get_coaching_context()
                                                    → execute_sql_query()
                                                    → save_coaching_notes()
-  6. fit report          Coach tab now shows        
+  5. fit report          Coach tab now shows        
                          AI coaching insights       
 ```
 
@@ -61,15 +59,13 @@ Two interfaces: a **self-contained HTML dashboard** (visual, daily glance) and *
 | Need | Use | Why |
 |------|-----|-----|
 | Pull new data from Garmin | `fit sync` | Automated pipeline: health + activities + weather + enrichment |
-| Log how you feel today | `fit checkin` | Subjective data (legs, sleep quality, RPE) joins with Garmin biometrics |
 | See your training at a glance | `fit report` → open HTML | 5-tab dashboard: Today, Training, Body, Fitness, Coach |
 | Quick status check in terminal | `fit status` | Counts, calibration, data health, phase, ACWR, streak, goals |
 | Deep question about your data | **Claude Chat** | Ad-hoc SQL queries, cross-referencing, pattern detection |
 | Weekly coaching analysis | **Claude Chat** or `/fit-coach` | AI reads all your data, generates structured insights |
 | Update physiological baseline | `fit calibrate max_hr` or `lthr` | After a race or time trial |
 | Fix derived metrics after changes | `fit recompute` | Re-enriches all activities, rebuilds weekly aggregations |
-| See cross-metric correlations | `fit correlate` | Spearman rank: alcohol→HRV, sleep→readiness, temp→efficiency, etc. |
-| Validate data pipeline | `fit doctor` | Schema, tables, freshness, calibrations, data sources, correlations |
+| Validate data pipeline | `fit doctor` | Schema, tables, freshness, calibrations, data sources |
 | View race schedule | `fit races` | Calendar with official results, Garmin times, match status |
 | Track a new goal | `fit goal add` | Race, metric (VO2max, weight), or habit (consistency streak) |
 
@@ -94,7 +90,6 @@ Then in Claude Chat: "Use get_coaching_context and give me a full coaching analy
 DAILY (30 seconds + 1 minute):
   fit sync                ← pulls Garmin, weather, body comp, plan, recomputes everything
   open dashboard          ← 10-second glance: headline tells you what to do
-  fit checkin             ← after training: RPE, legs, sleep quality (builds correlation data)
 
 WEEKLY:
   Ask Claude for coaching ← reads fitness profile + plan, gives specific recommendations
@@ -109,13 +104,12 @@ WHEN CHANGING GOALS (rare):
   fit races add           ← add a new race to the calendar
 ```
 
-**Design principle**: `fit sync` should be the only command you need to remember. Everything else either happens automatically (dashboard generation, VDOT updates, projection recalculation) or is prompted when needed (stale coaching, missing checkin, upcoming race).
+**Design principle**: `fit sync` should be the only command you need to remember. Everything else either happens automatically (dashboard generation, VDOT updates, projection recalculation) or is prompted when needed (stale coaching, upcoming race).
 
 1. **`fit sync`** — run daily (or cron it). Pulls health metrics, activities, SpO2, enriches with weather, computes zones/efficiency/run types/ACWR, updates weekly aggregations. Incremental by default (last 7 days). Use `--days 30` to catch up after a break.
-2. **`fit checkin`** — run after training (or in the morning). Captures hydration, alcohol, legs, eating, energy, sleep quality, RPE, weight. RPE auto-writes to today's activity. Includes an RPE scale guide.
-3. **`fit report`** — generates dashboard. The **Today tab** gives you the headline ("Ready for training" or "Recovery day recommended") plus status cards, ACWR safety, phase compliance, and a journey timeline. Use `--daily` for date-stamped snapshots.
-4. **Claude Chat** — for questions the dashboard can't answer. "Why was my efficiency worse this week?", "Compare my alcohol vs next-day HRV", "What should my long run target be?" Claude has full SQL access via MCP.
-5. **`/fit-coach`** (in Claude Code) or ask Claude Chat — generates coaching insights that persist to the dashboard Coach tab.
+2. **`fit report`** — generates dashboard. The **Today tab** gives you the headline ("Ready for training" or "Recovery day recommended") plus status cards, ACWR safety, phase compliance, and a journey timeline. Use `--daily` for date-stamped snapshots.
+3. **Claude Chat** — for questions the dashboard can't answer. "Why was my efficiency worse this week?", "What should my long run target be?" Claude has full SQL access via MCP.
+4. **`/fit-coach`** (in Claude Code) or ask Claude Chat — generates coaching insights that persist to the dashboard Coach tab.
 
 ## Install
 
@@ -167,12 +161,10 @@ The dashboard's data health panel shows which sources are active, stale, or miss
 
 | Command | Description |
 |---------|-------------|
-| `fit sync [--days N] [--full] [--splits]` | Pull Garmin data, enrich, weather, sRPE, monotony/strain, plan sync, correlations, alerts |
-| `fit checkin` | Interactive check-in: hydration, legs, eating, energy, sleep quality, RPE, weight + sRPE |
+| `fit sync [--days N] [--full] [--splits]` | Pull Garmin data, enrich, weather, sRPE, monotony/strain, plan sync, alerts |
 | `fit report [--daily] [--weekly]` | Generate HTML dashboard (5 tabs: Today/Training/Body/Fitness/Coach) |
 | `fit status` | Race countdown, objective progress, phase position, ACWR, streak |
-| `fit doctor` | Validate pipeline: schema (9 migrations), 16 tables, freshness, calibrations, correlations |
-| `fit correlate` | Compute Spearman correlations (6 pairs + rolling 8-week windows with effect size filter) |
+| `fit doctor` | Validate pipeline: schema, tables, freshness, calibrations, data sources |
 | `fit recompute [--all]` | Re-enrich all activities and rebuild weekly aggregations |
 | `fit calibrate max_hr` | Calibrate max HR from race observation |
 | `fit calibrate lthr` | Calibrate LTHR from 30-min time trial |
@@ -260,11 +252,11 @@ Three primary axes of data, joined by date and/or activity ID:
                           │ (one per date) │
                           └────────┬───────┘
                                    │ date
-       ┌─────────────┐  date  ┌────┴────┐  date  ┌──────────┐
-       │  checkins   │────────│  DATE   │────────│ weather  │
-       │ (subjective │        │  axis   │        │ (daily)  │
-       │   inputs)   │        └────┬────┘        └──────────┘
-       └─────────────┘             │ date
+                              ┌────┴────┐  date  ┌──────────┐
+                              │  DATE   │────────│ weather  │
+                              │  axis   │        │ (daily)  │
+                              └────┬────┘        └──────────┘
+                                   │ date
                                    │
                           ┌────────┴───────────┐  date  ┌────────────────┐
                           │     activities     │────────│  body_comp     │
@@ -283,13 +275,13 @@ Three primary axes of data, joined by date and/or activity ID:
        │   workouts      │          │  weekly_agg (per ISO week)     │
        │ (Runna plans)   │          │  training_phases (date ranges) │
        └─────────────────┘          │  goals / goal_log              │
-                                    │  correlations / alerts         │
+                                    │  alerts                        │
                                     │  calibration (max_hr, LTHR…)   │
                                     └────────────────────────────────┘
 ```
 
 Joins:
-- **By date**: most cross-domain queries (e.g., "did high stress correlate with low Z2 efficiency?") join `activities` ↔ `daily_health` ↔ `checkins` ↔ `weather` on the `date` column. The `v_run_days` view materializes this join.
+- **By date**: most cross-domain queries (e.g., "did high stress correlate with low Z2 efficiency?") join `activities` ↔ `daily_health` ↔ `weather` on the `date` column. The `v_run_days` view materializes this join.
 - **By activity ID**: `activity_splits.activity_id` and `race_calendar.activity_id` foreign-key into `activities.id`.
 - **Idempotent inserts**: every table uses `INSERT … ON CONFLICT DO UPDATE` so re-syncing preserves derived metrics (e.g., `activities.run_type`, `srpe`, `hr_zone`).
 
@@ -301,9 +293,8 @@ Joins:
 |-------|-------|---------|
 | **`activities`** | one per workout (id = Garmin activity ID) | The central training log. Stores every workout (running, cycling, hiking…). Garmin-sourced fields: distance, duration, pace, HR, cadence, power, vo2max, training_load, aerobic_te. Derived in pipeline: `hr_zone` (Z1-Z5), `effort_class`, `run_type` (auto-classified), `speed_per_bpm` / `speed_per_bpm_z2` (efficiency), `srpe` (RPE × duration). RPE/Feel/Compliance imported from Garmin (`directWorkoutRpe/Feel/ComplianceScore`). Race linkage: `run_type='race'` is set by `race_calendar` matching. |
 | **`daily_health`** | one per date | Daily Garmin health snapshot. Resting HR (`resting_heart_rate`), sleep stages (deep/light/REM hours), HRV (`hrv_weekly_avg`, `hrv_last_night`, status), training readiness (score + level), stress (avg, max), body battery (high/low), SpO2. Read by readiness alerts, dashboard cards, ACWR overlays. |
-| **`checkins`** | one per date | User-entered subjective inputs split across morning/run/evening. Morning: `sleep_quality`, `legs`, `energy`. Evening: `hydration`, `eating`, `alcohol`, `alcohol_detail`, `water_liters`. Run section currently captures `notes` only. Legacy `rpe`, `weight` columns retained for historical data — RPE is now sourced per-activity from Garmin (see `activities.rpe`); weight goes to `body_comp`. |
 | **`body_comp`** | one per measurement | Body composition history: `weight`, `body_fat_pct`, `muscle_mass`, `visceral_fat`, etc. Sources: Fitdays CSV, Apple Health export, manual entry. Joined to dashboard via latest-by-date. Used for weight trend, calibration adjustments. |
-| **`weather`** | one per date | Daily weather from Open-Meteo: temp, humidity, precipitation, wind, conditions. Activities additionally store `temp_at_start_c` / `humidity_at_start_pct` from the hourly endpoint. Used for heat-stress correlations and dashboard context. |
+| **`weather`** | one per date | Daily weather from Open-Meteo: temp, humidity, precipitation, wind, conditions. Activities additionally store `temp_at_start_c` / `humidity_at_start_pct` from the hourly endpoint. Used for heat-stress analysis and dashboard context. |
 | **`activity_splits`** | one per km per activity (FK → `activities.id`) | Per-km breakdown from .fit file or Garmin splits API: pace, HR (avg/max), cadence, elevation gain/loss, zone, intensity_type, wkt_step_index. Drives the splits chart in dashboard run cards. |
 
 #### Plans, phases, races
@@ -332,7 +323,6 @@ Joins:
 
 | Table | Grain | Purpose |
 |-------|-------|---------|
-| **`correlations`** | one row per metric pair | Spearman rank correlations between health/behavior/performance metrics (e.g., sleep_hours × next_day_speed_per_bpm). Computed by `fit correlate`. Effect size + sample size filter is applied before display so only actionable correlations surface. |
 | **`alerts`** | one per fired alert | Real-time coaching alerts: volume ramp, zone compliance, adaptive readiness gate, low SpO2, deload overdue, calibration stale. Each has `kind`, `severity`, `message`, `fired_at`, `acknowledged`. Today tab shows unacknowledged alerts from the last 7 days. |
 
 #### Infrastructure
@@ -344,5 +334,5 @@ Joins:
 
 ### Views
 
-- **`v_run_days`** — activities + daily_health + checkins + weather + body_comp joined by date. Convenience view for cross-domain queries (e.g., "what was sleep + RHR + weather like the morning of each long run?").
+- **`v_run_days`** — activities + daily_health + weather + body_comp joined by date. Convenience view for cross-domain queries (e.g., "what was sleep + RHR + weather like the morning of each long run?").
 - **`v_all_training`** — all activity types (not just running) flattened with the same shape as `v_run_days` for cross-training analysis.

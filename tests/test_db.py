@@ -29,7 +29,6 @@ class TestMigrationRunner:
             assert "activities" in tables
             assert "daily_health" in tables
             assert "calibration" in tables
-            assert "checkins" in tables
             assert "body_comp" in tables
             assert "weather" in tables
             assert "goals" in tables
@@ -37,6 +36,12 @@ class TestMigrationRunner:
             assert "goal_log" in tables
             assert "weekly_agg" in tables
             assert "schema_version" in tables
+            # The daily check-in and correlation features were removed (migration 018).
+            assert "checkins" not in tables
+            assert "correlations" not in tables
+            # v_run_days is rebuilt without check-in columns.
+            view_cols = [r[1] for r in conn.execute("PRAGMA table_info(v_run_days)").fetchall()]
+            assert not ({"hydration", "alcohol", "legs", "eating", "water_liters", "daily_rpe"} & set(view_cols))
             conn.close()
 
     def test_idempotent(self):

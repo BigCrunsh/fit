@@ -13,8 +13,8 @@ language (what the terms mean); this doc is the data-flow map (how they're compu
 
 **Layers.** `sources` (DB / calibration / config / external) → `primitives`
 (`fit/fitness.py`, `fit/analysis.py`, `fit/calibration.py`, `fit/periodization.py`,
-`fit/narratives.py`, `fit/plan.py`, `fit/goals.py`, `fit/alerts.py`,
-`fit/correlations.py`) → `builders` (`fit/report/sections/*.py`) → `template`
+`fit/narratives.py`, `fit/plan.py`, `fit/goals.py`, `fit/alerts.py`) → `builders`
+(`fit/report/sections/*.py`) → `template`
 (`fit/report/templates/dashboard.html`).
 
 **How to read this.**
@@ -67,9 +67,6 @@ flowchart LR
   subgraph BC["body_comp"]
     b_w["weight · body_fat"]:::col
   end
-  subgraph CK["checkins"]
-    c_sq["sleep_quality · alcohol · rpe"]:::col
-  end
   subgraph RC["race_calendar"]
     r_t["result_time · distance"]:::col
   end
@@ -107,7 +104,6 @@ flowchart LR
   d_str --> M_REC
   b_w --> M_W["Weight chart"]:::met
   p_t -->|"compute_plan_adherence"| M_PLAN["Plan adherence · objectives"]:::met
-  c_sq --> M_CK["Check-in · correlations"]:::met
 ```
 
 ### Per-family detail (with duplications)
@@ -209,8 +205,6 @@ flowchart LR
   DH -->|"training_readiness"| RDY["chart-readiness · _readiness_summary · headline"]:::out
   DH -->|"hrv_last_night · resting_heart_rate"| RHV["chart-rhr-hrv"]:::out
   DH -->|"deep/rem/light_sleep_hours"| SLP["chart-sleep"]:::out
-  DH -->|"sleep_duration_hours"| SM
-  CK["checkins.sleep_quality"]:::src -->|"join on date"| SM["_sleep_mismatches"]:::out
   DH -->|"avg_stress_level · body_battery"| STc["chart-stress"]:::out
   ACW["weekly_agg.acwr (stored)"]:::src -->|"shared with Load family"| RDY
   TSB["future TSB = CTL − ATL (marathon model)"]:::out
@@ -250,7 +244,7 @@ flowchart LR
 - **`daily_health`** — training_readiness, hrv_last_night, resting_heart_rate, sleep_*_hours, avg_stress_level, body_battery_*.
 - **`weekly_agg`** — run_km, run_count, longest_run_km, total_load, z1..z5_min, z12_pct, z45_pct, acwr, monotony, strain, consecutive_weeks_3plus.
 - **`calibration`** — metric, value, method, confidence, date, flags (read only via `get_active_calibration` / `get_calibration_anchor`).
-- **`race_calendar`**, **`training_phases`**, **`goals`**, **`planned_workouts`**, **`checkins`**, **`body_comp`**, **`weather`**, **`correlations`**.
+- **`race_calendar`**, **`training_phases`**, **`goals`**, **`planned_workouts`**, **`body_comp`**, **`weather`**.
 - **config** — `profile.zones_*`, `zone_model`, `max_hr`, `analysis.cycling_load_weight`, `coaching.readiness_gate_threshold`.
 - **external** — `reports/coaching.json` (coaching notes, written by `fit coach` via `fit/coaching/`).
 
@@ -296,13 +290,12 @@ flowchart LR
 | phase status / readiness | `periodization.advance_phase_status` (`:159`) / `evaluate_phase_readiness` (`:193`) | training_phases, weekly_agg, race_calendar | by date; advance/extend/deload/taper |
 | heat acclimatization | `periodization.compute_heat_acclimatization` (`:322`) | activities (spb,temp 56d) | hot-run efficiency Δ% |
 | pacing strategy | `periodization.generate_pacing_strategy` (`:379`) | config max_hr; prediction_seconds | negative-split splits + HR ceilings |
-| correlations | `correlations.compute_all_correlations` (`:36`) / `compute_rolling_correlations` (`:191`) | checkins, daily_health, activities | lagged Spearman, n≥15 \|r\|≥0.2 |
 | plan adherence | `plan.compute_plan_adherence` (`:570`) | planned_workouts, activities | date-match, compliance %, override flags |
 | readiness recommendation | `plan.get_readiness_recommendation` (`:846`) | planned_workouts, daily_health.training_readiness, activities | swap quality session if readiness<gate |
 | phase compliance | `goals.get_phase_compliance` (`:211`) | training_phases, weekly_agg | recent-2-week avg vs phase targets |
 | target race | `goals.get_target_race` (`:154`) | race_calendar⋈goals | linked→furthest→nearest |
-| alerts | `alerts.run_alerts` (`:39`) | weekly_agg, daily_health, checkins; `detect_training_gap`,`compute_rolling_acwr` | threshold rules |
-| trend badges / why-connectors / walk-break / z2-remediation / narratives | `narratives.*` | weekly_agg, activities, checkins, daily_health | 4wk-vs-4wk pills, efficiency links, Z2 remediation |
+| alerts | `alerts.run_alerts` (`:39`) | weekly_agg, daily_health; `detect_training_gap`,`compute_rolling_acwr` | threshold rules |
+| trend badges / why-connectors / walk-break / z2-remediation / narratives | `narratives.*` | weekly_agg, activities, daily_health | 4wk-vs-4wk pills, efficiency links, Z2 remediation |
 
 **Marathon-forecast internals.** The forecast (`fit/marathon/`) is a Bayesian durability
 model. Its assumed race HR is **duration-keyed**: `offset(t) = β·(log t − log T₀)` on the
@@ -349,7 +342,7 @@ are in `charts.py:_all_charts`.
 | Attention panel | `_attention_items` (`cards.py:550`) | calibration status/anchor/suggestions, `get_fitness_anchors`; coaching.json |
 | Overview objectives | `_overview_objectives` (`cards.py:1747`) | `derive_objectives`; **latest weekly_agg row** + 4-wk Z2 |
 | Readiness summary | `_readiness_summary` (`cards.py:1820`) | daily_health, weekly_agg.acwr/monotony |
-| Check-in / alerts / correlations / definitions / next-workouts / sleep-mismatches | `_checkin` (`:195`), `_recent_alerts` (`:1198`), `_correlation_bars` (`:1216`), `_definitions` (`:987`), `_next_workouts` (`:1707`), `_sleep_mismatches` (`:1268`) | as labelled |
+| alerts / definitions / next-workouts | `_recent_alerts` (`:1198`), `_definitions` (`:987`), `_next_workouts` (`:1707`) | as labelled |
 
 ### Profile
 | Quantity | Builder (`file:line`) | Calls / reads |

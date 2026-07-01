@@ -98,10 +98,6 @@ def check_data_sources(conn: sqlite3.Connection) -> list[dict]:
     last_weight = conn.execute("SELECT MAX(date) FROM body_comp").fetchone()[0]
     results.append(_check("weight", last_weight, today, stale_days=7))
 
-    # Check-ins
-    last_checkin = conn.execute("SELECT MAX(date) FROM checkins").fetchone()[0]
-    results.append(_check("checkins", last_checkin, today, stale_days=2))
-
     return results
 
 

@@ -74,7 +74,7 @@ The dashboard SHALL show a mirrored bar chart (planned vs actual) with own visua
 - **THEN** actual bar shown with blue "extra" marker on planned side
 
 ### Requirement: Run Story narrative
-Synthesize splits + correlations + previous-night checkin + weather into a narrative paragraph for the most recent long run. Display on Coach tab. Run Story SHALL work without .fit data — degrade gracefully using per-run averages (pace, HR, efficiency) when splits are unavailable.
+Synthesize splits + weather into a narrative paragraph for the most recent long run. Display on Coach tab. Run Story SHALL work without .fit data — degrade gracefully using per-run averages (pace, HR, efficiency) when splits are unavailable.
 
 #### Scenario: Run Story with splits
 - **WHEN** last long run was 18km with drift at km 14, preceded by 2 drinks + poor sleep

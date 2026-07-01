@@ -4,15 +4,11 @@
 TBD — normalized from archived change deltas; update Purpose.
 ## Requirements
 ### Requirement: sRPE as validated internal load metric
-The system SHALL compute sRPE (session RPE × duration_min) for running activities where RPE data exists. Stored on activities.srpe column. Join strategy: checkin RPE → most recent same-day activity (if multiple, assign to the one with highest training_load). Shown in weekly_agg alongside Garmin EPOC load.
+The system SHALL compute sRPE (session RPE × duration_min) for running activities where RPE data exists. Stored on activities.srpe column. RPE is read from the activity itself (`activities.rpe`, sourced from Garmin's `directWorkoutRpe`). Shown in weekly_agg alongside Garmin EPOC load.
 
 #### Scenario: sRPE computed for run with RPE
-- **WHEN** a run has duration_min=50 and today's checkin has RPE=6
+- **WHEN** a run has duration_min=50 and `activities.rpe`=6
 - **THEN** activities.srpe = 300 (50 × 6)
-
-#### Scenario: Two runs same day
-- **WHEN** two runs exist on the same day (morning easy 30min, evening tempo 45min) and RPE=7
-- **THEN** sRPE assigned to the tempo run (higher training_load): 45 × 7 = 315
 
 ### Requirement: Training monotony and strain
 The system SHALL compute weekly training monotony = mean(daily_loads) / stdev(daily_loads), and strain = weekly_load × monotony. Added to weekly_agg. These are classic Foster leading indicators — they flag overtraining 5-10 days before ACWR spikes. High monotony means every day is similar load (low variance → high mean/stdev ratio). Monotony > 2.0 is the standard warning threshold; strain > 6000 is the danger zone.
@@ -32,7 +28,7 @@ Guard: if stdev = 0 (all days identical or only 1 training day), set monotony = 
 - **THEN** monotony = NULL, no alert generated
 
 ### Requirement: Cycling volume in training model
-The system SHALL track cycling_km and cycling_min per week in weekly_agg. Show cycling distance + time in `fit status` and Training tab. Factor into headline when preceding-day cycling was high. Add correlation pair: previous-day cycling_km → next-day run efficiency.
+The system SHALL track cycling_km and cycling_min per week in weekly_agg. Show cycling distance + time in `fit status` and Training tab. Factor into headline when preceding-day cycling was high.
 
 #### Scenario: High cycling day before run
 - **WHEN** previous day had 30km cycling and today has a planned run
@@ -121,17 +117,6 @@ The readiness threshold for downgrading quality sessions SHALL be adaptive based
 - **WHEN** 12+ weeks training, readiness=35, planned=Intervals
 - **THEN** coaching: "Readiness 35 — swap Intervals to easy"
 
-### Requirement: Correlation effect size filter
-ALL correlation pairs (not just SpO2) SHALL have minimum thresholds before surfacing: minimum n≥15 data points AND minimum |r|≥0.2. Below threshold: pair is computed but not displayed in narratives or coaching context. This prevents spurious coaching signals from small samples.
-
-#### Scenario: Weak correlation suppressed
-- **WHEN** alcohol→HRV has r=-0.12 with n=20
-- **THEN** correlation computed and stored but NOT shown in coaching or narratives
-
-#### Scenario: Strong correlation surfaced
-- **WHEN** sleep→efficiency has r=0.45 with n=25
-- **THEN** shown in coaching: "Sleep quality correlates strongly with run efficiency"
-
 ### Requirement: Race-day pacing strategy
 The system SHALL translate a marathon prediction into a race-day plan: target splits per 5km, HR ceiling per segment, fueling timing. Displayed in the Race Prediction section of the Fitness tab.
 
@@ -209,8 +194,8 @@ the shared `fit/coaching/` core).
 
 `fit coach` SHALL: (1) assemble the structured coaching context — ACWR + safety status, calibration
 staleness, data-source health, active-phase targets vs actuals (compliance), zone distribution by
-time, run-type breakdown, speed_per_bpm and cadence trends, RPE predicted-vs-actual patterns, sleep
-mismatches, race predictions, cross-domain correlations, active alerts, today's run, plan adherence,
+time, run-type breakdown, speed_per_bpm and cadence trends, RPE predicted-vs-actual patterns,
+race predictions, active alerts, today's run, plan adherence,
 and a previous-coaching summary for continuity; (2) feed that context plus the coaching instructions
 to the Claude CLI (headless, batched); (3) parse the returned insights and validate them (`type` ∈
 {warning, critical, positive, info, target}, title and body present, body ≥ 20 chars); (4) archive

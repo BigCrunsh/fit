@@ -83,10 +83,6 @@ class TestCheckDataSources:
         db.execute("INSERT INTO body_comp (date, weight_kg) VALUES (?, ?)", (day, weight))
         db.commit()
 
-    def _insert_checkin(self, db, day):
-        db.execute("INSERT INTO checkins (date, hydration) VALUES (?, 'OK')", (day,))
-        db.commit()
-
     # Happy
     def test_all_sources_active(self, db):
         today = date.today().isoformat()
@@ -94,14 +90,12 @@ class TestCheckDataSources:
                             training_readiness=70)
         self._insert_activity(db, today, subtype="auto_detected", id="act-moveiq")
         self._insert_weight(db, today)
-        self._insert_checkin(db, today)
         results = check_data_sources(db)
         source_map = {r["source"]: r["status"] for r in results}
         assert source_map["garmin_health"] == "active"
         assert source_map["garmin_activities"] == "active"
         assert source_map["spo2"] == "active"
         assert source_map["weight"] == "active"
-        assert source_map["checkins"] == "active"
 
     def test_returns_list(self, db):
         results = check_data_sources(db)
@@ -119,7 +113,6 @@ class TestCheckDataSources:
         assert "garmin_activities" in sources
         assert "spo2" in sources
         assert "weight" in sources
-        assert "checkins" in sources
 
     def test_garmin_health_stale_at_4_days(self, db):
         stale_date = (date.today() - timedelta(days=4)).isoformat()
@@ -214,24 +207,6 @@ class TestCheckDataSources:
         results = check_data_sources(db)
         weight = [r for r in results if r["source"] == "weight"][0]
         assert weight["status"] == "stale"
-
-    def test_checkins_stale_at_3_days(self, db):
-        """Checkin stale_days=2, so 3 days ago is stale."""
-        stale_date = (date.today() - timedelta(days=3)).isoformat()
-        # Clear any backfill data first
-        db.execute("DELETE FROM checkins")
-        db.commit()
-        self._insert_checkin(db, stale_date)
-        results = check_data_sources(db)
-        checkins = [r for r in results if r["source"] == "checkins"][0]
-        assert checkins["status"] == "stale"
-
-    def test_checkins_active(self, db):
-        today = date.today().isoformat()
-        self._insert_checkin(db, today)
-        results = check_data_sources(db)
-        checkins = [r for r in results if r["source"] == "checkins"][0]
-        assert checkins["status"] == "active"
 
     def test_missing_sources_have_instructions(self, db):
         """Missing sources with known instructions should have them."""

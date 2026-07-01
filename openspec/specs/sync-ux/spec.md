@@ -6,7 +6,7 @@ TBD — normalized from archived change deltas; update Purpose.
 ## Requirements
 
 ### Requirement: Sync pipeline decomposition
-`run_sync()` SHALL be decomposed into composable pipeline stages: fetch, enrich, store, weather, aggregate, correlate, alert, plan_sync. Each stage is independently testable. New stages (Phase 2b .fit downloads, Phase 2c plan sync) plug in without increasing blast radius of existing stages. The aggregate stage SHALL continue to materialize `weekly_agg` rows by ISO week for historical queries. A new `compute_rolling_week(conn, end_date=None, window_days=7)` function SHALL be added to `analysis.py` to compute the same metric structure (run_km, run_count, z12_pct, z45_pct, ACWR) from raw `activities` data for any arbitrary 7-day window. All "current week" consumers (dashboard hero card, alerts, CLI status, MCP coaching) SHALL call `compute_rolling_week()` instead of reading the current ISO week from `weekly_agg`.
+`run_sync()` SHALL be decomposed into composable pipeline stages: fetch, enrich, store, weather, aggregate, alert, plan_sync. Each stage is independently testable. New stages (Phase 2b .fit downloads, Phase 2c plan sync) plug in without increasing blast radius of existing stages. The aggregate stage SHALL continue to materialize `weekly_agg` rows by ISO week for historical queries. A new `compute_rolling_week(conn, end_date=None, window_days=7)` function SHALL be added to `analysis.py` to compute the same metric structure (run_km, run_count, z12_pct, z45_pct, ACWR) from raw `activities` data for any arbitrary 7-day window. All "current week" consumers (dashboard hero card, alerts, CLI status, MCP coaching) SHALL call `compute_rolling_week()` instead of reading the current ISO week from `weekly_agg`.
 
 #### Scenario: Single stage failure
 - **WHEN** weather fetch fails
@@ -42,15 +42,11 @@ A test SHALL verify the full pipeline: sync with race-anchored goals → produce
 - **THEN** each section is produced by its own module, main generator orchestrates
 
 ### Requirement: sRPE pipeline stage
-The sync pipeline SHALL include an `enrich_srpe` stage that retroactively joins unmatched checkin RPE to same-day activities (assigning to highest training_load if multiple). This stage also triggers from `fit checkin` after saving, ensuring sRPE is computed regardless of whether sync or checkin happens first.
+The sync pipeline SHALL include an `enrich_srpe` stage that computes sRPE (RPE × duration_min) for running activities from the per-activity RPE (`activities.rpe`, sourced from Garmin's `directWorkoutRpe`). When `activities.rpe IS NULL`, sRPE is NULL.
 
 #### Scenario: sRPE computed during sync
-- **WHEN** sync finds an activity on a day with a checkin that has RPE=7
-- **THEN** sRPE computed and stored on the activity
-
-#### Scenario: sRPE computed during checkin
-- **WHEN** user runs `fit checkin` with RPE=6 and there's already a synced run today
-- **THEN** sRPE computed immediately after checkin save
+- **WHEN** sync finds a running activity with RPE=7 and duration_min=50
+- **THEN** sRPE computed and stored on the activity (`srpe = 350`)
 
 ### Requirement: Bug fixes
 The sync pipeline SHALL include the following correctness fixes:

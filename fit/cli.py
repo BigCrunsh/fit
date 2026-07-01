@@ -669,226 +669,6 @@ def effort_maximal(activity_id: str, state: str | None):
         conn.close()
 
 
-@main.group(invoke_without_command=True)
-@click.pass_context
-def checkin(ctx):
-    """Daily check-in — auto-selects morning/run/evening based on time."""
-    if ctx.invoked_subcommand is None:
-        from fit.checkin import run_checkin
-
-        conn = _conn()
-        try:
-            run_checkin(conn)
-        finally:
-            conn.close()
-
-
-@checkin.command("morning")
-@click.argument("target_date", default=None, required=False)
-def checkin_morning(target_date: str | None):
-    """Pre-run readiness: sleep quality, legs, energy."""
-    from fit.checkin import run_morning
-
-    conn = _conn()
-    try:
-        run_morning(conn, target_date=target_date)
-    finally:
-        conn.close()
-
-
-@checkin.command("run")
-@click.argument("target_date", default=None, required=False)
-def checkin_run(target_date: str | None):
-    """Post-run: session notes (shows today's activity). RPE comes from Garmin."""
-    from fit.checkin import run_post_run
-
-    conn = _conn()
-    try:
-        run_post_run(conn, target_date=target_date)
-    finally:
-        conn.close()
-
-
-@checkin.command("evening")
-@click.argument("target_date", default=None, required=False)
-def checkin_evening(target_date: str | None):
-    """Recovery: hydration, eating, alcohol, water, weight."""
-    from fit.checkin import run_evening
-
-    conn = _conn()
-    try:
-        run_evening(conn, target_date=target_date)
-    finally:
-        conn.close()
-
-
-@checkin.command("update")
-@click.argument("target_date", default=None, required=False)
-def checkin_update(target_date: str | None):
-    """Update an existing check-in for any date."""
-    from fit.checkin import run_checkin
-
-    conn = _conn()
-    try:
-        run_checkin(conn, target_date=target_date, update=True)
-    finally:
-        conn.close()
-
-
-@checkin.command("list")
-@click.option("--days", default=30, help="Number of days to show (default 30).")
-def checkin_list(days: int):
-    """List previous check-ins."""
-    from datetime import date as date_cls
-
-    from rich import box as rich_box
-    from rich.panel import Panel
-    from rich.table import Table
-
-    conn = _conn()
-    try:
-        rows = conn.execute(
-            "SELECT c.date, c.sleep_quality, c.energy, c.legs, "
-            "c.hydration, c.eating, c.alcohol, c.alcohol_detail, "
-            "c.water_liters, c.notes, "
-            "a.distance_km AS run_km, a.rpe AS rpe, "
-            "p.target_distance_km AS plan_km, "
-            "p.workout_type AS plan_type "
-            "FROM checkins c "
-            "LEFT JOIN ("
-            "  SELECT date, distance_km, rpe "
-            "  FROM activities "
-            "  WHERE type IN ('running','track_running','trail_running') "
-            "  GROUP BY date ORDER BY training_load DESC"
-            ") a ON a.date = c.date "
-            "LEFT JOIN ("
-            "  SELECT date, target_distance_km, workout_type "
-            "  FROM planned_workouts "
-            "  WHERE status = 'active' OR status = 'completed'"
-            "  GROUP BY date ORDER BY sequence_ordinal"
-            ") p ON p.date = c.date "
-            "WHERE c.date >= date('now', ?) ORDER BY c.date DESC",
-            (f"-{days} days",),
-        ).fetchall()
-        if not rows:
-            console.print(f"[dim]No check-ins in the last {days} days.[/dim]")
-            return
-
-        # Color helpers
-        _good = "#34d399"   # green
-        _ok = "#60a5fa"     # blue
-        _poor = "#f87171"   # red
-        _dim = "dim"
-
-        def _qual_color(val, good, poor):
-            """Color a quality value (Good/OK/Poor style)."""
-            if not val or val == "–":
-                return f"[{_dim}]–[/]"
-            if val in good:
-                return f"[{_good}]{val}[/]"
-            if val in poor:
-                return f"[{_poor}]{val}[/]"
-            return val
-
-        _alc_labels = {0: None, 1: "Light", 3: "Mod", 5: "Heavy"}
-        _alc_colors = {0: _dim, 1: _ok, 3: "#eab308", 5: _poor}
-
-        today = date_cls.today().isoformat()
-
-        t = Table(
-            box=rich_box.SIMPLE_HEAD, show_edge=False,
-            pad_edge=False, padding=(0, 1),
-        )
-        t.add_column("Date", no_wrap=True)
-        t.add_column("Day", justify="right", no_wrap=True)
-        t.add_column("RPE", justify="right", no_wrap=True)
-        t.add_column("Sleep", no_wrap=True)
-        t.add_column("Energy", no_wrap=True)
-        t.add_column("Legs", no_wrap=True)
-        t.add_column("Hydra", no_wrap=True)
-        t.add_column("Eat", no_wrap=True)
-        t.add_column("Alc", no_wrap=True)
-        t.add_column("Water", justify="right", no_wrap=True)
-        t.add_column("Notes", style="dim", ratio=1,
-                     overflow="ellipsis", no_wrap=True)
-
-        for r in rows:
-            # Date — bold if today
-            date_str = r["date"][5:]  # MM-DD
-            if r["date"] == today:
-                date_str = f"[bold]{date_str}[/]"
-
-            # Day — actual run distance, or planned, or Rest
-            if r["run_km"]:
-                day = f"[bold]{r['run_km']:.0f}km[/]"
-            elif r["plan_km"]:
-                day = f"[{_dim}]({r['plan_km']:.0f}km)[/]"
-            elif r["plan_type"] and r["plan_type"] == "rest":
-                day = f"[{_dim}]Rest[/]"
-            else:
-                day = f"[{_dim}]Rest[/]"
-
-            # RPE — colored by intensity
-            if r["rpe"] is not None:
-                rpe_v = r["rpe"]
-                rpe_c = (
-                    _poor if rpe_v >= 8
-                    else "#eab308" if rpe_v >= 6
-                    else _good if rpe_v <= 4
-                    else _ok
-                )
-                rpe = f"[{rpe_c}]{rpe_v}[/]"
-            else:
-                rpe = f"[{_dim}]–[/]"
-
-            # Quality fields
-            sleep = _qual_color(
-                r["sleep_quality"], {"Good"}, {"Poor"})
-            energy = _qual_color(
-                r["energy"], {"Good"}, {"Low"})
-            legs = _qual_color(
-                r["legs"], {"Fresh"}, {"Heavy"})
-            hydra = _qual_color(
-                r["hydration"], {"Good"}, {"Low"})
-            eat = _qual_color(
-                r["eating"], {"Good"}, {"Poor"})
-
-            # Alcohol — categorical label with color
-            alc_val = r["alcohol"] if r["alcohol"] is not None else 0
-            alc_int = int(alc_val)
-            alc_label = _alc_labels.get(alc_int)
-            if alc_label:
-                alc_c = _alc_colors.get(alc_int, _dim)
-                alc = f"[{alc_c}]{alc_label}[/]"
-            else:
-                alc = f"[{_dim}]–[/]"
-
-            # Water
-            if r["water_liters"]:
-                water = f"{r['water_liters']:.1f}L"
-            else:
-                water = f"[{_dim}]–[/]"
-
-            notes = (r["notes"] or "")[:40]
-
-            t.add_row(
-                date_str, day, rpe, sleep, energy, legs,
-                hydra, eat, alc, water, notes,
-            )
-
-        title = f"[bold]Check-ins[/] [dim]last {days}d[/]"
-        footer = (
-            f"[dim]{len(rows)} "
-            f"check-in{'s' if len(rows) != 1 else ''}[/]"
-        )
-        console.print(Panel(
-            t, title=title, subtitle=footer,
-            border_style="blue", padding=(0, 1),
-        ))
-    finally:
-        conn.close()
-
-
 @main.command()
 @click.option("--daily", is_flag=True, help="Save a daily snapshot (YYYY-MM-DD.html).")
 @click.option("--weekly", is_flag=True, help="Save a weekly snapshot (YYYY-WNN.html).")
@@ -1483,7 +1263,7 @@ def plan_show(ctx, days: int, upcoming: int):
         from fit.analysis import RUNNING_TYPES_SQL as rts
         actuals = conn.execute(f"""
             SELECT date, distance_km, duration_min, avg_hr, hr_zone,
-                   pace_sec_per_km, aerobic_te
+                   pace_sec_per_km, aerobic_te, rpe
             FROM activities
             WHERE date BETWEEN ? AND ? AND type IN {rts}
             ORDER BY date, training_load DESC
@@ -1492,13 +1272,6 @@ def plan_show(ctx, days: int, upcoming: int):
         for a in actuals:
             if a["date"] not in actual_by_date:
                 actual_by_date[a["date"]] = a
-
-        # Pre-fetch RPE from checkins
-        checkins = conn.execute(
-            "SELECT date, rpe FROM checkins WHERE date BETWEEN ? AND ? AND rpe IS NOT NULL",
-            (start.isoformat(), end.isoformat()),
-        ).fetchall()
-        rpe_by_date = {c["date"]: c["rpe"] for c in checkins}
 
         from rich import box as rich_box
         from rich.panel import Panel
@@ -1564,7 +1337,7 @@ def plan_show(ctx, days: int, upcoming: int):
                 act_dist = f"{actual['distance_km']:.1f}" if actual["distance_km"] else "—"
                 dur = actual["duration_min"]
                 time_str = f"{int(dur)}m" if dur else "—"
-                rpe = rpe_by_date.get(r["date"])
+                rpe = actual["rpe"]
                 rpe_str = str(rpe) if rpe else "—"
                 # Zone — colored by actual zone
                 zone = actual["hr_zone"] or ""
@@ -1711,9 +1484,9 @@ def doctor():
 
         # Tables
         tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()]
-        expected = {"activities", "daily_health", "checkins", "body_comp", "weather", "goals",
+        expected = {"activities", "daily_health", "body_comp", "weather", "goals",
                     "training_phases", "goal_log", "calibration", "weekly_agg", "schema_version",
-                    "correlations", "alerts", "import_log", "race_calendar",
+                    "alerts", "import_log", "race_calendar",
                     "activity_splits", "planned_workouts"}
         missing_tables = expected - set(tables)
         if missing_tables:
@@ -1749,13 +1522,6 @@ def doctor():
         else:
             t.add_row("[green]✓[/]", "Data sources", "all active")
 
-        # Correlations
-        try:
-            corr_count = conn.execute("SELECT COUNT(*) FROM correlations WHERE status = 'computed'").fetchone()[0]
-            t.add_row("[green]✓[/]", "Correlations", f"{corr_count} computed")
-        except Exception:
-            t.add_row("[dim]—[/]", "Correlations", "not yet computed")
-
         # Splits coverage
         try:
             total_runs = conn.execute(
@@ -1788,41 +1554,6 @@ def doctor():
 
         status_str = "[green]healthy[/]" if issues == 0 else f"[yellow]{issues} issue(s)[/]"
         console.print(Panel(t, title=f"[bold]Doctor[/] {status_str}", border_style="blue" if issues == 0 else "yellow", padding=(0, 1)))
-    finally:
-        conn.close()
-
-
-@main.command()
-def correlate():
-    """Compute cross-domain correlations and display results."""
-    from fit.correlations import compute_all_correlations
-
-    conn = _conn()
-    try:
-        from rich import box as rich_box
-        from rich.panel import Panel
-        from rich.table import Table
-
-        results = compute_all_correlations(conn)
-        if not results:
-            console.print("  No new correlations to compute (data unchanged).")
-            return
-
-        t = Table(box=rich_box.SIMPLE_HEAD, show_edge=False, pad_edge=False, padding=(0, 1))
-        t.add_column("r", justify="right", style="bold")
-        t.add_column("Pair")
-        t.add_column("n", justify="right", style="dim")
-        t.add_column("Confidence", style="dim")
-
-        for r in sorted(results, key=lambda x: abs(x.get("spearman_r") or 0), reverse=True):
-            sr = r.get("spearman_r") or 0
-            if r["status"] == "insufficient_data":
-                t.add_row("[dim]—[/]", f"[dim]{r['name']}[/]", str(r["sample_size"]), "insufficient data")
-            else:
-                color = "green" if abs(sr) >= 0.3 else "yellow" if abs(sr) >= 0.15 else "dim"
-                t.add_row(f"[{color}]{sr:+.3f}[/]", r["name"], str(r["sample_size"]), r["confidence"])
-
-        console.print(Panel(t, title=f"[bold]Correlations[/] [dim]{len(results)} pairs[/]", border_style="blue", padding=(0, 1)))
     finally:
         conn.close()
 

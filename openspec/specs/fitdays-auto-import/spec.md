@@ -21,7 +21,7 @@ The sync pipeline SHALL check the freshness of the latest body_comp row (>14 day
 
 #### Scenario: No body comp data
 - **WHEN** `fit sync` runs and `body_comp` is empty
-- **THEN** sync outputs: "No body comp data. Run 'fit import-health ~/Downloads/Export.zip' after exporting from the Apple Health app, or enter weight via 'fit checkin'."
+- **THEN** sync outputs: "No body comp data. Run 'fit import-health ~/Downloads/Export.zip' after exporting from the Apple Health app."
 
 #### Scenario: Stale body comp
 - **WHEN** `fit sync` runs and latest body_comp row is >14 days old

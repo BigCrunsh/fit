@@ -39,12 +39,6 @@ def db():
             hrv_weekly_avg REAL, hrv_last_night REAL, hrv_status TEXT,
             avg_respiration REAL, avg_spo2 REAL
         );
-        CREATE TABLE checkins (
-            date DATE PRIMARY KEY, hydration TEXT, alcohol REAL DEFAULT 0,
-            alcohol_detail TEXT, legs TEXT, eating TEXT,
-            water_liters REAL, energy TEXT, rpe INTEGER,
-            sleep_quality TEXT, notes TEXT
-        );
         CREATE TABLE body_comp (
             date DATE PRIMARY KEY, weight_kg REAL, body_fat_pct REAL,
             muscle_mass_kg REAL, visceral_fat REAL, bmi REAL, source TEXT
@@ -94,12 +88,6 @@ def db():
         );
         CREATE TABLE schema_version (
             version INTEGER PRIMARY KEY, name TEXT, applied_at DATETIME
-        );
-        CREATE TABLE correlations (
-            metric_pair TEXT PRIMARY KEY, lag_days INTEGER,
-            spearman_r REAL, pearson_r REAL, p_value REAL,
-            sample_size INTEGER, confidence TEXT, status TEXT,
-            last_computed DATETIME, data_count_at_compute INTEGER
         );
         CREATE TABLE alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT, date DATE, type TEXT,
@@ -197,15 +185,6 @@ def _populate_data(db):
             VALUES (?, 55, 7.5, 52, 45, 97)
         """, (d,))
 
-    # Checkins
-    for i in range(7):
-        d = (today - timedelta(days=i * 2)).isoformat()
-        db.execute("""
-            INSERT INTO checkins (date, hydration, alcohol, legs, eating, energy,
-                sleep_quality, rpe)
-            VALUES (?, 'Good', 0, 'OK', 'Good', 'Normal', 'Good', 5)
-        """, (d,))
-
     # Body comp
     db.execute("INSERT INTO body_comp (date, weight_kg) VALUES (?, 77.5)", (today.isoformat(),))
 
@@ -231,13 +210,6 @@ class TestFullPipeline:
         }
         alerts = run_alerts(db, config)
         assert isinstance(alerts, list)
-
-    def test_correlation_pipeline(self, db):
-        from fit.correlations import compute_all_correlations
-        _populate_data(db)
-
-        results = compute_all_correlations(db)
-        assert isinstance(results, list)
 
     def test_periodization_evaluation(self, db):
         from fit.periodization import evaluate_phase_readiness
@@ -267,7 +239,7 @@ class TestFullPipeline:
     def test_all_tables_populated(self, db):
         _populate_data(db)
 
-        tables = ["activities", "daily_health", "checkins", "goals",
+        tables = ["activities", "daily_health", "goals",
                    "training_phases", "weekly_agg", "race_calendar", "body_comp"]
         for t in tables:
             count = db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]

@@ -4,7 +4,7 @@
 TBD — normalized from archived change deltas; update Purpose.
 ## Requirements
 ### Requirement: SQLite schema defines all fitness data tables
-The system SHALL create and maintain a SQLite database at the path specified in config (`sync.db_path`, default `~/.fit/fitness.db`). The schema SHALL define 10 tables (`activities`, `daily_health`, `checkins`, `body_comp`, `weather`, `goals`, `training_phases`, `goal_log`, `calibration`, `weekly_agg`) and 2 views (`v_run_days`, `v_all_training`) as specified in `migrations/001_schema.sql`.
+The system SHALL create and maintain a SQLite database at the path specified in config (`sync.db_path`, default `~/.fit/fitness.db`). The schema SHALL define 9 core tables (`activities`, `daily_health`, `body_comp`, `weather`, `goals`, `training_phases`, `goal_log`, `calibration`, `weekly_agg`) and 2 views (`v_run_days`, `v_all_training`) as specified in `migrations/001_schema.sql` and later migrations.
 
 #### Scenario: Fresh database initialization
 - **WHEN** `fit sync` runs and no database file exists
@@ -317,7 +317,7 @@ The system SHALL detect stale calibrations and prompt for active retesting:
 - **THEN** the system computes candidate LTHR as avg HR of the second half of the race, creates a calibration entry with `method = 'race_extract'`, `confidence = 'medium'`, and prompts: "New LTHR estimate from your race: 170 bpm (current: 172). Accept? [y/N]"
 
 #### Scenario: LTHR from time trial
-- **WHEN** user runs `fit calibrate lthr` or logs a time trial via checkin
+- **WHEN** user runs `fit calibrate lthr`
 - **THEN** the system prompts for the 30-min TT result, computes LTHR as avg HR of last 20 min, creates a calibration entry with `method = 'time_trial'`, `confidence = 'high'`
 
 #### Scenario: Stale LTHR warning in fit status
@@ -355,10 +355,6 @@ Data sources to check:
 - **WHEN** all data sources have recent data and calibrations are current
 - **THEN** the data health panel shows all green checkmarks
 
-#### Scenario: Stale check-in
-- **WHEN** the last check-in was 5 days ago
-- **THEN** the data health panel shows: "Check-ins: Stale (last: 5 days ago). Run `fit checkin` daily for best coaching insights."
-
 ### Requirement: fit status shows quick overview with calibration, data health, and active phase
 `fit status` SHALL display: total counts per table, last sync timestamp, **calibration status** (max_hr, lthr, weight with staleness warnings and retest prompts), **data source health** (active/stale/missing per source with Garmin setting instructions), active goals with targets, current training phase (name, targets, multi-dimensional compliance), ACWR safety, and consistency streak.
 
@@ -370,27 +366,8 @@ Data sources to check:
 - **WHEN** user runs `fit status` and the database is empty
 - **THEN** the system displays zero counts and suggests running `fit sync`
 
-### Requirement: Cross-domain correlation engine
-The system SHALL compute Spearman rank correlations between health, behavior, and performance metrics via `fit/correlations.py`. Five predefined correlation pairs are computed: alcohol→HRV (lag 1), alcohol→RHR (lag 1), sleep quality→readiness, temperature→efficiency, water→HRV (lag 1). Correlations use a zero-dependency implementation (no scipy). Results are stored in the `correlations` table with metric_pair as primary key. Recomputation is skipped when data count is unchanged (`data_count_at_compute`).
-
-#### Scenario: Correlation computed with sufficient data
-- **WHEN** `fit correlate` runs and a pair has ≥ 20 matched data points
-- **THEN** the system computes Spearman r, Pearson r, p-value, sample size, and confidence (high if n≥30 and p<0.05, moderate if n≥20, low otherwise), and upserts into the `correlations` table
-
-#### Scenario: Insufficient data for correlation
-- **WHEN** a correlation pair has fewer than 20 matched data points
-- **THEN** the result is stored with `status = 'insufficient_data'` and `spearman_r = NULL`
-
-#### Scenario: Correlation skipped when data unchanged
-- **WHEN** `fit correlate` runs and the data count matches `data_count_at_compute` from the last run
-- **THEN** the pair is skipped (no recomputation)
-
-#### Scenario: Lagged correlation pairing
-- **WHEN** a pair has `lag_days = 1` (e.g., alcohol→HRV)
-- **THEN** each x-value (alcohol on day D) is paired with the y-value (HRV on day D+1)
-
 ### Requirement: Real-time coaching alerts
-The system SHALL evaluate threshold-based alert rules after each sync via `fit/alerts.py`. Alerts are stored in the `alerts` table with deduplication (same date + type = no duplicate). Four alert rules: (1) `all_runs_too_hard` — Z1+Z2 compliance < 50% over 2 weeks, (2) `volume_ramp` — >10% volume increase with <8 weeks consistency, (3) `readiness_gate` — readiness < 30, (4) `alcohol_hrv` — ≥2 drinks + HRV drop >15% from 7-day average. Alerts have an `acknowledged` flag for dismissal.
+The system SHALL evaluate threshold-based alert rules after each sync via `fit/alerts.py`. Alerts are stored in the `alerts` table with deduplication (same date + type = no duplicate). Three alert rules: (1) `all_runs_too_hard` — Z1+Z2 compliance < 50% over 2 weeks, (2) `volume_ramp` — >10% volume increase with <8 weeks consistency, (3) `readiness_gate` — readiness < 30. Alerts have an `acknowledged` flag for dismissal.
 
 #### Scenario: Volume ramp alert
 - **WHEN** this week's volume increased >10% over last week AND consistency streak < 8 weeks
@@ -439,7 +416,7 @@ The `race_calendar` table (migration 006) SHALL store planned and completed race
 - **THEN** goal 3 is set to `active = 0` and a `goal_completed` event is logged
 
 ### Requirement: fit doctor diagnostic command
-`fit doctor` SHALL validate the full data pipeline: schema version check, expected tables present (14 tables including correlations, alerts, import_log), weekly_agg freshness vs latest activity, calibration staleness, data source health, and correlation count. Returns a summary with issue count.
+`fit doctor` SHALL validate the full data pipeline: schema version check, expected tables present (including alerts, import_log), weekly_agg freshness vs latest activity, calibration staleness, and data source health. Returns a summary with issue count.
 
 #### Scenario: All healthy
 - **WHEN** `fit doctor` runs and all checks pass
@@ -476,7 +453,7 @@ Body composition data SHALL be imported via the explicit `fit import-health <Exp
 
 #### Scenario: Sync warns when body_comp is empty
 - **WHEN** `fit sync` runs and `body_comp` has no rows with weight
-- **THEN** the sync output includes a warning prompting the user to run `fit import-health` or enter weight via `fit checkin`
+- **THEN** the sync output includes a warning prompting the user to run `fit import-health`
 
 #### Scenario: Sync flags future-dated body comp
 - **WHEN** `fit sync` runs and the latest body_comp row has a date in the future (typo, bad timezone import)

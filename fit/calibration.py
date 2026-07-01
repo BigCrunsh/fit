@@ -125,7 +125,7 @@ RETEST_PROMPTS = {
     "max_hr": "Verify during your next hard race or interval session.",
     "lthr": "Schedule a 30-min time trial, or we can auto-extract from your next 10k+ race.",
     "aet": "Run a 15+ km steady-pace effort (flat terrain, fueled) — we auto-derive AeT from HR drift.",
-    "weight": "Step on the scale or enter weight in `fit checkin`.",
+    "weight": "Step on the scale, then re-export Apple Health and run `fit import-health`.",
     "vo2max": "Run outdoors with GPS for Garmin to update estimate.",
 }
 

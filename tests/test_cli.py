@@ -28,10 +28,6 @@ class TestCLICommands:
         assert result.exit_code == 0
         assert "Doctor" in result.output
 
-    def test_correlate(self):
-        result = CliRunner().invoke(main, ["correlate"])
-        assert result.exit_code == 0
-
     def test_races(self):
         result = CliRunner().invoke(main, ["races"])
         assert result.exit_code == 0
@@ -42,10 +38,6 @@ class TestCLICommands:
         assert result.exit_code == 0
         assert "--days" in result.output
         assert "--full" in result.output
-
-    def test_checkin_help(self):
-        result = CliRunner().invoke(main, ["checkin", "--help"])
-        assert result.exit_code == 0
 
     def test_report_help(self):
         result = CliRunner().invoke(main, ["report", "--help"])

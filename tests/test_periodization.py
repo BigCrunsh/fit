@@ -53,12 +53,6 @@ def db():
             readiness_level TEXT, hrv_weekly_avg REAL, hrv_status TEXT,
             avg_respiration REAL
         );
-        CREATE TABLE checkins (
-            date DATE PRIMARY KEY, hydration TEXT, alcohol REAL DEFAULT 0,
-            alcohol_detail TEXT, legs TEXT, eating TEXT,
-            water_liters REAL, energy TEXT, rpe INTEGER,
-            sleep_quality TEXT, notes TEXT
-        );
         CREATE TABLE weather (
             date DATE PRIMARY KEY, temp_c REAL, humidity_pct REAL,
             temp_max_c REAL, temp_min_c REAL, wind_speed_kmh REAL,
@@ -132,27 +126,6 @@ class TestRunStory:
         assert result["distance_km"] == 18.0
         assert result["has_splits"] is False
         assert "18km" in result["narrative"]
-
-    def test_long_run_with_checkin_context(self, db):
-        today = date.today().isoformat()
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
-
-        db.execute("""
-            INSERT INTO activities (id, date, type, name, distance_km, duration_min,
-                pace_sec_per_km, avg_hr, speed_per_bpm, run_type)
-            VALUES ('r1', ?, 'running', 'Long Run', 18.0, 100.0, 333, 155, 0.038, 'long')
-        """, (today,))
-        db.execute("""
-            INSERT INTO checkins (date, alcohol, sleep_quality, legs, energy)
-            VALUES (?, 2, 'Poor', 'Heavy', 'Low')
-        """, (yesterday,))
-        db.commit()
-
-        result = generate_run_story(db, {})
-        assert result is not None
-        assert result["checkin"]["alcohol"] == 2
-        assert result["checkin"]["sleep_quality"] == "Poor"
-        assert "drink" in result["narrative"].lower() or "poor sleep" in result["narrative"].lower()
 
     def test_long_run_with_splits(self, db):
         today = date.today().isoformat()

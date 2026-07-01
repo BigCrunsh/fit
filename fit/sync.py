@@ -394,10 +394,10 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     else:
         warnings.append(
             "No body comp data. Run 'fit import-health ~/Downloads/Export.zip' "
-            "after exporting from the Apple Health app, or enter weight via 'fit checkin'."
+            "after exporting from the Apple Health app."
         )
 
-    # 8a. Compute sRPE (retroactively join checkin RPE to same-day activities)
+    # 8a. Compute sRPE from per-activity RPE (activities.rpe × duration)
     try:
         from fit.analysis import compute_srpe
         srpe_count = compute_srpe(conn)
@@ -455,13 +455,7 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     except Exception as e:
         logger.debug("Plan status update skipped: %s", e)
 
-    # 8c. Auto-compute correlations + run alerts
-    try:
-        from fit.correlations import compute_all_correlations
-        compute_all_correlations(conn)
-    except Exception as e:
-        logger.debug("Correlations skipped: %s", e)
-
+    # 8c. Run alerts
     try:
         from fit.alerts import run_alerts
         alerts = run_alerts(conn, config)

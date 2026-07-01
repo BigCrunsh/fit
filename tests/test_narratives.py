@@ -45,12 +45,6 @@ def db():
             readiness_level TEXT, hrv_weekly_avg REAL, hrv_status TEXT,
             avg_respiration REAL
         );
-        CREATE TABLE checkins (
-            date DATE PRIMARY KEY, hydration TEXT, alcohol REAL DEFAULT 0,
-            alcohol_detail TEXT, legs TEXT, eating TEXT,
-            water_liters REAL, energy TEXT, rpe INTEGER,
-            sleep_quality TEXT, notes TEXT
-        );
         CREATE TABLE body_comp (
             date DATE PRIMARY KEY, weight_kg REAL NOT NULL,
             body_fat_pct REAL, muscle_mass_kg REAL, visceral_fat REAL,

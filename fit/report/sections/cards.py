@@ -10,10 +10,9 @@ from fit.report.headline import generate_headline
 from fit.narratives import (
     generate_race_countdown,
     generate_body_summary,
-    generate_checkin_progress,
 )
 
-from fit.report.sections import SAFE, DANGER, Z1, Z2, Z3, Z4, Z5
+from fit.report.sections import Z1, Z2, Z3, Z4, Z5
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +23,10 @@ def _headline(conn):
     latest = conn.execute("SELECT training_readiness FROM daily_health ORDER BY date DESC LIMIT 1").fetchone()
     acwr_val = compute_rolling_acwr(conn)   # rolling-7d acute (the documented hybrid; matches coaching/CLI/alerts)
     phase = conn.execute("SELECT * FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
-    last_ci = conn.execute("SELECT date, sleep_quality FROM checkins ORDER BY date DESC LIMIT 1").fetchone()
     return generate_headline(
         readiness=latest["training_readiness"] if latest else None,
         acwr=acwr_val,
         phase=dict(phase) if phase else None,
-        last_checkin_date=last_ci["date"] if last_ci else None,
-        today=date.today().isoformat(),
-        sleep_quality=last_ci["sleep_quality"] if last_ci else None,
         conn=conn,
     )
 
@@ -83,35 +78,6 @@ def _prediction_summary(conn):
     except Exception:
         return None
 
-
-
-# ── Check-in ──
-
-def _checkin(conn):
-    row = conn.execute("SELECT * FROM checkins ORDER BY date DESC LIMIT 1").fetchone()
-    if not row:
-        return None
-    fields = []
-    if row["hydration"]:
-        fields.append(f"💧 {row['hydration']}")
-    if row["alcohol"] is not None:
-        detail = f" ({row['alcohol_detail']})" if row["alcohol_detail"] else ""
-        fields.append(f"🍺 {row['alcohol']}{detail}")
-    if row["legs"]:
-        fields.append(f"🦵 {row['legs']}")
-    if row["eating"]:
-        fields.append(f"🍽️ {row['eating']}")
-    if row["water_liters"]:
-        fields.append(f"💧 {row['water_liters']}L")
-    if row["energy"]:
-        fields.append(f"⚡ {row['energy']}")
-    if row["sleep_quality"]:
-        fields.append(f"😴 {row['sleep_quality']}")
-    if row["rpe"] is not None:
-        fields.append(f"💪 RPE {row['rpe']}")
-    if row["notes"]:
-        fields.append(row["notes"])
-    return {"date": row["date"], "fields": fields}
 
 
 _DENSE_THRESHOLD = 3  # ≥ this many distinct readings → render as scatter chart
@@ -339,11 +305,6 @@ _SEVERITY_FOR_CALIBRATION = {"lthr": "warning", "max_hr": "warning", "weight": "
 # Stale-data rules: (source_name, min_days, severity, headline_fn, command, detail, source_fn).
 # `headline_fn(days)` and `source_fn(days)` produce the user-visible text.
 _DATA_HEALTH_STALE_RULES = [
-    ("checkins", 3, "info",
-     lambda d: f"No checkin for {d} days",
-     "fit checkin",
-     "Log sleep, hydration, and (optionally) alcohol.",
-     lambda d: f"checkins table: last entry {d}d ago."),
     ("weight", 14, "warning",
      lambda d: f"Weight last logged {d}d ago",
      "fit import-health ~/Downloads/Export.zip",
@@ -920,33 +881,6 @@ def _recent_alerts(conn):
         return []
 
 
-# ── Correlation Bars ──
-
-def _correlation_bars(conn):
-    try:
-        rows = conn.execute("""
-            SELECT metric_pair, spearman_r, sample_size, confidence
-            FROM correlations WHERE status = 'computed' AND spearman_r IS NOT NULL
-            ORDER BY ABS(spearman_r) DESC LIMIT 8
-        """).fetchall()
-        results = []
-        for r in rows:
-            sr = r["spearman_r"]
-            label = r["metric_pair"].replace("_", " ").replace("lag1", "(next day)")
-            color = SAFE if sr > 0 else DANGER
-            width = min(abs(sr) * 100, 50)  # scale to max 50% bar width
-            results.append({
-                "label": label, "r": f"{sr:+.2f}", "n": r["sample_size"],
-                "confidence": r["confidence"], "color": color, "width": int(width),
-                "direction": "positive" if sr > 0 else "negative",
-            })
-        return results
-    except Exception:
-        return []
-
-
-
-
 def _phase_compliance(conn):
     phase = conn.execute("SELECT * FROM training_phases WHERE status = 'active' LIMIT 1").fetchone()
     if not phase:
@@ -970,31 +904,6 @@ def _calibration_panel(conn):
 def _data_health_panel(conn):
     from fit.data_health import check_data_sources
     return check_data_sources(conn)
-
-
-# ── Sleep Mismatches (W10) ──
-
-def _sleep_mismatches(conn):
-    rows = conn.execute("""
-        SELECT h.date, h.sleep_duration_hours, c.sleep_quality
-        FROM daily_health h
-        JOIN checkins c ON h.date = c.date
-        WHERE h.date >= date('now', '-21 days')
-          AND c.sleep_quality IS NOT NULL
-          AND h.sleep_duration_hours IS NOT NULL
-        ORDER BY h.date DESC
-    """).fetchall()
-    mismatches = []
-    for r in rows:
-        hours = r["sleep_duration_hours"]
-        quality = r["sleep_quality"]
-        if hours >= 7 and quality == "Poor":
-            mismatches.append({"date": r["date"], "hours": f"{hours:.1f}", "quality": quality,
-                               "msg": f"{hours:.1f}h sleep but felt Poor — possible stress or sleep disruption"})
-        elif hours < 6 and quality == "Good":
-            mismatches.append({"date": r["date"], "hours": f"{hours:.1f}", "quality": quality,
-                               "msg": f"Only {hours:.1f}h but felt Good — monitor for cumulative deficit"})
-    return mismatches
 
 
 # ── Race Countdown (3.6) ──
@@ -1111,16 +1020,6 @@ def _race_countdown(conn):
         return None
 
 
-# ── Rolling Correlations (3.5) ──
-
-def _rolling_correlations(conn):
-    try:
-        from fit.correlations import compute_rolling_correlations
-        return compute_rolling_correlations(conn)
-    except Exception:
-        return []
-
-
 def _split_data(conn):
     """Get split data for the most recent long run with parsed splits."""
     try:
@@ -1158,14 +1057,13 @@ def _split_data(conn):
 def _subtitle(conn):
     h = conn.execute("SELECT COUNT(*) FROM daily_health").fetchone()[0]
     a = conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0]
-    c = conn.execute("SELECT COUNT(*) FROM checkins").fetchone()[0]
     # Training age: weeks since first activity
     first = conn.execute("SELECT MIN(date) FROM activities").fetchone()[0]
     weeks = ""
     if first:
         days_tracking = (date.today() - date.fromisoformat(first)).days
         weeks = f" · week {days_tracking // 7} of tracking"
-    return f"{h}d · {a} activities · {c} check-ins{weeks}"
+    return f"{h}d · {a} activities{weeks}"
 
 
 
@@ -1177,14 +1075,6 @@ def _body_summary(conn):
         return generate_body_summary(conn)
     except Exception:
         return None
-
-
-def _checkin_progress(conn):
-    """Progress toward correlation unlock thresholds."""
-    try:
-        return generate_checkin_progress(conn)
-    except Exception:
-        return {"total": 0, "target": 20, "pct": 0, "remaining": 20}
 
 
 def _fitness_profile_data(conn):

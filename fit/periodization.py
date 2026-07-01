@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 def generate_run_story(conn: sqlite3.Connection, config: dict) -> dict | None:
     """Synthesize a narrative for the most recent long run.
 
-    Combines: splits (if available), correlations, checkin, weather.
+    Combines: splits (if available) and weather.
     Degrades gracefully without .fit data (uses per-run averages).
     """
     # Find most recent long run
@@ -42,20 +42,6 @@ def generate_run_story(conn: sqlite3.Connection, config: dict) -> dict | None:
         "avg_pace": _format_pace(long_run["pace_sec_per_km"]),
         "efficiency": long_run["speed_per_bpm"],
     }
-
-    # Get preceding checkin
-    checkin = conn.execute("""
-        SELECT alcohol, sleep_quality, rpe, legs, energy, hydration
-        FROM checkins WHERE date = date(?, '-1 day')
-    """, (long_run["date"],)).fetchone()
-
-    if checkin:
-        story["checkin"] = {
-            "alcohol": checkin["alcohol"],
-            "sleep_quality": checkin["sleep_quality"],
-            "legs": checkin["legs"],
-            "energy": checkin["energy"],
-        }
 
     # Get weather
     weather = conn.execute(
@@ -127,19 +113,6 @@ def _compose_run_story_text(story: dict, config: dict) -> str:
         parts.append(f"avg {story.get('avg_pace', '?')}/km at HR {story.get('avg_hr', '?')}")
         if story.get("efficiency"):
             parts.append(f"(efficiency {story['efficiency']:.3f})")
-
-    # Checkin context
-    if story.get("checkin"):
-        ci = story["checkin"]
-        factors = []
-        if ci.get("alcohol") and ci["alcohol"] >= 1:
-            factors.append(f"{ci['alcohol']:.0f} drink{'s' if ci['alcohol'] > 1 else ''} the night before")
-        if ci.get("sleep_quality") == "Poor":
-            factors.append("poor sleep")
-        if ci.get("legs") == "Heavy":
-            factors.append("heavy legs")
-        if factors:
-            parts.append(". ".join(factors))
 
     # Weather
     if story.get("weather") and story["weather"].get("temp_c"):

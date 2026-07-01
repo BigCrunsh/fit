@@ -7,11 +7,10 @@ Personal fitness data platform. SQLite database, Python CLI, MCP server, HTML da
 ```bash
 pip install -e .                      # install
 pip install -e '.[analysis]'          # install with fitparse for .fit file analysis
-pytest tests/ -v                      # run tests (905 tests, in-memory SQLite)
+pytest tests/ -v                      # run tests
 pytest tests/ -v --tb=short           # compact output
 fit sync --days 7                     # daily: pull Garmin + enrich + weather + aggregate
 fit sync --full && fit recompute      # init: pull all history + re-enrich
-fit checkin                           # daily check-in (sleep, hydration, alcohol — RPE comes from Garmin)
 fit backfill rpe                      # one-shot: import directWorkoutRpe/Feel/ComplianceScore from Garmin for all running activities
 fit report                            # generate dashboard → ~/.fit/reports/dashboard.html
 fit coach                             # coaching analysis via the claude CLI → reports/coaching.json
@@ -34,8 +33,8 @@ fit mcp install                       # register the MCP data tools with Claude 
 - **Monotony = mean/stdev** (Foster's formula), NOT stdev alone. Strain = weekly_load × monotony
 - **Objectives auto-derived only** — from target race via `derive_objectives()`. No manual CRUD.
 - **Goals = "objectives" in UI** — DB table stays `goals`, user-facing text says "objectives"
-- **RPE/Feel/Compliance source = Garmin** — `activities.rpe`, `activities.feel`, `activities.compliance_score` come from `summaryDTO.directWorkoutRpe/Feel/ComplianceScore` of the activity detail endpoint. Sync re-fetches the last 14 days every run; older activities are fill-NULL-only. Use `fit backfill rpe` to populate history. RPE is NOT collected via `fit checkin`.
-- **sRPE source = activities.rpe** — `compute_srpe()` reads per-activity RPE directly. Triggered from sync and backfill (no longer from checkin).
+- **RPE/Feel/Compliance source = Garmin** — `activities.rpe`, `activities.feel`, `activities.compliance_score` come from `summaryDTO.directWorkoutRpe/Feel/ComplianceScore` of the activity detail endpoint. Sync re-fetches the last 14 days every run; older activities are fill-NULL-only. Use `fit backfill rpe` to populate history.
+- **sRPE source = activities.rpe** — `compute_srpe()` reads per-activity RPE directly. Triggered from sync and backfill.
 - **Race calendar is manual** — not auto-detected from Garmin activity names
 - **Aerobic SSOT = effective VDOT (`_effective_vdot`), shown as an integer** — the Physiology card's 4th tile, the Aerobic fitness dimension, and the Daniels pace zones all read `_effective_vdot` (confirmed VDOT > recent race ≤180d > Garmin−overestimate). Garmin VO2max reads ~5–10 high and is **reference/diagnostic only** (the Anchor-vs-Garmin chart, the small "Garmin VO2max N" sub-line) — never a headline number. Don't reintroduce raw Garmin VO2max or a raw latest-qualifying-anchor VDOT as a displayed value. (We deliberately do **not** surface a "VDOT disagrees with Garmin" attention item — that gap is the structural Garmin overestimate, not an actionable signal; only "no qualifying anchor at all" warrants a nudge.)
 - **Device-measured LTHR (`device_lt`) is the trusted anchor** — calibration precedence is **confirmed > device > policy** (`get_calibration_anchor`). When the active LTHR is `device_lt` (Garmin auto-detected lactate threshold), HR-derived LTHR re-calibration nudges are suppressed: the policy suggestion (`evaluate_suggestions`) and the race-derived nudge (`_attention_items`'s `lthr_suggestion`) both skip — nagging to change a device value toward a lower-precedence estimate is self-contradictory. They re-enable automatically if the device stops providing an LT.

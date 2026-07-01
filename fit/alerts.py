@@ -22,7 +22,6 @@ ALERT_SEVERITY: dict[str, str] = {
     "volume_ramp": "critical",
     # Warning — meaningful but not urgent
     "all_runs_too_hard": "warning",
-    "alcohol_hrv": "warning",
     "high_monotony": "warning",
     "undertraining": "warning",
     "deload_overdue": "warning",
@@ -79,20 +78,6 @@ def run_alerts(conn: sqlite3.Connection, config: dict) -> list[dict]:
                            f"context: {context}). Rest or very easy activity only.",
                            {"readiness": readiness["training_readiness"],
                             "threshold": readiness_threshold, "context": context}))
-
-    # Rule: Alcohol + HRV drop
-    last_ci = conn.execute("SELECT date, alcohol FROM checkins ORDER BY date DESC LIMIT 1").fetchone()
-    today_hrv = conn.execute("SELECT hrv_last_night FROM daily_health ORDER BY date DESC LIMIT 1").fetchone()
-    avg_hrv = conn.execute("SELECT AVG(hrv_last_night) as avg FROM daily_health WHERE date >= date('now', '-7 days')").fetchone()
-    if last_ci and last_ci["alcohol"] and last_ci["alcohol"] >= 2 and today_hrv and avg_hrv:
-        hrv_now = today_hrv["hrv_last_night"] or 0
-        hrv_avg = avg_hrv["avg"] or 0
-        if hrv_avg > 0 and hrv_now < hrv_avg * 0.85:
-            drop_pct = (1 - hrv_now / hrv_avg) * 100
-            fired.append(_fire(conn, today, "alcohol_hrv",
-                               f"HRV {hrv_now:.0f}ms (↓{drop_pct:.0f}% from 7d avg {hrv_avg:.0f}ms) after "
-                               f"{last_ci['alcohol']:.0f} drinks. Rest day recommended.",
-                               {"hrv_now": hrv_now, "hrv_avg": hrv_avg, "drinks": last_ci["alcohol"]}))
 
     # Rule: SpO2 alert — avg_spo2 < threshold for 2+ consecutive days
     spo2_threshold = config.get("coaching", {}).get("spo2_alert_threshold", 95)
@@ -261,19 +246,6 @@ def _condition_still_holds(conn: sqlite3.Connection, alert_type: str) -> bool:
             # auto-dismiss (readiness 40-49 → still held), leaving a stale alert (D12).
             threshold = 50 if detect_training_gap(conn) else 40
             return bool(row and row["training_readiness"] and row["training_readiness"] < threshold)
-
-        if alert_type == "alcohol_hrv":
-            today_hrv = conn.execute(
-                "SELECT hrv_last_night FROM daily_health ORDER BY date DESC LIMIT 1"
-            ).fetchone()
-            avg_hrv = conn.execute(
-                "SELECT AVG(hrv_last_night) as avg FROM daily_health WHERE date >= date('now', '-7 days')"
-            ).fetchone()
-            if not today_hrv or not avg_hrv:
-                return False
-            hrv_now = today_hrv["hrv_last_night"] or 0
-            hrv_avg = avg_hrv["avg"] or 0
-            return hrv_avg > 0 and hrv_now < hrv_avg * 0.85
 
         if alert_type == "spo2_low":
             rows = conn.execute("""

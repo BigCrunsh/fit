@@ -189,8 +189,7 @@ Physio Calibration   calibration                      (the model context for the
 Training Load        training_load   (queued from analysis: weekly_agg · monotony · sRPE)
 Performance/Forecast fitness (Daniels) · marathon/ · prediction
 Planning             goals · plan · periodization · milestones
-Self-report          checkin
-Insight/Narrative    correlations · alerts · narratives · coach-MCP
+Insight/Narrative    alerts · narratives · coach-MCP
 Presentation         report/
 ```
 `analysis.py` is split along these seams incrementally (re-export shims left behind);

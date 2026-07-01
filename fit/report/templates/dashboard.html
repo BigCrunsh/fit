@@ -952,17 +952,6 @@
 
   <div id="readiness-acwr" class="sec"><h2>ACWR Trend</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.acwr | safe }}</div><div class="line"></div></div>
   <div class="chart-box chart-canvas-sm"><canvas id="chart-acwr"></canvas></div>
-
-  <div class="sec"><h2>Sleep Quality Mismatches</h2><div class="line"></div></div>
-  {% if sleep_mismatches %}
-  {% for m in sleep_mismatches %}
-  <div style="background:rgba(234,179,8,0.06);border:1px solid rgba(234,179,8,0.12);border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:11px;color:#94a3b8">
-    <span style="color:var(--caution)">{{ m.date }}:</span> {{ m.msg }}
-  </div>
-  {% endfor %}
-  {% else %}
-  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">No mismatches detected. Log sleep quality in <code style="background:var(--surface-hover);padding:2px 6px;border-radius:4px">fit checkin</code> to compare Garmin sleep data with how you feel.</div>
-  {% endif %}
 </div>
 
 <!-- COACH -->
@@ -985,58 +974,6 @@
   {% if prediction_trend %}
   <div class="sec"><h2>Checkpoints</h2><div class="line"></div></div>
   <div id="checkpoints-table"></div>
-  {% endif %}
-
-  <div class="sec"><h2>What Affects Your Performance?</h2><div class="line"></div></div>
-  {% if correlation_bars %}
-  <div style="margin-bottom:14px">
-  {% for c in correlation_bars %}
-  <div style="display:flex;align-items:center;gap:10px;margin:6px 0;padding:6px 10px;background:var(--surface);border-radius:8px">
-    <div style="width:{{ c.width + 10 }}%;min-width:20px;height:20px;background:{{ c.color }};border-radius:4px;opacity:0.5"></div>
-    <div style="flex:1">
-      <div style="font-size:12px;font-weight:600;color:var(--text)">{{ c.label }}</div>
-      <div style="font-size:9px;color:var(--text-dim)">{% if c.direction == 'negative' %}Negative effect{% else %}Positive effect{% endif %} | {{ c.confidence }} confidence | {{ c.n }} data points</div>
-    </div>
-    <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:{{ c.color }}">{{ c.r }}</div>
-  </div>
-  {% endfor %}
-  <div style="font-size:9px;color:var(--text-dim);margin-top:6px">Spearman rank correlation. Bars show effect strength. Build more data through daily <code>fit checkin</code> to unlock more correlations.</div>
-  </div>
-  {% else %}
-  <div style="padding:8px 0">
-    <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">{{ checkin_progress.total }}/{{ checkin_progress.target }} check-ins ({{ checkin_progress.remaining }} more to unlock correlations)</div>
-    <div style="height:6px;background:var(--track);border-radius:3px;overflow:hidden">
-      <div style="height:100%;width:{{ checkin_progress.pct }}%;background:var(--accent);border-radius:3px;transition:width 0.3s"></div>
-    </div>
-    <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Run <code style="background:var(--surface-hover);padding:1px 4px;border-radius:3px">fit checkin</code> daily to build the dataset.</div>
-  </div>
-  {% endif %}
-
-  <!-- Rolling correlation sparklines -->
-  <div class="sec"><h2>Correlation Trends (8-week rolling)</h2><div class="line"></div></div>
-  {% if rolling_correlations %}
-  <div class="sec"><h2>Correlation Trends (8-week rolling)</h2><div class="line"></div></div>
-  <div class="sparkline-grid">
-    {% for rc in rolling_correlations %}
-    <div class="sparkline-card">
-      <div class="sparkline-label">{{ rc.metric_pair | default(rc.pair, true) | replace('_', ' ') }}</div>
-      <div class="sparkline-value" style="color:{% if rc.current_r is defined and rc.current_r > 0 %}var(--safe){% elif rc.current_r is defined and rc.current_r < 0 %}var(--danger){% else %}var(--text-muted){% endif %}">
-        {% if rc.current_r is defined %}{{ "%.2f" | format(rc.current_r) }}{% else %}--{% endif %}
-      </div>
-      {% if rc.trend is defined %}<div class="sparkline-trend">{{ rc.trend }}</div>{% endif %}
-      {% if rc.windows is defined and rc.windows | length > 0 %}
-      <div style="display:flex;align-items:end;gap:1px;height:20px;margin-top:4px">
-        {% for w in rc.windows %}
-        {% set bar_h = ((w.r | default(0) + 1) / 2 * 18) | int %}
-        <div style="flex:1;height:{{ bar_h }}px;min-height:1px;background:{% if w.r is defined and w.r > 0 %}rgba(34,197,94,0.4){% elif w.r is defined and w.r < 0 %}rgba(239,68,68,0.4){% else %}rgba(100,116,139,0.2){% endif %};border-radius:1px"></div>
-        {% endfor %}
-      </div>
-      {% endif %}
-    </div>
-    {% endfor %}
-  </div>
-  {% else %}
-  <div style="color:var(--text-muted);font-size:11px;padding:8px 0">Rolling correlations need 8+ weeks of check-in data. Currently computing from available data — keep running <code style="background:var(--surface-hover);padding:2px 6px;border-radius:4px">fit checkin</code> daily.</div>
   {% endif %}
 
   {% if coaching %}

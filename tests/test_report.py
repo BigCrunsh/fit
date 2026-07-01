@@ -8,7 +8,6 @@ from pathlib import Path
 from fit.report.generator import (
     generate_dashboard,
     _headline,
-    _checkin,
 )
 
 
@@ -34,14 +33,6 @@ class TestGeneratorEmptyDB:
         result = _headline(db)
         assert isinstance(result, str)
         assert len(result) > 0
-
-    def test_checkin_empty_db(self, db):
-        """With no user checkins (or backfill data), result should be None or a dict."""
-        # Backfill migrations may have populated checkins, so clear them
-        db.execute("DELETE FROM checkins")
-        db.commit()
-        result = _checkin(db)
-        assert result is None
 
 
 # ════════════════════════════════════════════════════════════════
@@ -82,13 +73,6 @@ class TestGeneratorNullFields:
         self._insert_health(db, date.today().isoformat(), training_readiness=None)
         result = _headline(db)
         assert isinstance(result, str)
-
-    def test_checkin_with_null_fields(self, db):
-        db.execute("INSERT INTO checkins (date) VALUES (?)", (date.today().isoformat(),))
-        db.commit()
-        result = _checkin(db)
-        assert result is not None
-        assert result["date"] == date.today().isoformat()
 
     def test_generate_full_dashboard_with_data(self, db):
         """Full dashboard with some data should not crash."""
