@@ -1410,7 +1410,9 @@ class TestDeriveMaximalEffort:
 
     def test_rpe_threshold_sets_maximal_and_not(self, db):
         from fit.analysis import derive_maximal_effort
-        self._run(db, "a", rpe=9); self._run(db, "b", rpe=10); self._run(db, "c", rpe=7)
+        self._run(db, "a", rpe=9)
+        self._run(db, "b", rpe=10)
+        self._run(db, "c", rpe=7)
         derive_maximal_effort(db)
         rows = {r["id"]: (r["is_maximal"], r["max_effort_source"]) for r in
                 db.execute("SELECT id, is_maximal, max_effort_source FROM activities").fetchall()}

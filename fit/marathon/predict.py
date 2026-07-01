@@ -661,7 +661,8 @@ def effort_schedule_panel(idata, ds, *, c=0.0, extrapolation_scale=0.0, nu=4, se
     # markers agree with the race-equivalency table and Panels A/B; the offset is the capped h·H_DIV).
     markers = []
     for label, d in _STD_DISTANCES:
-        x = float(np.log(d / ds.goal)); gap = max(0.0, float(np.log(d / ds.d_max)))
+        x = float(np.log(d / ds.goal))
+        gap = max(0.0, float(np.log(d / ds.d_max)))
         h = effort_h_for_distance(idata, ds, d, c=c, extrapolation_scale=extrapolation_scale,
                                   nu=nu, seed=seed, schedule=sched)
         t_pred = predict(idata, x=x, c=c, h=h, gap=gap, extrapolation_scale=extrapolation_scale,
@@ -682,7 +683,8 @@ def effort_schedule_panel(idata, ds, *, c=0.0, extrapolation_scale=0.0, nu=4, se
         hi.append({"x": float(t), "y": float(off + 1.645 * sd)})
 
     # β slope triangle (rise/run on the fade line): run = ×2 duration, rise = β·log2 bpm.
-    d1 = float(np.exp(np.log(lo_d) + 0.15 * (np.log(hi_d) - np.log(lo_d)))); d2 = d1 * 2.0
+    d1 = float(np.exp(np.log(lo_d) + 0.15 * (np.log(hi_d) - np.log(lo_d))))
+    d2 = d1 * 2.0
     triangle = {"x1": d1, "x2": d2,
                 "y1": float(beta * (np.log(d1) - np.log(t0))),
                 "y2": float(beta * (np.log(d2) - np.log(t0))),

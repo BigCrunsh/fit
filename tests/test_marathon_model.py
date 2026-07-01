@@ -401,7 +401,8 @@ class TestEffortPropagation:
 
     def _bands(self, idata, ds, d, *, scale=0.04, nu=4, seed=3):
         from fit.marathon.predict import effort_h_for_distance, predict
-        x = float(np.log(d / ds.goal)); gap = max(0.0, float(np.log(d / ds.d_max)))
+        x = float(np.log(d / ds.goal))
+        gap = max(0.0, float(np.log(d / ds.d_max)))
         h_pt, h_dr = effort_h_for_distance(idata, ds, d, c=0.0, extrapolation_scale=scale,
                                            nu=nu, seed=seed, draws=True)
         pt = predict(idata, x=x, c=0.0, h=h_pt, gap=gap, extrapolation_scale=scale, nu=nu, seed=seed)
@@ -423,7 +424,9 @@ class TestEffortPropagation:
         from fit.marathon.predict import effort_h_for_distance, predict
         idata, ds = self._setup()
         sched = {"t0": 95.0, "beta": -6.5, "beta_sd": 0.0, "t0_sd": 0.0, "defaulted": False, "reason": "x"}
-        d = 42.195; x = 0.0; gap = float(np.log(d / ds.d_max))
+        d = 42.195
+        x = 0.0
+        gap = float(np.log(d / ds.d_max))
         h_pt, h_dr = effort_h_for_distance(idata, ds, d, c=0.0, extrapolation_scale=0.04, nu=4,
                                            seed=3, schedule=sched, draws=True)
         eff = predict(idata, x=x, c=0.0, h=h_pt, h_draws=h_dr, gap=gap, extrapolation_scale=0.04, nu=4, seed=3)
@@ -442,8 +445,10 @@ class TestEffortPropagation:
         # β-only (σ_T0 forced to 0) is narrower than β+T0 at the marathon → T0 contributes materially
         from fit.marathon.predict import effort_h_for_distance, predict, effort_schedule
         idata, ds = self._setup()
-        full = effort_schedule(ds); beta_only = {**full, "t0_sd": 0.0}
-        d = 42.195; gap = float(np.log(d / ds.d_max))
+        full = effort_schedule(ds)
+        beta_only = {**full, "t0_sd": 0.0}
+        d = 42.195
+        gap = float(np.log(d / ds.d_max))
         hp_f, h_full = effort_h_for_distance(idata, ds, d, c=0.0, extrapolation_scale=0.04, nu=4,
                                              seed=3, schedule=full, draws=True)
         hp_b, h_bonly = effort_h_for_distance(idata, ds, d, c=0.0, extrapolation_scale=0.04, nu=4,
