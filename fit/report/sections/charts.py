@@ -6,7 +6,7 @@ from datetime import date
 
 from fit.analysis import RUNNING_TYPES_SQL
 
-from fit.report.sections import SAFE, CAUTION, DANGER, Z1, Z2, Z3, Z4, Z5, ACCENT
+from fit.report.sections import SAFE, CAUTION, DANGER, Z1, Z2, Z3, Z4, Z5, ACCENT, PURPLE, MUTED
 
 logger = logging.getLogger(__name__)
 
@@ -456,6 +456,52 @@ def _all_charts(conn):
                                     }}},
                         "scales": {"x": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}},
                                    "y": {"stacked": True, "grid": {"color": "rgba(255,255,255,0.03)"}}}}
+        })})
+
+    # Respiration (Body tab) — illness/overtraining early warning. Sleep avg is
+    # the signal (primary), waking avg is muted reference. The band is the normal
+    # zone (baseline → baseline+delta) from the SAME wellness_snapshot the
+    # respiration_elevated alert reads — nights above the band are what fire it.
+    resp_rows = conn.execute("""
+        SELECT date, avg_sleep_respiration, avg_respiration
+        FROM daily_health
+        WHERE date >= date('now','-30 days')
+          AND (avg_sleep_respiration IS NOT NULL OR avg_respiration IS NOT NULL)
+        ORDER BY date
+    """).fetchall()
+    if resp_rows:
+        from fit.config import get_config
+        from fit.wellness import wellness_snapshot
+        resp_snap = wellness_snapshot(conn, get_config())["respiration"]
+        resp_datasets = []
+        if any(r["avg_sleep_respiration"] is not None for r in resp_rows):
+            resp_datasets.append({"label": "Sleep respiration",
+                                  "data": [r["avg_sleep_respiration"] for r in resp_rows],
+                                  "borderColor": PURPLE, "borderWidth": 2, "pointRadius": 2,
+                                  "fill": False, "spanGaps": True})
+        if any(r["avg_respiration"] is not None for r in resp_rows):
+            resp_datasets.append({"label": "Waking respiration",
+                                  "data": [r["avg_respiration"] for r in resp_rows],
+                                  "borderColor": MUTED, "borderWidth": 1.5, "borderDash": [4, 3],
+                                  "pointRadius": 0, "fill": False, "spanGaps": True})
+        resp_annots = {}
+        if resp_snap["baseline"] is not None:
+            ceiling = resp_snap["baseline"] + resp_snap["delta"]
+            resp_annots["baseline_band"] = {
+                "type": "box", "yMin": resp_snap["baseline"], "yMax": ceiling,
+                "backgroundColor": MUTED + "40", "borderWidth": 0,
+                "label": {"content": f"normal ≤{ceiling:.1f}", "display": True,
+                          "position": "start", "font": {"size": 7}, "color": MUTED},
+            }
+        charts.append({"id": "chart-respiration", "config": json.dumps({
+            "type": "line",
+            "data": {"labels": [r["date"] for r in resp_rows], "datasets": resp_datasets},
+            "options": {"responsive": True,
+                        "plugins": {"legend": {"position": "bottom", "labels": {"boxWidth": 12}},
+                                    "annotation": {"annotations": resp_annots}},
+                        "scales": {"y": {"grid": {"color": "rgba(255,255,255,0.03)"},
+                                         "title": {"display": True, "text": "brpm"}},
+                                   "x": {"grid": {"color": "rgba(255,255,255,0.03)"}}}}
         })})
 
     # Stress vs Body Battery (Body tab — W2)
@@ -1024,7 +1070,6 @@ def _all_charts(conn):
                         cv_labels.append(row["date"])
                         cv_data.append(cv)
         if len(cv_labels) >= 2:
-            PURPLE = "#c084fc"
             prof_min, prof_max = _profile_x_range(conn)
             cv_unit = _unit_for_span(cv_labels)
             cv_points = [{"x": d, "y": v} for d, v in zip(cv_labels, cv_data)]
@@ -1140,7 +1185,6 @@ def _all_charts(conn):
         ORDER BY date
     """).fetchall()
     if cadence:
-        PURPLE = "#c084fc"
         cadence_annots = {
             "target_band": {
                 "type": "box", "yMin": 170, "yMax": 180,

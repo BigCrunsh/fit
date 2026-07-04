@@ -37,7 +37,7 @@ def db():
             rem_sleep_hours REAL, awake_hours REAL, deep_sleep_pct REAL,
             training_readiness INTEGER, readiness_level TEXT,
             hrv_weekly_avg REAL, hrv_last_night REAL, hrv_status TEXT,
-            avg_respiration REAL, avg_spo2 REAL
+            avg_respiration REAL, avg_sleep_respiration REAL, avg_spo2 REAL
         );
         CREATE TABLE body_comp (
             date DATE PRIMARY KEY, weight_kg REAL, body_fat_pct REAL,

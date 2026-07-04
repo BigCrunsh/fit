@@ -127,6 +127,17 @@ def _ctx_health(conn) -> list[str]:
     """).fetchone()
     if health:
         s.append(f"Last 7d: RHR={health['rhr']}, Sleep={health['sleep']}h, HRV={health['hrv']}, Readiness={health['readiness']}")
+    # Respiration — same wellness_snapshot the alert rules read (SSOT), sleep
+    # series preferred with waking fallback; omitted entirely when no data.
+    from fit.wellness import wellness_snapshot
+    resp = wellness_snapshot(conn, config)["respiration"]
+    if resp["avg_7d"] is not None:
+        line = f"Respiration ({resp['series']}): {resp['avg_7d']} brpm 7d avg"
+        if resp["baseline"] is not None:
+            line += f" (baseline {resp['baseline']})"
+        if resp["elevated"]:
+            line += f" — ELEVATED {resp['consecutive_elevated']} nights (illness/fatigue early warning)"
+        s.append(line)
     streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
     if streak:
         s.append(f"Consistency streak: {streak['consecutive_weeks_3plus']} weeks with 3+ runs")

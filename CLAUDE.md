@@ -31,6 +31,7 @@ fit mcp install                       # register the MCP data tools with Claude 
 - **Prediction = conservative (upper bound)** — slowest prediction across all methods. Deliberately pessimistic.
 - **Long run dual condition** — (>30% weekly AND ≥8km) OR ≥12km absolute override
 - **Monotony = mean/stdev** (Foster's formula), NOT stdev alone. Strain = weekly_load × monotony
+- **Wellness deviations have ONE source — `wellness_snapshot()` (`fit/wellness.py`)** — the alert rules (`respiration_elevated`/`rhr_elevated`/`recovery_cliff`), their auto-dismiss re-evaluation, the coaching-context respiration line, and the Readiness-tab respiration chart band all read it. Baseline = 28d rolling median strictly BEFORE the evaluated days (min 14 obs); missing days break streaks; sleep- and waking-respiration series never mix. Never inline a second baseline computation — that recreates the fire-then-instant-dismiss bugs (D6/D12).
 - **Objectives auto-derived only** — from target race via `derive_objectives()`. No manual CRUD.
 - **Goals = "objectives" in UI** — DB table stays `goals`, user-facing text says "objectives"
 - **RPE/Feel/Compliance source = Garmin** — `activities.rpe`, `activities.feel`, `activities.compliance_score` come from `summaryDTO.directWorkoutRpe/Feel/ComplianceScore` of the activity detail endpoint. Sync re-fetches the last 14 days every run; older activities are fill-NULL-only. Use `fit backfill rpe` to populate history.

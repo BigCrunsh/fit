@@ -694,7 +694,7 @@ def _upsert_health(conn: sqlite3.Connection, h: dict) -> None:
             rem_sleep_hours, awake_hours, deep_sleep_pct,
             training_readiness, readiness_level,
             hrv_weekly_avg, hrv_last_night, hrv_status,
-            avg_respiration, avg_spo2
+            avg_respiration, avg_sleep_respiration, avg_spo2
         ) VALUES (
             :date, :total_steps, :total_distance_m, :total_calories, :active_calories,
             :resting_heart_rate, :max_heart_rate, :min_heart_rate,
@@ -703,7 +703,7 @@ def _upsert_health(conn: sqlite3.Connection, h: dict) -> None:
             :rem_sleep_hours, :awake_hours, :deep_sleep_pct,
             :training_readiness, :readiness_level,
             :hrv_weekly_avg, :hrv_last_night, :hrv_status,
-            :avg_respiration, :avg_spo2
+            :avg_respiration, :avg_sleep_respiration, :avg_spo2
         )
         ON CONFLICT(date) DO UPDATE SET
             total_steps = excluded.total_steps,
@@ -729,6 +729,7 @@ def _upsert_health(conn: sqlite3.Connection, h: dict) -> None:
             hrv_last_night = excluded.hrv_last_night,
             hrv_status = excluded.hrv_status,
             avg_respiration = excluded.avg_respiration,
+            avg_sleep_respiration = COALESCE(excluded.avg_sleep_respiration, daily_health.avg_sleep_respiration),
             avg_spo2 = COALESCE(excluded.avg_spo2, daily_health.avg_spo2)
     """, {
         "date": h.get("date"),
@@ -755,6 +756,7 @@ def _upsert_health(conn: sqlite3.Connection, h: dict) -> None:
         "hrv_last_night": h.get("hrv_last_night"),
         "hrv_status": h.get("hrv_status"),
         "avg_respiration": h.get("avg_respiration"),
+        "avg_sleep_respiration": h.get("avg_sleep_respiration"),
         "avg_spo2": h.get("avg_spo2"),
     })
 

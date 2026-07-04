@@ -78,6 +78,114 @@ class TestAlertRules:
         assert severity_of("some_future_rule") == "info"
 
 
+class TestWellnessAlerts:
+    """Baseline-deviation rules: respiration_elevated / rhr_elevated / recovery_cliff."""
+
+    @staticmethod
+    def _day(offset):
+        return (date.today() - timedelta(days=offset)).isoformat()
+
+    def _insert(self, db, offset, **cols):
+        keys = ["date"] + list(cols.keys())
+        vals = [self._day(offset)] + list(cols.values())
+        db.execute(
+            f"INSERT INTO daily_health ({','.join(keys)}) VALUES ({','.join('?' * len(vals))})",
+            vals,
+        )
+
+    def _baseline(self, db, start_offset, days, **cols):
+        for i in range(days):
+            self._insert(db, start_offset + i, **cols)
+        db.commit()
+
+    # respiration_elevated
+
+    def test_respiration_elevated_fires_warning(self, db, config):
+        self._baseline(db, 2, 28, avg_sleep_respiration=15.0)
+        self._insert(db, 1, avg_sleep_respiration=17.2)
+        self._insert(db, 0, avg_sleep_respiration=17.5)
+        db.commit()
+        fired = [a for a in run_alerts(db, config) if a["type"] == "respiration_elevated"]
+        assert fired and fired[0]["severity"] == "warning"
+        assert "15.0" in fired[0]["message"]  # baseline named in the message
+
+    def test_respiration_single_night_does_not_fire(self, db, config):
+        self._baseline(db, 2, 28, avg_sleep_respiration=15.0)
+        self._insert(db, 1, avg_sleep_respiration=15.1)
+        self._insert(db, 0, avg_sleep_respiration=18.0)
+        db.commit()
+        assert not [a for a in run_alerts(db, config) if a["type"] == "respiration_elevated"]
+
+    def test_respiration_no_baseline_does_not_fire(self, db, config):
+        self._baseline(db, 2, 5, avg_sleep_respiration=15.0)  # 5 obs < 14
+        self._insert(db, 1, avg_sleep_respiration=19.0)
+        self._insert(db, 0, avg_sleep_respiration=19.0)
+        db.commit()
+        assert not [a for a in run_alerts(db, config) if a["type"] == "respiration_elevated"]
+
+    def test_respiration_auto_dismisses_when_normalized(self, db, config):
+        self._baseline(db, 2, 28, avg_sleep_respiration=15.0)
+        self._insert(db, 1, avg_sleep_respiration=17.5)
+        self._insert(db, 0, avg_sleep_respiration=17.5)
+        db.commit()
+        run_alerts(db, config)
+        # condition holds right after firing (fire/dismiss parity)
+        assert any(a["type"] == "respiration_elevated" for a in get_recent_alerts(db))
+        # respiration normalizes → auto-dismissed
+        db.execute("UPDATE daily_health SET avg_sleep_respiration = 15.0 WHERE date >= ?", (self._day(1),))
+        db.commit()
+        assert not any(a["type"] == "respiration_elevated" for a in get_recent_alerts(db))
+
+    # rhr_elevated
+
+    def test_rhr_elevated_fires_after_three_days(self, db, config):
+        self._baseline(db, 3, 28, resting_heart_rate=55)
+        self._insert(db, 2, resting_heart_rate=61)
+        self._insert(db, 1, resting_heart_rate=60)
+        self._insert(db, 0, resting_heart_rate=62)
+        db.commit()
+        fired = [a for a in run_alerts(db, config) if a["type"] == "rhr_elevated"]
+        assert fired and fired[0]["severity"] == "warning"
+
+    def test_rhr_two_days_does_not_fire(self, db, config):
+        self._baseline(db, 2, 28, resting_heart_rate=55)
+        self._insert(db, 1, resting_heart_rate=61)
+        self._insert(db, 0, resting_heart_rate=62)
+        db.commit()
+        assert not [a for a in run_alerts(db, config) if a["type"] == "rhr_elevated"]
+
+    # recovery_cliff
+
+    def _cliff(self, db, rhr=62, hrv_status="LOW", readiness=38):
+        self._baseline(db, 1, 28, resting_heart_rate=55, hrv_last_night=40.0)
+        self._insert(db, 0, resting_heart_rate=rhr, hrv_status=hrv_status,
+                     training_readiness=readiness)
+        db.commit()
+
+    def test_recovery_cliff_fires_critical(self, db, config):
+        self._cliff(db)
+        fired = [a for a in run_alerts(db, config) if a["type"] == "recovery_cliff"]
+        assert fired and fired[0]["severity"] == "critical"
+
+    def test_recovery_cliff_two_of_three_does_not_fire(self, db, config):
+        self._cliff(db, hrv_status="BALANCED")
+        assert not [a for a in run_alerts(db, config) if a["type"] == "recovery_cliff"]
+
+    def test_recovery_cliff_auto_dismisses_on_recovery(self, db, config):
+        self._cliff(db)
+        run_alerts(db, config)
+        assert any(a["type"] == "recovery_cliff" for a in get_recent_alerts(db))
+        db.execute("UPDATE daily_health SET training_readiness = 80, hrv_status = 'BALANCED' WHERE date = ?",
+                   (self._day(0),))
+        db.commit()
+        assert not any(a["type"] == "recovery_cliff" for a in get_recent_alerts(db))
+
+    def test_empty_db_no_wellness_alerts_no_crash(self, db, config):
+        alerts = run_alerts(db, config)
+        assert not [a for a in alerts
+                    if a["type"] in ("respiration_elevated", "rhr_elevated", "recovery_cliff")]
+
+
 class TestSeveritySort:
     def _fire_alert(self, db, alert_date, alert_type, message="msg"):
         db.execute(

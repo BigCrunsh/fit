@@ -20,12 +20,15 @@ ALERT_SEVERITY: dict[str, str] = {
     "acwr_spike_danger": "critical",
     "readiness_gate": "critical",
     "volume_ramp": "critical",
+    "recovery_cliff": "critical",
     # Warning — meaningful but not urgent
     "all_runs_too_hard": "warning",
     "high_monotony": "warning",
     "undertraining": "warning",
     "deload_overdue": "warning",
     "spo2_low": "warning",
+    "respiration_elevated": "warning",
+    "rhr_elevated": "warning",
     # info — context signal (anything not listed)
 }
 
@@ -129,7 +132,48 @@ def run_alerts(conn: sqlite3.Connection, config: dict) -> list[dict]:
     if deload_alert:
         fired.append(deload_alert)
 
+    # Wellness baseline-deviation rules — fire and auto-dismiss both read
+    # wellness_snapshot (SSOT), so they can never disagree.
+    fired.extend(_wellness_alerts(conn, config, today))
+
     logger.info("Alerts: %d fired", len(fired))
+    return fired
+
+
+def _wellness_alerts(conn: sqlite3.Connection, config: dict, today: str) -> list[dict]:
+    """Personal-baseline deviation alerts: respiration, RHR, recovery cliff."""
+    from fit.wellness import wellness_snapshot
+    snap = wellness_snapshot(conn, config)
+    fired = []
+
+    resp = snap["respiration"]
+    if resp["elevated"]:
+        label = "sleep" if resp["series"] == "sleep" else "waking"
+        fired.append(_fire(conn, today, "respiration_elevated",
+                           f"Respiration ({label}) at {resp['latest']:.1f} brpm — "
+                           f"{resp['consecutive_elevated']} consecutive nights ≥ baseline "
+                           f"{resp['baseline']:.1f} + {resp['delta']:.0f}. "
+                           f"Early sign of illness or accumulated fatigue — favor rest and sleep.",
+                           {"latest": resp["latest"], "baseline": resp["baseline"],
+                            "nights": resp["consecutive_elevated"], "series": resp["series"]}))
+
+    rhr = snap["rhr"]
+    if rhr["elevated"]:
+        fired.append(_fire(conn, today, "rhr_elevated",
+                           f"Resting HR at {rhr['latest']:.0f} — {rhr['consecutive_elevated']} "
+                           f"consecutive days ≥ baseline {rhr['baseline']:.0f} + {rhr['delta']:.0f} bpm. "
+                           f"Accumulated fatigue or oncoming illness — reduce load until it settles.",
+                           {"latest": rhr["latest"], "baseline": rhr["baseline"],
+                            "days": rhr["consecutive_elevated"]}))
+
+    if snap["recovery_cliff"]:
+        c = snap["recovery_cliff_components"]
+        fired.append(_fire(conn, today, "recovery_cliff",
+                           f"Recovery cliff: RHR {c['rhr']} (baseline {c['rhr_baseline']:.0f}), "
+                           f"HRV {c['hrv_status'] or 'below baseline'}, readiness {c['readiness']} — "
+                           f"all three recovery signals down together. Rest day strongly recommended.",
+                           {k: c[k] for k in ("date", "rhr", "rhr_baseline", "hrv_status", "readiness")}))
+
     return fired
 
 
@@ -269,6 +313,17 @@ def _condition_still_holds(conn: sqlite3.Connection, alert_type: str) -> bool:
             from fit.analysis import compute_rolling_acwr
             acwr = compute_rolling_acwr(conn)
             return bool(acwr is not None and acwr < 0.6)
+
+        if alert_type in ("respiration_elevated", "rhr_elevated", "recovery_cliff"):
+            # Same wellness_snapshot as the fire rules (config-free defaults, like the
+            # other branches here) — fire and dismiss can never disagree on the math.
+            from fit.wellness import wellness_snapshot
+            snap = wellness_snapshot(conn, None)
+            if alert_type == "respiration_elevated":
+                return bool(snap["respiration"]["elevated"])
+            if alert_type == "rhr_elevated":
+                return bool(snap["rhr"]["elevated"])
+            return bool(snap["recovery_cliff"])
 
         if alert_type == "deload_overdue":
             weeks = conn.execute(

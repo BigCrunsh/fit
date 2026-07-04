@@ -17,3 +17,5 @@ Z5 = "#ef4444"   # Very Hard (red-400)
 
 # ── Accent ──
 ACCENT = "#818cf8"
+PURPLE = "#c084fc"   # matches --purple in design_system.css
+MUTED = "#64748b"    # matches --text-dim — recessive secondary series / neutral bands
