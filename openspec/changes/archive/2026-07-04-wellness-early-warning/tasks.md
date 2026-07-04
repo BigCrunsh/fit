@@ -33,4 +33,4 @@
 
 - [x] 6.1 Full check suite (pytest, ruff, any other CI gates) green
 - [x] 6.2 End-to-end: `fit report` against a copy of the real DB — Readiness tab shows respiration chart; alerts evaluate without error
-- [ ] 6.3 Commit, push branch, open draft PR
+- [x] 6.3 Commit, push branch, open draft PR
