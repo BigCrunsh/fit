@@ -59,6 +59,24 @@ class TestUpsertHealth:
         row = db.execute("SELECT avg_spo2 FROM daily_health WHERE date = '2025-01-15'").fetchone()
         assert row["avg_spo2"] == 97
 
+    def test_sleep_respiration_stored(self, db):
+        _upsert_health(db, self._health_row(avg_sleep_respiration=16.0))
+        row = db.execute("SELECT avg_sleep_respiration FROM daily_health WHERE date = '2025-01-15'").fetchone()
+        assert row["avg_sleep_respiration"] == 16.0
+
+    def test_sleep_respiration_preserved_via_coalesce(self, db):
+        # A later partial fetch (NULL sleep respiration) must not wipe a stored value
+        _upsert_health(db, self._health_row(avg_sleep_respiration=16.0))
+        _upsert_health(db, self._health_row(avg_sleep_respiration=None))
+        row = db.execute("SELECT avg_sleep_respiration FROM daily_health WHERE date = '2025-01-15'").fetchone()
+        assert row["avg_sleep_respiration"] == 16.0
+
+    def test_sleep_respiration_absent_key_is_null(self, db):
+        # Pre-019-style dict without the key: column exists (migration additive) and stays NULL
+        _upsert_health(db, self._health_row())
+        row = db.execute("SELECT avg_sleep_respiration FROM daily_health WHERE date = '2025-01-15'").fetchone()
+        assert row["avg_sleep_respiration"] is None
+
 
 # ════════════════════════════════════════════════════════════════
 # _upsert_activity

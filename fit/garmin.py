@@ -238,11 +238,12 @@ def _fetch_day_health(api: Garmin, d: str) -> dict | None:
     except Exception as e:
         errors.append(f"readiness: {e}")
 
-    # Respiration
+    # Respiration — waking avg (legacy column) + sleep avg (the illness early-warning signal)
     try:
         resp = api.get_respiration_data(d)
         if resp:
             m["avg_respiration"] = resp.get("avgWakingRespirationValue")
+            m["avg_sleep_respiration"] = resp.get("avgSleepRespirationValue")
     except Exception as e:
         errors.append(f"respiration: {e}")
 

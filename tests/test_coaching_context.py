@@ -199,3 +199,53 @@ class TestFitnessAnchorLine:
         conn.commit()
         text = _profile_text(server, conn, monkeypatch, LTHR_CONFIG)
         assert "Fitness anchor: none yet" in text
+
+
+# ── _ctx_health: respiration line (wellness-early-warning) ──
+
+
+class TestCtxHealthRespiration:
+    """The health section carries the same respiration signal the alerts fire on."""
+
+    @staticmethod
+    def _insert_resp(db, offset, **cols):
+        from datetime import date, timedelta
+        keys = ["date"] + list(cols.keys())
+        vals = [(date.today() - timedelta(days=offset)).isoformat()] + list(cols.values())
+        db.execute(
+            f"INSERT INTO daily_health ({','.join(keys)}) VALUES ({','.join('?' * len(vals))})",
+            vals,
+        )
+
+    def _fill(self, db, start_offset, days, **cols):
+        for i in range(days):
+            self._insert_resp(db, start_offset + i, **cols)
+        db.commit()
+
+    def test_elevated_flag_with_baseline(self, server, db):
+        self._fill(db, 2, 28, avg_sleep_respiration=15.0)
+        self._insert_resp(db, 1, avg_sleep_respiration=17.5)
+        self._insert_resp(db, 0, avg_sleep_respiration=17.5)
+        db.commit()
+        text = "\n".join(server._ctx_health(db))
+        assert "Respiration (sleep):" in text
+        assert "baseline 15.0" in text
+        assert "ELEVATED" in text and "2 night" in text
+
+    def test_unremarkable_form_has_no_flag(self, server, db):
+        self._fill(db, 0, 30, avg_sleep_respiration=15.0)
+        text = "\n".join(server._ctx_health(db))
+        assert "Respiration (sleep):" in text
+        assert "baseline 15.0" in text
+        assert "ELEVATED" not in text
+
+    def test_omitted_without_respiration_data(self, server, db):
+        db.execute("INSERT INTO daily_health (date, resting_heart_rate) VALUES (date('now'), 55)")
+        db.commit()
+        text = "\n".join(server._ctx_health(db))
+        assert "Respiration" not in text
+
+    def test_waking_label_when_sleep_series_absent(self, server, db):
+        self._fill(db, 0, 30, avg_respiration=15.0)
+        text = "\n".join(server._ctx_health(db))
+        assert "Respiration (waking):" in text

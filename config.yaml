@@ -37,6 +37,13 @@ sync:
   download_fit_files: false               # Set true to download .fit files during sync for per-km split analysis
   max_fit_downloads: 20                   # Max .fit file downloads per sync batch (rate limit protection)
 
+coaching:
+  # Wellness early-warning deviation thresholds (vs 28-day personal baseline median).
+  # readiness_gate_threshold / spo2_alert_threshold also live here (code defaults 40 / 95).
+  respiration_delta_brpm: 2.0    # sleep respiration ≥ baseline+delta for 2+ nights → alert
+  rhr_delta_bpm: 5               # resting HR ≥ baseline+delta for 3+ days → alert
+  wellness_baseline_days: 28     # rolling baseline window
+
 analysis:
   easy_hr_ceiling: 134           # Top of Z2 — true easy ceiling
   speed_per_bpm_hr_range: [115, 134]  # Z2 only for pure aerobic trending

@@ -947,6 +947,11 @@
   <div class="sec"><h2>Sleep</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.sleep | safe }}</div><div class="line"></div></div>
   <div class="chart-box chart-canvas-md"><canvas id="chart-sleep"></canvas></div>
 
+  {% if charts | selectattr('id', 'equalto', 'chart-respiration') | first %}
+  <div class="sec"><h2>Respiration</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.respiration | safe }}</div><div class="line"></div></div>
+  <div class="chart-box chart-canvas-sm"><canvas id="chart-respiration"></canvas></div>
+  {% endif %}
+
   <div class="sec"><h2>Stress vs Body Battery</h2><span class="def-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">ⓘ</span><div class="def-box">{{ definitions.stress_battery | safe }}</div><div class="line"></div></div>
   <div class="chart-box chart-canvas-sm"><canvas id="chart-stress"></canvas></div>
 
@@ -1115,7 +1120,7 @@ function resolveAnnotationCollisions(annotations) {
 // One shared minute→h:mm formatter for every time-axis chart (marathon-pred, durability, the
 // param panels, the prediction-trend preview) — replaces the per-chart fmtHM/fmtHM2/fmtT copies.
 function fmtHM(v) { return Math.floor(v/60) + ':' + ('0' + Math.floor(v%60)).slice(-2); }
-const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-stress','chart-efficiency','chart-cadence','chart-acwr','chart-pacecv','chart-effort-gap','chart-vo2','chart-zones','chart-drift-trend','chart-volume','chart-compliance']);
+const timeScaleCharts = new Set(['chart-load','chart-readiness','chart-rhr-hrv','chart-sleep','chart-respiration','chart-stress','chart-efficiency','chart-cadence','chart-acwr','chart-pacecv','chart-effort-gap','chart-vo2','chart-zones','chart-drift-trend','chart-volume','chart-compliance']);
 const weeklyCharts = new Set(['chart-volume']);
 // chart-weight has its own time scale config (set in charts.py) — not in this set to avoid double-applying
 

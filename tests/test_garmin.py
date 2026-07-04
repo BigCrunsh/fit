@@ -283,6 +283,31 @@ class TestFetchHealth:
         h = fetch_health(api, date(2025, 1, 1), date(2025, 1, 1))[0]
         assert h["training_readiness"] == 73        # same-day peak, NOT the 90 from the night before
 
+    def test_maps_sleep_respiration(self):
+        api = self._mock_api()
+        api.get_respiration_data.return_value = {
+            "avgWakingRespirationValue": 15.0,
+            "avgSleepRespirationValue": 16.0,
+        }
+        h = fetch_health(api, date(2025, 1, 1), date(2025, 1, 1))[0]
+        assert h["avg_respiration"] == 15.0
+        assert h["avg_sleep_respiration"] == 16.0
+
+    def test_missing_sleep_respiration_field_no_error(self):
+        # Older payloads carry only the waking average — must not raise, key simply absent
+        api = self._mock_api()
+        api.get_respiration_data.return_value = {"avgWakingRespirationValue": 16.5}
+        h = fetch_health(api, date(2025, 1, 1), date(2025, 1, 1))[0]
+        assert h["avg_respiration"] == 16.5
+        assert "avg_sleep_respiration" not in h
+
+    def test_respiration_endpoint_down_no_error(self):
+        api = self._mock_api()
+        api.get_respiration_data.side_effect = Exception("respiration API down")
+        h = fetch_health(api, date(2025, 1, 1), date(2025, 1, 1))[0]
+        assert "avg_sleep_respiration" not in h and "avg_respiration" not in h
+        assert h["total_steps"] == 8500  # rest of the day survives
+
     def test_multi_day_range(self):
         api = self._mock_api()
         results = fetch_health(api, date(2025, 1, 1), date(2025, 1, 3))
