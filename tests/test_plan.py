@@ -14,6 +14,7 @@ from fit.plan import (
     compute_plan_adherence,
     get_readiness_recommendation,
     import_plan_csv,
+    update_plan_statuses,
     validate_plan_csv,
 )
 
@@ -235,6 +236,78 @@ class TestValidateCSV:
         issues = validate_plan_csv("/nonexistent/plan.csv")
         assert len(issues) == 1
         assert "not found" in issues[0].lower()
+
+
+# ── Plan Status Transitions ──
+
+
+class TestUpdatePlanStatuses:
+    def test_reconciles_stale_missed_to_completed_when_activity_backfilled(self, db):
+        """A workout already flagged 'missed' (e.g. Garmin sync lag at the time) should flip back
+        to 'completed' once a matching activity appears — the state machine must re-check it, not
+        just leave it frozen at 'missed' forever."""
+        stale_date = (date.today() - timedelta(days=5)).isoformat()
+        db.execute("""
+            INSERT INTO planned_workouts (date, workout_name, workout_type,
+                target_distance_km, plan_version, sequence_ordinal, status)
+            VALUES (?, 'Long Run', 'long', 23.0, 1, 1, 'missed')
+        """, (stale_date,))
+        db.execute("""
+            INSERT INTO activities (id, date, type, distance_km, duration_min)
+            VALUES ('late-sync', ?, 'running', 23.5, 135)
+        """, (stale_date,))
+        db.commit()
+
+        update_plan_statuses(db)
+
+        status = db.execute("SELECT status FROM planned_workouts WHERE date = ?", (stale_date,)).fetchone()
+        assert status["status"] == "completed"
+
+    def test_still_missing_workout_stays_missed(self, db):
+        """A workout with no matching activity at all must remain 'missed' — reconciliation should
+        only flip status when an activity genuinely appears, never invent one."""
+        stale_date = (date.today() - timedelta(days=5)).isoformat()
+        db.execute("""
+            INSERT INTO planned_workouts (date, workout_name, workout_type,
+                target_distance_km, plan_version, sequence_ordinal, status)
+            VALUES (?, 'Long Run', 'long', 23.0, 1, 1, 'missed')
+        """, (stale_date,))
+        db.commit()
+
+        update_plan_statuses(db)
+
+        status = db.execute("SELECT status FROM planned_workouts WHERE date = ?", (stale_date,)).fetchone()
+        assert status["status"] == "missed"
+
+    def test_marks_active_workout_missed_after_grace_period(self, db):
+        """An 'active' workout more than 1 day past with no activity is marked 'missed'."""
+        past_date = (date.today() - timedelta(days=3)).isoformat()
+        db.execute("""
+            INSERT INTO planned_workouts (date, workout_name, workout_type,
+                target_distance_km, plan_version, sequence_ordinal, status)
+            VALUES (?, 'Tempo Run', 'tempo', 10.0, 1, 1, 'active')
+        """, (past_date,))
+        db.commit()
+
+        update_plan_statuses(db)
+
+        status = db.execute("SELECT status FROM planned_workouts WHERE date = ?", (past_date,)).fetchone()
+        assert status["status"] == "missed"
+
+    def test_does_not_mark_missed_within_grace_period(self, db):
+        """A workout only 1 day past (Garmin sync lag grace) must NOT be marked 'missed' yet."""
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        db.execute("""
+            INSERT INTO planned_workouts (date, workout_name, workout_type,
+                target_distance_km, plan_version, sequence_ordinal, status)
+            VALUES (?, 'Tempo Run', 'tempo', 10.0, 1, 1, 'active')
+        """, (yesterday,))
+        db.commit()
+
+        update_plan_statuses(db)
+
+        status = db.execute("SELECT status FROM planned_workouts WHERE date = ?", (yesterday,)).fetchone()
+        assert status["status"] == "active"
 
 
 # ── Plan Adherence ──

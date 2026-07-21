@@ -6,12 +6,44 @@ MCP output (pinned by a regression test), so the coach/dashboard see an unchange
 """
 
 import json
+from datetime import date
 from pathlib import Path
 
 from fit.analysis import RUNNING_TYPES_SQL
 from fit.config import get_config
 
 config = get_config()
+
+
+def _elapsed_plan_adherence(adherence, today=None):
+    """Coaching-only reshaping of compute_plan_adherence's matches: excludes non-rest
+    sessions that haven't come due yet (same >1-day grace period `update_plan_statuses`
+    uses) from both the missed count and the compliance percentage.
+
+    compute_plan_adherence() is deliberately current-ISO-week (D9) and flags ANY non-rest
+    planned session with no matching activity as "missed" — including ones still days
+    away. That's fine for the dashboard ring (labelled "this week", shows completed/total
+    so a mid-week "0/3" reads as in-progress) but wrong for coaching prose, which has no
+    such framing and would flatly assert a Wednesday session as already failed on a
+    Tuesday. This does not change compute_plan_adherence itself, so the dashboard/
+    weekly-strip contract is unaffected — only what `fit coach` is told changes.
+    """
+    if today is None:
+        today = date.today()
+
+    def _is_due(date_str):
+        return (today - date.fromisoformat(date_str)).days > 1
+
+    non_rest = [m for m in adherence.get("matches", []) if not m.get("rest_day")]
+    eligible = [m for m in non_rest if m["actual"] is not None or _is_due(m["planned"]["date"])]
+    missed = [m for m in eligible if m["actual"] is None]
+    matched = len(eligible) - len(missed)
+    pct = round(matched / len(eligible) * 100) if eligible else None
+    return {
+        "weekly_compliance_pct": pct,
+        "missed": missed,
+        "not_yet_due": len(non_rest) - len(eligible),
+    }
 
 
 def _ctx_profile(conn) -> list[str]:
@@ -276,15 +308,20 @@ def _ctx_plan(conn) -> list[str]:
     try:
         from fit.plan import compute_plan_adherence, get_readiness_recommendation
 
-        # Plan adherence
+        # Plan adherence — elapsed-only view (excludes sessions not yet due; see
+        # _elapsed_plan_adherence). compute_plan_adherence's own current-ISO-week
+        # semantics (D9) are unchanged; only what coaching is told is reshaped.
         adherence = compute_plan_adherence(conn)
-        if adherence and adherence.get("weekly_compliance_pct") is not None:
-            s.append(f"Plan adherence: {adherence['weekly_compliance_pct']:.0f}% weekly compliance")
-            missed = adherence.get("missed", [])
-            if missed:
-                s.append(f"  Missed workouts: {len(missed)}")
-            if adherence.get("systematic_override"):
-                s.append("  Systematic intensity override detected (easy→hard pattern)")
+        if adherence and adherence.get("planned"):
+            elapsed = _elapsed_plan_adherence(adherence)
+            if elapsed["weekly_compliance_pct"] is not None:
+                s.append(f"Plan adherence: {elapsed['weekly_compliance_pct']:.0f}% weekly compliance")
+                if elapsed["missed"]:
+                    s.append(f"  Missed workouts: {len(elapsed['missed'])}")
+                if adherence.get("systematic_override"):
+                    s.append("  Systematic intensity override detected (easy→hard pattern)")
+            elif elapsed["not_yet_due"]:
+                s.append(f"Plan adherence: no sessions due yet this week ({elapsed['not_yet_due']} upcoming)")
 
         # This week's plan (all upcoming workouts in next 10 days)
         upcoming = conn.execute("""

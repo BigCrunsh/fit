@@ -501,6 +501,11 @@ def update_plan_statuses(conn):
     - Rest day with activity → missed (ran on rest day)
     - Past workout with no activity and >1 day ago → missed
 
+    Also re-checks workouts already marked 'missed': if a matching activity has since
+    appeared (e.g. it synced in late), the workout flips to 'completed' — otherwise a
+    Garmin sync lag at evaluation time freezes it at 'missed' forever, even after the
+    run shows up.
+
     Returns count of updated workouts.
     """
     today = date.today()
@@ -508,7 +513,7 @@ def update_plan_statuses(conn):
     past_active = conn.execute("""
         SELECT id, date, workout_name, workout_type, target_distance_km
         FROM planned_workouts
-        WHERE status = 'active' AND date <= ?
+        WHERE status IN ('active', 'missed') AND date <= ?
         ORDER BY date
     """, (cutoff,)).fetchall()
 
