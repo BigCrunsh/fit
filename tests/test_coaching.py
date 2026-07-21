@@ -138,3 +138,21 @@ class TestRunCoach:
         monkeypatch.setattr(R.subprocess, "run", _fake_run(0, VALID))
         res = R.run_coach(None, reports_dir=tmp_path, claude_bin="claude-dummy")
         assert res["saved"] is True and (tmp_path / "coaching.json").exists()
+
+    def test_ansi_polluted_stdout_extracted_correctly(self, tmp_path, monkeypatch):
+        # a leaked terminal escape sequence (e.g. spinner redraw) precedes the real envelope
+        self._patch(monkeypatch)
+        polluted = "\x1b[2K\x1b[1G" + _envelope(VALID)
+        monkeypatch.setattr(R.subprocess, "run", _fake_run(0, polluted))
+        res = R.run_coach(None, reports_dir=tmp_path, claude_bin="claude-dummy")
+        assert res["saved"] is True and (tmp_path / "coaching.json").exists()
+
+    def test_stray_bracket_prose_before_array_extracted_correctly(self, tmp_path, monkeypatch):
+        # the model's result text contains a bracketed fragment before the real insights array
+        self._patch(monkeypatch)
+        text_with_prose = "Note: ACWR check [rolling 7-day].\n" + VALID
+        monkeypatch.setattr(R.subprocess, "run", _fake_run(0, _envelope(text_with_prose)))
+        res = R.run_coach(None, reports_dir=tmp_path, claude_bin="claude-dummy")
+        assert res["saved"] is True
+        saved = json.loads((tmp_path / "coaching.json").read_text())
+        assert saved["insights"][0]["title"] == "Ease the long run"
