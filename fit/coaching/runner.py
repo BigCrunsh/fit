@@ -10,6 +10,7 @@ corrupted.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -20,6 +21,34 @@ from fit.coaching.prompt import COACHING_INSTRUCTIONS
 from fit.coaching.save import save_coaching_notes
 
 DEFAULT_TIMEOUT_S = 180
+
+_ANSI_CSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _strip_ansi(text: str) -> str:
+    """Strip ANSI CSI escape sequences (cursor moves, line erases, color resets) that a terminal
+    UI's spinner/redraw logic can leak onto stdout even when it isn't a TTY."""
+    return _ANSI_CSI_RE.sub("", text)
+
+
+def _find_json_value(text: str, open_char: str):
+    """Scan `text` for the first complete, valid JSON value starting with `open_char` ("{" or "[").
+
+    Unlike a naive find/rfind of the opening/closing character, this validates the whole value at
+    each candidate offset via `json.JSONDecoder.raw_decode` — so a stray bracket from a leaked
+    escape code or from prose elsewhere in the text can't be mistaken for the real payload's
+    delimiter. Returns None if no valid value is found."""
+    decoder = json.JSONDecoder()
+    start = 0
+    while True:
+        idx = text.find(open_char, start)
+        if idx == -1:
+            return None
+        try:
+            obj, _ = decoder.raw_decode(text, idx)
+            return obj
+        except json.JSONDecodeError:
+            start = idx + 1
 
 
 class CoachError(Exception):
@@ -43,14 +72,12 @@ def _extract_assistant_text(stdout: str) -> str:
     """Pull the assistant's final text out of `claude -p --output-format json`'s envelope.
 
     The envelope is a JSON object with the text under `result`; if `is_error` is set, fail. If stdout
-    isn't JSON (older/alt CLI), treat it as the raw text."""
-    stdout = stdout.strip()
+    isn't JSON (older/alt CLI) — or the envelope is present but surrounded by noise, e.g. leaked
+    terminal escape codes — treat it as raw text and let `_extract_insights_json` find the array."""
+    stdout = _strip_ansi(stdout).strip()
     if not stdout:
         raise CoachError("Claude returned no output.")
-    try:
-        env = json.loads(stdout)
-    except json.JSONDecodeError:
-        return stdout
+    env = _find_json_value(stdout, "{")
     if isinstance(env, dict):
         if env.get("is_error") or env.get("subtype") not in (None, "success"):
             raise CoachError(f"Claude reported an error: {str(env.get('result') or env)[:500]}")
@@ -59,11 +86,12 @@ def _extract_assistant_text(stdout: str) -> str:
 
 
 def _extract_insights_json(text: str) -> str:
-    """Lenient extraction of the JSON insights array from the model text (strips stray fences/prose)."""
-    a, b = text.find("["), text.rfind("]")
-    if a == -1 or b == -1 or b < a:
+    """Lenient extraction of the JSON insights array from the model text (strips stray fences/prose/
+    noise around it — validates the whole array rather than assuming the first `[`/last `]` match)."""
+    array = _find_json_value(text, "[")
+    if not isinstance(array, list):
         raise CoachError("No JSON insights array found in the model response:\n" + text[:500])
-    return text[a:b + 1]
+    return json.dumps(array)
 
 
 def run_coach(conn, *, reports_dir=None, save=True, days=None, model=None,
