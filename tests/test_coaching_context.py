@@ -8,6 +8,7 @@ flag legitimate Z2 easy runs (up to 153 at LTHR 172) as too hard.
 """
 
 import sqlite3
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -249,3 +250,107 @@ class TestCtxHealthRespiration:
         self._fill(db, 0, 30, avg_respiration=15.0)
         text = "\n".join(server._ctx_health(db))
         assert "Respiration (waking):" in text
+
+
+# ── _ctx_plan: elapsed-only plan adherence ──
+#
+# compute_plan_adherence() is deliberately current-ISO-week (D9) and treats any
+# non-rest planned session with no matching activity as "missed" — including ones
+# still days away. That's correct for the dashboard ring (labelled "this week", shows
+# completed/total so a mid-week "0/3" reads as in-progress) but wrong for coaching
+# prose, which flatly asserted future sessions as already-failed. _elapsed_plan_adherence
+# is a coaching-only reshaping of the SAME adherence data — compute_plan_adherence itself
+# is untouched, so the dashboard/weekly-strip contract doesn't change.
+
+
+class TestElapsedPlanAdherence:
+    """Pure-function tests — synthetic `adherence` dicts + a fixed `today`, so behavior
+    is deterministic regardless of which real day-of-week the suite runs on (the exact
+    week-boundary flakiness class already hit once in this file's history, D9)."""
+
+    @staticmethod
+    def _match(date_str, actual=True, rest=False):
+        return {
+            "planned": {"date": date_str},
+            "actual": {"id": "a1"} if actual else None,
+            "rest_day": rest,
+        }
+
+    def test_future_sessions_excluded_from_missed_and_compliance(self, server):
+        today = date(2026, 7, 21)  # Tuesday
+        adherence = {"matches": [
+            self._match("2026-07-22", actual=False),  # Wed, future
+            self._match("2026-07-24", actual=False),  # Fri, future
+            self._match("2026-07-26", actual=False),  # Sun, future
+        ]}
+        result = server._elapsed_plan_adherence(adherence, today=today)
+        assert result["weekly_compliance_pct"] is None
+        assert result["missed"] == []
+        assert result["not_yet_due"] == 3
+
+    def test_genuinely_elapsed_missed_session_still_counted(self, server):
+        today = date(2026, 7, 21)
+        adherence = {"matches": [
+            self._match("2026-07-17", actual=False),  # >1 day past, no activity
+        ]}
+        result = server._elapsed_plan_adherence(adherence, today=today)
+        assert result["weekly_compliance_pct"] == 0
+        assert len(result["missed"]) == 1
+        assert result["not_yet_due"] == 0
+
+    def test_yesterday_within_sync_grace_not_yet_due(self, server):
+        """1 day past = still within the Garmin-sync grace period (matches
+        update_plan_statuses's `days_past > 1` rule) — not flagged missed yet."""
+        today = date(2026, 7, 21)
+        adherence = {"matches": [self._match("2026-07-20", actual=False)]}
+        result = server._elapsed_plan_adherence(adherence, today=today)
+        assert result["weekly_compliance_pct"] is None
+        assert result["missed"] == []
+        assert result["not_yet_due"] == 1
+
+    def test_rest_days_excluded_entirely(self, server):
+        today = date(2026, 7, 21)
+        adherence = {"matches": [self._match("2026-07-20", actual=False, rest=True)]}
+        result = server._elapsed_plan_adherence(adherence, today=today)
+        assert result["weekly_compliance_pct"] is None
+        assert result["missed"] == []
+        assert result["not_yet_due"] == 0
+
+    def test_mixed_week_only_counts_sessions_already_due(self, server):
+        today = date(2026, 7, 21)
+        adherence = {"matches": [
+            self._match("2026-07-15", actual=True),
+            self._match("2026-07-17", actual=True),
+            self._match("2026-07-19", actual=True),
+            self._match("2026-07-22", actual=False),  # future, not yet due
+            self._match("2026-07-24", actual=False),  # future, not yet due
+            self._match("2026-07-26", actual=False),  # future, not yet due
+        ]}
+        result = server._elapsed_plan_adherence(adherence, today=today)
+        assert result["weekly_compliance_pct"] == 100
+        assert result["missed"] == []
+        assert result["not_yet_due"] == 3
+
+
+class TestCtxPlanAdherenceWiring:
+    """Anchored to this week's real Monday (not a fixed weekday) so the planted workout
+    always falls inside compute_plan_adherence's current-ISO-week window and is always
+    already elapsed, regardless of which day the suite runs on."""
+
+    def test_matched_workout_reported_no_false_missed(self, db, server):
+        today = date.today()
+        monday = today - timedelta(days=today.weekday())
+        db.execute(
+            "INSERT INTO planned_workouts (date, workout_name, workout_type, "
+            "target_distance_km, status) VALUES (?, 'Easy Run', 'easy', 8.0, 'active')",
+            (monday.isoformat(),),
+        )
+        db.execute(
+            "INSERT INTO activities (id, date, type, distance_km, duration_min, effort_class) "
+            "VALUES ('a1', ?, 'running', 8.1, 45, 'Easy')",
+            (monday.isoformat(),),
+        )
+        db.commit()
+        text = "\n".join(server._ctx_plan(db))
+        assert "Plan adherence: 100% weekly compliance" in text
+        assert "Missed workouts" not in text
