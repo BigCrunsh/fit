@@ -25,6 +25,16 @@ def _fake_run(returncode=0, stdout="", stderr=""):
     return run
 
 
+def _capturing_run(returncode=0, stdout="", stderr=""):
+    calls = []
+
+    def run(cmd, capture_output=True, text=True, timeout=None):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+    run.calls = calls
+    return run
+
+
 # ── context assembly (SSOT) ──
 
 class TestAssembleContext:
@@ -156,3 +166,21 @@ class TestRunCoach:
         assert res["saved"] is True
         saved = json.loads((tmp_path / "coaching.json").read_text())
         assert saved["insights"][0]["title"] == "Ease the long run"
+
+    def test_default_model_and_effort_passed_to_claude(self, tmp_path, monkeypatch):
+        self._patch(monkeypatch)
+        fake = _capturing_run(0, _envelope(VALID))
+        monkeypatch.setattr(R.subprocess, "run", fake)
+        R.run_coach(None, reports_dir=tmp_path, claude_bin="claude-dummy")
+        cmd = fake.calls[0]
+        assert cmd[cmd.index("--model") + 1] == R.DEFAULT_MODEL == "sonnet"
+        assert cmd[cmd.index("--effort") + 1] == R.DEFAULT_EFFORT == "medium"
+
+    def test_model_and_effort_overrides_passed_to_claude(self, tmp_path, monkeypatch):
+        self._patch(monkeypatch)
+        fake = _capturing_run(0, _envelope(VALID))
+        monkeypatch.setattr(R.subprocess, "run", fake)
+        R.run_coach(None, reports_dir=tmp_path, claude_bin="claude-dummy", model="opus", effort="high")
+        cmd = fake.calls[0]
+        assert cmd[cmd.index("--model") + 1] == "opus"
+        assert cmd[cmd.index("--effort") + 1] == "high"

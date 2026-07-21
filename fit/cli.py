@@ -2200,10 +2200,13 @@ def status():
 @click.option("--no-save", is_flag=True, help="Print the analysis without writing reports/coaching.json.")
 @click.option("--json", "as_json", is_flag=True, help="Print the raw insights JSON (implies --no-save).")
 @click.option("--days", type=int, default=None, help="Context window in days (default: all available).")
-@click.option("--model", default=None, help="Override the Claude model.")
+@click.option("--model", default=None, help="Override the Claude model (default: sonnet).")
+@click.option("--effort", default=None,
+              type=click.Choice(["low", "medium", "high", "xhigh", "max"]),
+              help="Override the Claude effort level (default: medium).")
 @click.option("--timeout", type=int, default=None, help="Claude CLI timeout in seconds (default 180).")
 @click.option("--force", is_flag=True, help="Skip the stale-data advisory.")
-def coach(no_save, as_json, days, model, timeout, force):
+def coach(no_save, as_json, days, model, effort, timeout, force):
     """Coaching analysis via the Claude CLI.
 
     Assembles your training context, asks the headless `claude` CLI for a prioritized coach's read,
@@ -2226,7 +2229,7 @@ def coach(no_save, as_json, days, model, timeout, force):
             except (ValueError, TypeError):
                 pass
         with console.status("Asking Claude for a coaching read…"):
-            res = run_coach(conn, save=save, days=days, model=model, timeout=timeout)
+            res = run_coach(conn, save=save, days=days, model=model, effort=effort, timeout=timeout)
     except CoachError as e:
         console.print(f"[red]coach: {e}[/red]")
         raise SystemExit(1)

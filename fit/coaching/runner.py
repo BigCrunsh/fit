@@ -21,6 +21,8 @@ from fit.coaching.prompt import COACHING_INSTRUCTIONS
 from fit.coaching.save import save_coaching_notes
 
 DEFAULT_TIMEOUT_S = 180
+DEFAULT_MODEL = "sonnet"
+DEFAULT_EFFORT = "medium"
 
 _ANSI_CSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
@@ -94,7 +96,7 @@ def _extract_insights_json(text: str) -> str:
     return json.dumps(array)
 
 
-def run_coach(conn, *, reports_dir=None, save=True, days=None, model=None,
+def run_coach(conn, *, reports_dir=None, save=True, days=None, model=None, effort=None,
               timeout=None, claude_bin=None):
     """Run a coaching analysis. Returns {text, insights, insights_json, saved}. Raises CoachError on
     any failure (and writes nothing). `days` is reserved for future context windowing."""
@@ -103,9 +105,8 @@ def run_coach(conn, *, reports_dir=None, save=True, days=None, model=None,
     timeout = timeout or config.get("profile", {}).get("coaching_timeout_s", DEFAULT_TIMEOUT_S)
 
     context = assemble_coaching_context(conn)
-    cmd = [claude, "-p", "--append-system-prompt", COACHING_INSTRUCTIONS, "--output-format", "json"]
-    if model:
-        cmd += ["--model", model]
+    cmd = [claude, "-p", "--append-system-prompt", COACHING_INSTRUCTIONS, "--output-format", "json",
+           "--model", model or DEFAULT_MODEL, "--effort", effort or DEFAULT_EFFORT]
     cmd.append(context)
 
     try:
