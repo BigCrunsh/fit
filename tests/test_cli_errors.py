@@ -24,6 +24,20 @@ def _flat(text: str) -> str:
     return re.sub(r"\s+", " ", _ANSI.sub("", text))
 
 
+def _squash(text: str) -> str:
+    """Like `_flat`, but for asserting an unbroken TOKEN (a path, a flag).
+
+    Rich wraps at the console width, and the wrap can land inside a word: CI saw
+    the log path rendered as "sync.lo g" and the `"sync.log" in out` assertion
+    failed on a message that was perfectly correct. `_flat` collapses a run of
+    whitespace to one space, which cannot rejoin a split word — so where the
+    subject is a single token with no legitimate spaces, remove whitespace
+    entirely. The wrap point depends on the tmp-path length, so this passes or
+    fails by platform, not by behaviour.
+    """
+    return re.sub(r"\s+", "", _ANSI.sub("", text))
+
+
 @pytest.fixture
 def sync_env(monkeypatch, tmp_path):
     """Run `fit sync` with the DB and the Garmin pull both stubbed out."""
@@ -91,10 +105,16 @@ class TestUnexpectedFailures:
 
     def test_points_at_the_log_instead_of_dumping_a_traceback(self, sync_env):
         result = sync_env(ZeroDivisionError("division by zero"))
-        out = _flat(result.output)
         assert "Traceback" not in result.output
-        assert "sync.log" in out
-        assert "-v" in out
+        # Path and flag are single tokens — a console-width wrap can split them.
+        assert "sync.log" in _squash(result.output)
+        assert "-v" in _squash(result.output)
+
+    def test_log_path_assertion_survives_a_mid_token_wrap(self):
+        # Pins the helper itself: this is exactly the CI rendering that failed.
+        wrapped = "→ Full traceback in /tmp/pytest-0/test0/.fit/logs/sync.lo\ng (or re-run with -v)."
+        assert "sync.log" not in _flat(wrapped)      # what the old assertion did
+        assert "sync.log" in _squash(wrapped)
 
 
 class TestSuccessPathUnchanged:
