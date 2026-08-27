@@ -982,11 +982,8 @@ def compute_achievability(conn, objectives: list[dict], days_remaining: int) -> 
             # objective itself — so "12 weeks of consistency" still reads in weeks.
             # An ISO-week streak reset to 0 whenever a week boundary split an
             # every-other-day plan's runs 3/2, which is not a consistency failure.
-            from fit.analysis import compute_run_frequency
-            target_weeks = int(target) if target else 8
-            current = compute_run_frequency(
-                conn, base_days=max(target_weeks, 1) * 7
-            )["sustained_weeks"]
+            from fit.analysis import compute_sustained_weeks
+            current = compute_sustained_weeks(conn, target_weeks=target)
 
         elif "z2" in obj["name"].lower() or "%" in unit:
             # Use 4-week rolling average (not just current week which may have only 1 run)

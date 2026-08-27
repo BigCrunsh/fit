@@ -129,6 +129,56 @@ class TestConsistencyObjective:
         assert scores[12] > scores[4]
 
 
+# ── the measure is judged over the target's own length ──
+#
+# sustained_weeks is capped by its window, so judging a 12-week marathon objective
+# over a fixed 8-week window means the display can never reach its target however
+# consistently the athlete trains.
+
+class TestWindowMatchesTarget:
+    def test_sustained_weeks_can_reach_a_twelve_week_target(self, db):
+        from fit.analysis import compute_sustained_weeks
+        _runs(db, [(i * 2, 10.0) for i in range(50)])     # 14 weeks, every other day
+        assert compute_sustained_weeks(db, target_weeks=12) > 8
+
+    def test_defaults_to_the_eight_week_base_without_a_target(self, db):
+        from fit.analysis import compute_sustained_weeks
+        _runs(db, [(i * 2, 10.0) for i in range(50)])
+        assert compute_sustained_weeks(db, target_weeks=None) <= 8
+
+    def test_zero_or_missing_target_does_not_divide_by_zero(self, db):
+        from fit.analysis import compute_sustained_weeks
+        _runs(db, STEADY)
+        assert compute_sustained_weeks(db, target_weeks=0) >= 0
+
+    def test_overview_tile_can_reach_a_twelve_week_target(self, db):
+        from fit.report.sections.cards import _overview_objectives
+        _runs(db, [(i * 2, 10.0) for i in range(50)])
+        _iso_week_row(db, run_count=2, streak=0)
+        db.execute("INSERT INTO goals (name, type, target_value, target_unit, active) "
+                   "VALUES ('Consistency 12wk', 'habit', 12, 'consecutive_weeks', 1)")
+        db.execute("INSERT INTO race_calendar (name, date, distance, distance_km, status) "
+                   "VALUES ('R', date('now','+60 days'), 'marathon', 42.195, 'registered')")
+        db.commit()
+        tile = next(o for o in _overview_objectives(db) if o["label"] == "Consistency")
+        assert float(tile["value"]) > 8
+        assert "of 12 wks" in tile["sub"]        # the derived target, not the default 8
+
+    def test_derived_targets_reach_the_overview_tiles(self, db):
+        # Pre-existing bug found here: names were slugified whole
+        # ("Consistency 12wk" -> "consistency_12wk"), matched no tile key, and every
+        # tile silently used the hardcoded defaults.
+        from fit.report.sections.cards import _overview_objectives
+        _runs(db, STEADY)
+        _iso_week_row(db, run_count=3, streak=3)
+        db.execute("INSERT INTO race_calendar (name, date, distance, distance_km, status) "
+                   "VALUES ('R', date('now','+60 days'), 'marathon', 42.195, 'registered')")
+        db.commit()
+        subs = {o["label"]: o["sub"] for o in _overview_objectives(db)}
+        assert "of 12 wks" in subs["Consistency"]
+        assert "km" in subs["Weekly Volume"] and subs["Weekly Volume"] != "km"
+
+
 # ── the dashboard ──
 
 class TestDashboardObjectives:

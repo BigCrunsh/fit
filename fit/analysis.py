@@ -681,6 +681,20 @@ def compute_run_frequency(conn: sqlite3.Connection, end_date: date | None = None
     }
 
 
+def compute_sustained_weeks(conn: sqlite3.Connection, target_weeks: int | float | None = None,
+                            end_date: date | None = None) -> float:
+    """Weeks sustained at the target frequency, judged over the TARGET's own length.
+
+    `sustained_weeks` is capped by its window, so judging a 12-week objective over
+    a fixed 8-week window would make it unreachable however consistently the
+    athlete trains. Falls back to the default base window when there is no target.
+    """
+    weeks = int(target_weeks) if target_weeks else FREQ_BASE_DAYS // 7
+    return compute_run_frequency(
+        conn, end_date=end_date, base_days=max(weeks, 1) * 7
+    )["sustained_weeks"]
+
+
 def compute_volume_change(conn: sqlite3.Connection, end_date: date | None = None,
                           window_days: int = 7) -> dict:
     """Rolling volume change: the trailing window vs the one immediately before it.

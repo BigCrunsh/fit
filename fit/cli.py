@@ -1983,11 +1983,7 @@ def status():
         # Consistency is a rolling measure like volume and long-run above it — an
         # ISO-week streak reported an every-other-day plan as "0 weeks" whenever a
         # week boundary split the runs 3/2.
-        from fit.analysis import compute_run_frequency
-        frequency = compute_run_frequency(conn)
-        frequency_prev = compute_run_frequency(
-            conn, end_date=d.today() - timedelta(days=7),
-        )
+        from fit.analysis import compute_sustained_weeks
 
         ot = Table(
             box=rich_box.SIMPLE_HEAD, show_edge=False,
@@ -2059,12 +2055,11 @@ def status():
                 )
             elif key == "consistency":
                 cur = (
-                    frequency["sustained_weeks"]
-                    if frequency else 0
+                    compute_sustained_weeks(conn, target_weeks=tgt)
                 )
-                prev = (
-                    frequency_prev["sustained_weeks"]
-                    if frequency_prev else None
+                prev = compute_sustained_weeks(
+                    conn, target_weeks=tgt,
+                    end_date=d.today() - timedelta(days=7),
                 )
 
             cur_s = f"{cur}" if cur is not None else "—"
