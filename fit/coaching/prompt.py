@@ -52,6 +52,11 @@ The context separates single-day readings from multi-day averages, and they are 
   something unless that insight is actually in the previous-insights section.
 - Distinguish a one-morning dip from a trend. If the surrounding days are fine, say so — that context
   is the difference between "you're overtrained" and "you had a hard Wednesday".
+- Volume and frequency in the context are ROLLING measures over consecutive days, never calendar
+  weeks. Quote the `Volume change` and `Frequency` lines as given; do not re-derive a week-over-week
+  jump, and do not call a plan inconsistent because its runs fall unevenly across calendar weeks —
+  a session moved by a day or two changes nothing. Frequency is a rate plus the share of recent
+  7-day windows that held the target, so treat a mid-range share as "mostly consistent", not zero.
 
 ## The coach's checklist
 - Phase transition — check first. Compare the active phase's start/end dates to today; a transition

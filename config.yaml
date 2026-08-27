@@ -50,5 +50,9 @@ analysis:
   overload_threshold: 350
   acwr_safe_range: [0.8, 1.3]   # Acute:Chronic Workload Ratio safe zone
   acwr_danger_threshold: 1.5     # ACWR above this = high injury risk
-  weekly_volume_increase_max_pct: 10
+  weekly_volume_increase_max_pct: 10   # Rolling 7d vs preceding 7d — the volume-ramp guard
   low_cadence_threshold: 165     # Flag runs below this cadence (spm)
+  # Training frequency, measured over rolling windows (never ISO weeks — a week
+  # boundary splitting an every-other-day plan's runs 3/2 is not a lapse).
+  frequency_target_runs: 3       # runs per 7 days that counts as consistent
+  frequency_base_thin_pct: 60    # below this share of recent 7d windows at target = thin base

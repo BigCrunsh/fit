@@ -978,8 +978,15 @@ def compute_achievability(conn, objectives: list[dict], days_remaining: int) -> 
                 trend_rate = (projected_peak - current) / max(months, 0.5)
 
         elif "consistency" in obj["name"].lower() or "consecutive" in unit:
-            row = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
-            current = row["consecutive_weeks_3plus"] if row and row["consecutive_weeks_3plus"] else 0
+            # Weeks-equivalent at the target frequency over a window as long as the
+            # objective itself — so "12 weeks of consistency" still reads in weeks.
+            # An ISO-week streak reset to 0 whenever a week boundary split an
+            # every-other-day plan's runs 3/2, which is not a consistency failure.
+            from fit.analysis import compute_run_frequency
+            target_weeks = int(target) if target else 8
+            current = compute_run_frequency(
+                conn, base_days=max(target_weeks, 1) * 7
+            )["sustained_weeks"]
 
         elif "z2" in obj["name"].lower() or "%" in unit:
             # Use 4-week rolling average (not just current week which may have only 1 run)

@@ -5,7 +5,7 @@ import logging
 import sqlite3
 from datetime import date
 
-from fit.analysis import detect_training_gap
+from fit.analysis import FREQ_BASE_THIN_PCT, FREQ_TARGET_RUNS, detect_training_gap
 
 logger = logging.getLogger(__name__)
 
@@ -55,17 +55,19 @@ def run_alerts(conn: sqlite3.Connection, config: dict) -> list[dict]:
                            f"Your aerobic base cannot develop at this intensity.",
                            {"z12_pct": z12["avg_z12"]}))
 
-    # Rule: Volume ramp guard — >10% increase AND <8 consecutive weeks
-    weeks = conn.execute("SELECT run_km, consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 2").fetchall()
-    if len(weeks) >= 2:
-        this_km = weeks[0]["run_km"] or 0
-        last_km = weeks[1]["run_km"] or 0
-        streak = weeks[0]["consecutive_weeks_3plus"] or 0
-        if last_km > 0 and ((this_km - last_km) / last_km) > 0.1 and streak < 8:
-            fired.append(_fire(conn, today, "volume_ramp",
-                               f"Volume increased {((this_km - last_km) / last_km * 100):.0f}% ({last_km:.0f}→{this_km:.0f}km) "
-                               f"with only {streak} weeks of consistency. Risk of injury. Keep increase ≤10%.",
-                               {"this_km": this_km, "last_km": last_km, "streak": streak}))
+    # Rule: Volume ramp guard — a real rolling increase on a thin frequency base.
+    ramp = _volume_ramp_state(conn, config)
+    if ramp["fires"]:
+        v, f = ramp["volume"], ramp["frequency"]
+        fired.append(_fire(conn, today, "volume_ramp",
+                           f"Rolling 7-day volume up {v['pct_change']:.0f}% "
+                           f"({v['previous_km']:.0f}→{v['current_km']:.0f}km) on a thin frequency base "
+                           f"— {f['runs_per_week']:.1f} runs/7d over the last {f['rate_days']} days, "
+                           f"{f['target_runs']}+ runs in only {f['base_pct']:.0f}% of the last "
+                           f"{f['base_days'] // 7} weeks. Risk of injury. Keep the increase ≤10%.",
+                           {"current_km": v["current_km"], "previous_km": v["previous_km"],
+                            "pct_change": v["pct_change"], "runs_per_week": f["runs_per_week"],
+                            "base_pct": f["base_pct"], "sustained_weeks": f["sustained_weeks"]}))
 
     # Rule: Readiness gate — adaptive threshold (task 4.13)
     # Default threshold: 40, raised to 50 during return-to-run
@@ -212,6 +214,27 @@ def _check_deload_overdue(conn: sqlite3.Connection, today: str) -> dict | None:
     return None
 
 
+def _volume_ramp_state(conn: sqlite3.Connection, config: dict | None = None) -> dict:
+    """The volume-ramp condition — read by BOTH the fire rule and the auto-dismiss.
+
+    Two definitions would drift: an auto-dismiss re-evaluating something slightly
+    different is the D12 bug class (an alert that can never clear). Rolling windows
+    throughout, so a session moved by a day or two cannot trip it.
+    """
+    from fit.analysis import compute_run_frequency, compute_volume_change
+
+    analysis = (config or {}).get("analysis", {})
+    limit_pct = float(analysis.get("weekly_volume_increase_max_pct", 10))
+    vol = compute_volume_change(conn)
+    freq = compute_run_frequency(
+        conn,
+        target_runs=int(analysis.get("frequency_target_runs", FREQ_TARGET_RUNS)),
+        thin_pct=float(analysis.get("frequency_base_thin_pct", FREQ_BASE_THIN_PCT)),
+    )
+    fires = vol["pct_change"] is not None and vol["pct_change"] > limit_pct and freq["thin"]
+    return {"fires": fires, "volume": vol, "frequency": freq}
+
+
 def _fire(conn: sqlite3.Connection, today: str, alert_type: str, message: str, data: dict) -> dict:
     """Store and return a fired alert with explicit severity."""
     # Don't duplicate same-day same-type alerts
@@ -230,7 +253,8 @@ def _fire(conn: sqlite3.Connection, today: str, alert_type: str, message: str, d
     }
 
 
-def get_recent_alerts(conn: sqlite3.Connection, days: int = 7) -> list[dict]:
+def get_recent_alerts(conn: sqlite3.Connection, days: int = 7,
+                      config: dict | None = None) -> list[dict]:
     """Get recent unacknowledged alerts, auto-dismissing stale ones.
 
     Each alert's underlying condition is re-evaluated. If the condition
@@ -250,7 +274,7 @@ def get_recent_alerts(conn: sqlite3.Connection, days: int = 7) -> list[dict]:
     for r in rows:
         if r["type"] in seen_types:
             continue
-        if _condition_still_holds(conn, r["type"]):
+        if _condition_still_holds(conn, r["type"], config):
             seen_types.add(r["type"])
             result.append({
                 "date": r["date"],
@@ -268,8 +292,14 @@ def get_recent_alerts(conn: sqlite3.Connection, days: int = 7) -> list[dict]:
     return result
 
 
-def _condition_still_holds(conn: sqlite3.Connection, alert_type: str) -> bool:
-    """Re-evaluate whether an alert's underlying condition is still true."""
+def _condition_still_holds(conn: sqlite3.Connection, alert_type: str,
+                           config: dict | None = None) -> bool:
+    """Re-evaluate whether an alert's underlying condition is still true.
+
+    `config` must be the same one the rule fired with, or a threshold override
+    could make an alert un-dismissable (the D12 bug class). Omitted means code
+    defaults, which is correct only when no override is configured.
+    """
     try:
         if alert_type == "all_runs_too_hard":
             row = conn.execute("""
@@ -280,15 +310,8 @@ def _condition_still_holds(conn: sqlite3.Connection, alert_type: str) -> bool:
             return bool(row and row["avg_z12"] is not None and row["avg_z12"] < 50)
 
         if alert_type == "volume_ramp":
-            weeks = conn.execute(
-                "SELECT run_km, consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 2"
-            ).fetchall()
-            if len(weeks) < 2:
-                return False
-            this_km = weeks[0]["run_km"] or 0
-            last_km = weeks[1]["run_km"] or 0
-            streak = weeks[0]["consecutive_weeks_3plus"] or 0
-            return last_km > 0 and ((this_km - last_km) / last_km) > 0.1 and streak < 8
+            # Same helper the fire rule uses — see _volume_ramp_state.
+            return _volume_ramp_state(conn, config)["fires"]
 
         if alert_type == "readiness_gate":
             row = conn.execute(

@@ -213,9 +213,20 @@ def _ctx_health(conn) -> list[str]:
         if resp["elevated"]:
             line += f" — ELEVATED {resp['consecutive_elevated']} nights (illness/fatigue early warning)"
         s.append(line)
-    streak = conn.execute("SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1").fetchone()
-    if streak:
-        s.append(f"Consistency streak: {streak['consecutive_weeks_3plus']} weeks with 3+ runs")
+    # Frequency as a rolling rate, not an ISO-week streak. The streak read "0 weeks"
+    # for an every-other-day plan whenever a week boundary split its runs 3/2 —
+    # nothing skipped, yet coaching was told the athlete had no consistency at all.
+    from fit.analysis import compute_run_frequency, compute_volume_change
+    freq = compute_run_frequency(conn)
+    s.append(f"Frequency: {freq['runs_per_week']:.2f} runs/7d over the last "
+             f"{freq['rate_days']} days; {freq['target_runs']}+ runs in "
+             f"{freq['base_pct']:.0f}% of the last {freq['base_days'] // 7} weeks "
+             f"(= {freq['sustained_weeks']:.1f} weeks sustained)")
+    vol = compute_volume_change(conn)
+    if vol["pct_change"] is not None:
+        s.append(f"Volume change: {vol['current_km']:.1f}km this rolling 7d vs "
+                 f"{vol['previous_km']:.1f}km the 7d before ({vol['pct_change']:+.0f}%) "
+                 f"— rolling windows, NOT calendar weeks")
     # Monotony/strain — leading overtraining indicators. Rolling-7d "now" read
     # (window policy §4.1), reusing `rolling` above; weekly_agg stays the ISO-week trend.
     m, st = rolling.get("monotony"), rolling.get("strain")

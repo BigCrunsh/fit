@@ -64,6 +64,67 @@ class TestAlertRules:
         assert a["data"]["driver"] == "recovery time"
         assert a["data"]["recovery_time_h"] == 64
 
+    # ── volume ramp: rolling windows, not ISO weeks ──
+    #
+    # The plan below is the real one: seven runs every other day, Aug 12-26, all
+    # completed, with a planned 4-day gap after the long run. ISO weeks split them
+    # 3/2/2 and compared a 4-day-old week against a complete one, reporting a "61%
+    # jump with 0 weeks of consistency". Rolling windows show volume DOWN.
+
+    REAL_PLAN = [("2026-08-12", 11.4), ("2026-08-14", 12.9), ("2026-08-16", 29.2),
+                 ("2026-08-20", 8.4), ("2026-08-22", 7.3), ("2026-08-24", 14.0),
+                 ("2026-08-26", 11.2)]
+
+    def _runs(self, db, entries):
+        for i, (d, km) in enumerate(entries):
+            db.execute("INSERT INTO activities (id, date, type, distance_km, duration_min) "
+                       "VALUES (?, ?, 'running', ?, ?)", (f"vr{i}", d, km, km * 6))
+        db.commit()
+
+    def _relative_runs(self, db, offsets_km):
+        self._runs(db, [((date.today() - timedelta(days=o)).isoformat(), km)
+                        for o, km in offsets_km])
+
+    def test_volume_ramp_does_not_fire_on_an_every_other_day_plan(self, db, config):
+        # Steady every-other-day training for 10 weeks: no ramp, base not thin.
+        self._relative_runs(db, [(i * 2, 10.0) for i in range(35)])
+        types = [a["type"] for a in run_alerts(db, config)]
+        assert "volume_ramp" not in types
+
+    def test_volume_ramp_fires_on_a_real_rolling_increase(self, db, config):
+        # 20km in the earlier week, 40km in the latest, and only a few runs total
+        # so the frequency base is genuinely thin.
+        self._relative_runs(db, [(11, 10.0), (9, 10.0), (4, 20.0), (2, 20.0)])
+        alerts = [a for a in run_alerts(db, config) if a["type"] == "volume_ramp"]
+        assert alerts, "a doubling of rolling 7-day volume should fire"
+        assert "100%" in alerts[0]["message"]
+
+    def test_volume_ramp_silent_when_the_base_is_strong(self, db, config):
+        # Volume rises, but 10 weeks of every-other-day running can absorb it.
+        self._relative_runs(db, [(i * 2 + 14, 10.0) for i in range(28)]
+                            + [(6, 15.0), (4, 15.0), (2, 15.0), (0, 15.0)])
+        types = [a["type"] for a in run_alerts(db, config)]
+        assert "volume_ramp" not in types
+
+    def test_volume_ramp_not_fired_from_zero_previous_volume(self, db, config):
+        # Returning from a layoff: a percentage off zero is meaningless.
+        self._relative_runs(db, [(1, 10.0)])
+        types = [a["type"] for a in run_alerts(db, config)]
+        assert "volume_ramp" not in types
+
+    def test_volume_ramp_fire_and_dismiss_agree(self, db, config):
+        # D12 class of bug: a rule whose auto-dismiss re-evaluates a DIFFERENT
+        # condition leaves an alert that can never clear.
+        from fit.alerts import _condition_still_holds
+        self._relative_runs(db, [(11, 10.0), (9, 10.0), (4, 20.0), (2, 20.0)])
+        assert any(a["type"] == "volume_ramp" for a in run_alerts(db, config))
+        assert _condition_still_holds(db, "volume_ramp") is True
+
+    def test_volume_ramp_dismisses_once_the_ramp_is_gone(self, db, config):
+        from fit.alerts import _condition_still_holds
+        self._relative_runs(db, [(i * 2, 10.0) for i in range(35)])
+        assert _condition_still_holds(db, "volume_ramp") is False
+
     def test_all_runs_too_hard(self, db, config):
         self._setup_weekly(db, z12_pct=10)
         alerts = run_alerts(db, config)

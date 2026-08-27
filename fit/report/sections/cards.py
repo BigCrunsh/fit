@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from fit.analysis import RUNNING_TYPES_SQL, Zone
@@ -1142,18 +1142,27 @@ def _weight_card_data(conn):
 def _objective_history(conn):
     """Get last 8 weeks of objective-relevant metrics from weekly_agg."""
     rows = conn.execute("""
-        SELECT run_km, longest_run_km, z12_pct, consecutive_weeks_3plus
+        SELECT run_km, longest_run_km, z12_pct
         FROM weekly_agg ORDER BY week DESC LIMIT 8
     """).fetchall()
     if not rows:
         return {}
     # Reverse so oldest first (left-to-right in sparkline)
     rows = list(reversed(rows))
+    # Consistency is sampled at weekly offsets from the rolling measure rather
+    # than read from the ISO-week streak column, which zeroed out whenever a week
+    # boundary split an every-other-day plan's runs 3/2.
+    from fit.analysis import compute_run_frequency
+    today = date.today()
+    consistency = [
+        compute_run_frequency(conn, end_date=today - timedelta(weeks=i))["sustained_weeks"]
+        for i in range(7, -1, -1)
+    ]
     return {
         "weekly_volume": [r["run_km"] or 0 for r in rows],
         "long_run": [r["longest_run_km"] or 0 for r in rows],
         "z2_time": [r["z12_pct"] or 0 for r in rows],
-        "consistency": [r["consecutive_weeks_3plus"] or 0 for r in rows],
+        "consistency": consistency,
     }
 
 
@@ -1205,12 +1214,14 @@ def _next_workouts(conn):
 def _overview_objectives(conn):
     """Objectives summary for Overview tab — always from weekly_agg, not derived_objectives."""
     try:
-        # Volume / long-run / Z2 come from the rolling 7-day window — the single
-        # source shared with the Training tab, CLI status and coaching (CLAUDE.md:
-        # "Rolling 7-day window, not ISO weeks"). Only the streak stays ISO-week.
-        from fit.analysis import compute_rolling_week
+        # Volume / long-run / Z2 / consistency all come from rolling windows — the
+        # single source shared with the Training tab, CLI status and coaching
+        # (CLAUDE.md: "Rolling 7-day window, not ISO weeks"). Consistency used to be
+        # the one ISO-week holdout, which read 0 for an every-other-day plan whenever
+        # a week boundary split its runs 3/2.
+        from fit.analysis import compute_rolling_week, compute_run_frequency
         latest = conn.execute(
-            "SELECT consecutive_weeks_3plus FROM weekly_agg ORDER BY week DESC LIMIT 1"
+            "SELECT week FROM weekly_agg ORDER BY week DESC LIMIT 1"
         ).fetchone()
         if not latest:
             return None
@@ -1249,7 +1260,7 @@ def _overview_objectives(conn):
 
         vol = rolling.get("run_km") or 0
         long_r = rolling.get("longest_run_km") or 0
-        streak = latest["consecutive_weeks_3plus"] or 0
+        streak = compute_run_frequency(conn)["sustained_weeks"]
 
         # Z2 compliance from the same rolling 7-day window (SSOT with Training/coaching).
         z2 = round(rolling["z12_pct"]) if rolling.get("z12_pct") is not None else 0
@@ -3182,18 +3193,12 @@ def _training_objectives(conn):
                     goal_map[sd["key"]] = dict(g)
                     break
 
-    # Consistency uses last completed ISO week
+    # Consistency is a rolling measure — it updates every day, so there is no
+    # "current partial week" to exclude and no Monday reset to wait for.
     today = date.today()
-    today_iso = today.isocalendar()
-    current_week_str = f"{today_iso[0]}-W{today_iso[1]:02d}"
-    completed_week = conn.execute(
-        "SELECT * FROM weekly_agg WHERE week < ? ORDER BY week DESC LIMIT 1",
-        (current_week_str,),
-    ).fetchone()
-    prev_completed_week = conn.execute(
-        "SELECT * FROM weekly_agg WHERE week < ? ORDER BY week DESC LIMIT 1 OFFSET 1",
-        (current_week_str,),
-    ).fetchone()
+    from fit.analysis import compute_run_frequency
+    frequency = compute_run_frequency(conn)
+    frequency_prev = compute_run_frequency(conn, end_date=today - timedelta(days=7))
 
     def _extract_value(key, data):
         if key == "volume":
@@ -3214,19 +3219,15 @@ def _training_objectives(conn):
 
         # Current + previous for WoW
         if sd["key"] == "consistency":
-            current = completed_week["consecutive_weeks_3plus"] if completed_week else 0
-            prev = prev_completed_week["consecutive_weeks_3plus"] if prev_completed_week else None
-            # Streak sub-label: show in-week progress
-            runs_this_week = conn.execute("""
-                SELECT COUNT(*) as n FROM activities
-                WHERE type IN {types} AND date >= date(?, 'weekday 0', '-7 days')
-            """.format(types=RUNNING_TYPES_SQL), (today.isoformat(),)).fetchone()
-            n = runs_this_week["n"] if runs_this_week else 0
-            if n >= 3:
-                streak_label = "streak secured, updates Monday"
-            elif n > 0:
-                remaining = 3 - n
-                streak_label = f"{n}/3 — {remaining} more to keep streak"
+            current = frequency["sustained_weeks"]
+            prev = frequency_prev["sustained_weeks"]
+            # Sub-label: the current rate and how much of the window held the
+            # target — no Monday reset, because the window moves with the day.
+            target_runs = frequency["target_runs"]
+            streak_label = (
+                f"{frequency['runs_per_week']:.1f} runs/7d · {target_runs}+ in "
+                f"{frequency['base_pct']:.0f}% of {frequency['base_days'] // 7} wks"
+            )
         else:
             current = _extract_value(sd["key"], rolling)
             prev = _extract_value(sd["key"], prev_rolling)

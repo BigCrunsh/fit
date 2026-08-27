@@ -85,6 +85,14 @@ class TestCoachingInstructions:
         assert "recovery time" in t
         assert "not a `critical` finding" in t
 
+    def test_forbids_re_deriving_a_calendar_week_volume_jump(self):
+        t = self._text()
+        assert "rolling measures over consecutive days, never calendar weeks" in t
+        assert "do not re-derive a week-over-week jump" in t
+
+    def test_forbids_calling_an_uneven_calendar_split_inconsistent(self):
+        assert "moved by a day or two changes nothing" in self._text()
+
 
 # ── notes writer (moved verbatim from the MCP) ──
 
