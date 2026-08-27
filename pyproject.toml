@@ -32,7 +32,12 @@ forecast = [
 ]
 dev = [
     "pytest>=8.0.0",
-    "ruff>=0.4.0",
+    # Capped below 0.16: that release expanded ruff's DEFAULT rule set, and this
+    # config never declared `select`, so CI silently inherited dozens of new rules
+    # and reported 606 errors on untouched code (it broke main, not one PR).
+    # Lifting the cap means either declaring the rule set explicitly under
+    # [tool.ruff.lint] or doing that cleanup first.
+    "ruff>=0.4.0,<0.16",
     "fitparse>=1.2.0",
 ]
 
