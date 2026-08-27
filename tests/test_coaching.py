@@ -50,6 +50,50 @@ class TestAssembleContext:
         assert "\n  " in out                            # sections are indented
 
 
+# ── coaching instructions ──
+#
+# A real review claimed "readiness bottomed out — same cliff as last time ... this is
+# exactly the recovery cliff flagged in the last review" on a day when no cliff had
+# ever fired (HRV status was BALANCED) and every prior note said there wasn't one.
+# Two invented claims: a recovery cliff the data never reported, and a same-day
+# readiness floor treated as a multi-day trend. These pin the guidance that forbids
+# both — the prompt is the only place that behaviour can be constrained.
+
+class TestCoachingInstructions:
+    @staticmethod
+    def _text():
+        # The prompt is hard-wrapped; match on reflowed text so a line break can't
+        # silently satisfy or break these guards.
+        from fit.coaching.prompt import COACHING_INSTRUCTIONS
+        return " ".join(COACHING_INSTRUCTIONS.lower().split())
+
+    def test_forbids_asserting_a_cliff_the_context_did_not_report(self):
+        t = self._text()
+        assert "recovery cliff" in t
+        assert "only when the context reports it" in t
+
+    def test_forbids_citing_a_previous_review_that_did_not_say_it(self):
+        assert "never say a previous review flagged" in self._text()
+
+    def test_requires_same_day_and_average_windows_be_kept_apart(self):
+        t = self._text()
+        assert "7d average" in t and "single-day" in t
+        assert "never quote an average as if it were today's reading" in t
+
+    def test_recovery_time_debt_is_not_by_itself_critical(self):
+        t = self._text()
+        assert "recovery time" in t
+        assert "not a `critical` finding" in t
+
+    def test_forbids_re_deriving_a_calendar_week_volume_jump(self):
+        t = self._text()
+        assert "rolling measures over consecutive days, never calendar weeks" in t
+        assert "do not re-derive a week-over-week jump" in t
+
+    def test_forbids_calling_an_uneven_calendar_split_inconsistent(self):
+        assert "moved by a day or two changes nothing" in self._text()
+
+
 # ── notes writer (moved verbatim from the MCP) ──
 
 class TestSaveCoachingNotes:

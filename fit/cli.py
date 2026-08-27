@@ -1980,18 +1980,10 @@ def status():
         )
         rolling_acwr = compute_rolling_acwr(conn)
 
-        # Consistency uses last *completed* ISO week, not partial current
-        today_iso = d.today().isocalendar()
-        completed_week = conn.execute(
-            "SELECT * FROM weekly_agg WHERE week < ? "
-            "ORDER BY week DESC LIMIT 1",
-            (f"{today_iso[0]}-W{today_iso[1]:02d}",),
-        ).fetchone()
-        prev_completed = conn.execute(
-            "SELECT * FROM weekly_agg WHERE week < ? "
-            "ORDER BY week DESC LIMIT 1 OFFSET 1",
-            (f"{today_iso[0]}-W{today_iso[1]:02d}",),
-        ).fetchone()
+        # Consistency is a rolling measure like volume and long-run above it — an
+        # ISO-week streak reported an every-other-day plan as "0 weeks" whenever a
+        # week boundary split the runs 3/2.
+        from fit.analysis import compute_sustained_weeks
 
         ot = Table(
             box=rich_box.SIMPLE_HEAD, show_edge=False,
@@ -2063,12 +2055,11 @@ def status():
                 )
             elif key == "consistency":
                 cur = (
-                    completed_week["consecutive_weeks_3plus"]
-                    if completed_week else 0
+                    compute_sustained_weeks(conn, target_weeks=tgt)
                 )
-                prev = (
-                    prev_completed["consecutive_weeks_3plus"]
-                    if prev_completed else None
+                prev = compute_sustained_weeks(
+                    conn, target_weeks=tgt,
+                    end_date=d.today() - timedelta(days=7),
                 )
 
             cur_s = f"{cur}" if cur is not None else "—"

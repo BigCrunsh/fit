@@ -598,6 +598,132 @@ def compute_rolling_week(conn: sqlite3.Connection, end_date: date | None = None,
     return result
 
 
+# ── Rolling training frequency and volume change ──
+#
+# These replace the ISO-week measures (`consecutive_weeks_3plus`, and comparing the
+# two newest `weekly_agg` rows) for every DECISION. ISO weeks made a plan that runs
+# every other day look erratic: a week boundary splitting seven runs 3/2/2 read as
+# "0 weeks of consistency", and comparing a 4-day-old week against a complete one
+# read as a "61% volume jump" when rolling windows showed volume DOWN 36%. Nothing
+# had been skipped — the plan scheduled exactly those days.
+#
+# The requirement is day-shift invariance: moving a session by a day or two must not
+# change the verdict. A rolling window gives that for volume. For frequency it is not
+# enough on its own — an all-or-nothing "3+ runs in the trailing 7 days" test sits
+# right at a 3-runs-a-week cadence and flickers 2<->4 as the window slides, so a
+# STREAK of such windows still collapses. Hence a rate plus the share of windows that
+# held the target, neither of which resets on a single gap.
+#
+# `weekly_agg.consecutive_weeks_3plus` is still written for historical continuity;
+# nothing reads it to make a decision.
+
+FREQ_TARGET_RUNS = 3       # runs per 7 days that counts as consistent training
+FREQ_RATE_DAYS = 28        # trailing window for the headline rate
+FREQ_BASE_DAYS = 56        # trailing window for the "have they built a base" share
+FREQ_BASE_THIN_PCT = 60    # base share below this = too thin to absorb a volume ramp
+
+
+def _run_days(conn: sqlite3.Connection, start: date, end: date) -> dict[date, list[float]]:
+    """{day: [distance_km, ...]} for runs in an inclusive date range."""
+    rows = conn.execute(
+        f"SELECT date, distance_km FROM activities "
+        f"WHERE type IN {RUNNING_TYPES_SQL} AND date BETWEEN ? AND ?",
+        (start.isoformat(), end.isoformat()),
+    ).fetchall()
+    out: dict[date, list[float]] = {}
+    for r in rows:
+        out.setdefault(date.fromisoformat(r["date"]), []).append(r["distance_km"] or 0.0)
+    return out
+
+
+def compute_run_frequency(conn: sqlite3.Connection, end_date: date | None = None,
+                          rate_days: int = FREQ_RATE_DAYS, base_days: int = FREQ_BASE_DAYS,
+                          target_runs: int = FREQ_TARGET_RUNS,
+                          thin_pct: float = FREQ_BASE_THIN_PCT) -> dict:
+    """Rolling training frequency — the ISO-week-free replacement for the 3+ run streak.
+
+    Returns:
+        runs / rate_days / runs_per_week: how often they are running now, as a rate.
+        base_pct: share of the trailing `base_days` daily 7-day windows that held
+            `target_runs` or more. Degrades gracefully — one gap costs a few windows.
+        sustained_weeks: base_pct expressed as weeks-equivalent of the base window,
+            so a "12 weeks of consistency" objective still has a comparable number.
+        thin: base_pct below `thin_pct` — not enough frequency base to absorb a ramp.
+    """
+    if end_date is None:
+        end_date = date.today()
+
+    # Reach back one extra window so the oldest evaluated day has its full 7 days.
+    days = _run_days(conn, end_date - timedelta(days=base_days + 6), end_date)
+    counts = {d: len(ks) for d, ks in days.items()}
+
+    rate_lo = end_date - timedelta(days=rate_days - 1)
+    runs = sum(n for d, n in counts.items() if rate_lo <= d <= end_date)
+
+    held = 0
+    for i in range(base_days):
+        w_end = end_date - timedelta(days=i)
+        w_lo = w_end - timedelta(days=6)
+        if sum(n for d, n in counts.items() if w_lo <= d <= w_end) >= target_runs:
+            held += 1
+    base_pct = round(100.0 * held / base_days, 1) if base_days else 0.0
+
+    return {
+        "runs": runs,
+        "rate_days": rate_days,
+        "runs_per_week": round(runs * 7 / rate_days, 2),
+        "base_pct": base_pct,
+        "base_days": base_days,
+        "windows_held": held,
+        "sustained_weeks": round(base_pct / 100 * base_days / 7, 2),
+        "target_runs": target_runs,
+        "thin": base_pct < thin_pct,
+    }
+
+
+def compute_sustained_weeks(conn: sqlite3.Connection, target_weeks: int | float | None = None,
+                            end_date: date | None = None) -> float:
+    """Weeks sustained at the target frequency, judged over the TARGET's own length.
+
+    `sustained_weeks` is capped by its window, so judging a 12-week objective over
+    a fixed 8-week window would make it unreachable however consistently the
+    athlete trains. Falls back to the default base window when there is no target.
+    """
+    weeks = int(target_weeks) if target_weeks else FREQ_BASE_DAYS // 7
+    return compute_run_frequency(
+        conn, end_date=end_date, base_days=max(weeks, 1) * 7
+    )["sustained_weeks"]
+
+
+def compute_volume_change(conn: sqlite3.Connection, end_date: date | None = None,
+                          window_days: int = 7) -> dict:
+    """Rolling volume change: the trailing window vs the one immediately before it.
+
+    No ISO boundary and no partial-week comparison — both windows are the same
+    length and neither is truncated. `pct_change` is None when the earlier window
+    holds no running at all, because a percentage off zero says nothing.
+    """
+    if end_date is None:
+        end_date = date.today()
+
+    cur_lo = end_date - timedelta(days=window_days - 1)
+    prev_end = cur_lo - timedelta(days=1)
+    prev_lo = prev_end - timedelta(days=window_days - 1)
+
+    days = _run_days(conn, prev_lo, end_date)
+    cur_km = round(sum(sum(ks) for d, ks in days.items() if cur_lo <= d <= end_date), 2)
+    prev_km = round(sum(sum(ks) for d, ks in days.items() if prev_lo <= d <= prev_end), 2)
+
+    return {
+        "current_km": cur_km,
+        "previous_km": prev_km,
+        "pct_change": round((cur_km - prev_km) / prev_km * 100, 1) if prev_km else None,
+        "window_days": window_days,
+        "current_window": (cur_lo.isoformat(), end_date.isoformat()),
+        "previous_window": (prev_lo.isoformat(), prev_end.isoformat()),
+    }
+
+
 # Moved to the Training-Load context (fit/training_load.py) — re-exported here so
 # existing imports keep working during the incremental context split (DDD review).
 from fit.training_load import compute_rolling_acwr  # noqa: F401,E402

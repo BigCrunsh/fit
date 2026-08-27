@@ -172,3 +172,79 @@ def wellness_snapshot(conn: sqlite3.Connection, config: dict | None = None) -> d
         "recovery_cliff": cliff,
         "recovery_cliff_components": components,
     }
+
+
+# ── Readiness breakdown ──
+#
+# Garmin's Training Readiness is its number, not ours (`fit/garmin.py` copies the
+# score verbatim). A low score says nothing about WHY on its own: the same 1/100
+# can mean "still inside a hard session's recovery window" or "HRV has collapsed",
+# and those call for opposite responses. Garmin returns a 0-100 rating per input,
+# so name the driver from the data instead of letting readers assume fatigue.
+#
+# Single source of the answer: the `readiness_gate` alert message and the coaching
+# context both read this. Never re-derive a driver inline.
+
+# (column, human name) — the inputs Garmin rates, in the order Garmin presents them.
+_READINESS_FACTORS = (
+    ("readiness_recovery_factor_pct", "recovery time"),
+    ("readiness_sleep_factor_pct", "sleep"),
+    ("readiness_hrv_factor_pct", "HRV"),
+    ("readiness_acwr_factor_pct", "load ratio"),
+    ("readiness_sleep_history_pct", "sleep history"),
+    ("readiness_stress_history_pct", "stress history"),
+)
+FACTOR_HEALTHY_PCT = 65   # at or above this, a factor is not what's holding the score down
+
+
+def readiness_breakdown(conn: sqlite3.Connection) -> dict:
+    """Why the latest readiness score reads what it reads.
+
+    Returns the score, the lowest-rated input (`driver`), the inputs that are
+    fine, any recovery-time debt still counting down, and a one-line `summary`.
+    `driver` and `summary` are None when the factors were never stored (every row
+    synced before migration 020) — an unexplained score is reported as such
+    rather than attributed to a guessed cause.
+    """
+    row = conn.execute(
+        "SELECT date, training_readiness, readiness_level, readiness_feedback, "
+        "       readiness_recovery_time_min, "
+        + ", ".join(c for c, _ in _READINESS_FACTORS)
+        + " FROM daily_health WHERE training_readiness IS NOT NULL "
+          "ORDER BY date DESC LIMIT 1"
+    ).fetchone()
+    if row is None:
+        return {"date": None, "score": None, "level": None, "driver": None,
+                "driver_pct": None, "healthy": [], "recovery_time_h": None,
+                "feedback": None, "summary": None}
+
+    rated = [(name, row[col]) for col, name in _READINESS_FACTORS if row[col] is not None]
+    debt_min = row["readiness_recovery_time_min"]
+    debt_h = round(debt_min / 60) if debt_min else None
+
+    driver, driver_pct = (min(rated, key=lambda f: f[1]) if rated else (None, None))
+    healthy = [name for name, pct in rated if pct >= FACTOR_HEALTHY_PCT]
+
+    summary = None
+    if driver is not None:
+        summary = f"lowest-rated input is {driver} ({driver_pct}/100)"
+        # Recovery-time debt is the actionable context even when it is not the
+        # lowest factor: it says the score sits inside a hard session's shadow
+        # and will climb back on its own clock.
+        if debt_h:
+            summary += (f" — {debt_h}h still counting down" if driver == "recovery time"
+                        else f"; {debt_h}h of recovery time still counting down")
+        if healthy:
+            summary += f". Rated fine: {', '.join(healthy)}"
+
+    return {
+        "date": row["date"],
+        "score": row["training_readiness"],
+        "level": row["readiness_level"],
+        "driver": driver,
+        "driver_pct": driver_pct,
+        "healthy": healthy,
+        "recovery_time_h": debt_h,
+        "feedback": row["readiness_feedback"],
+        "summary": summary,
+    }
