@@ -252,6 +252,71 @@ class TestCtxHealthRespiration:
         assert "Respiration (waking):" in text
 
 
+# ── _ctx_health: same-day readings vs multi-day averages ──
+#
+# The bug: the health block offered only averages labelled "Last 7d", and the SQL
+# behind them (`date >= date('now','-7 days')`) actually spanned 8 days. Coaching
+# then quoted those averages as if they were today's readings — "readiness bottomed
+# out ... with RHR at 55.1, HRV at 35.6" read as three signals collapsing on the
+# same day when it was one same-day score beside two multi-day means. Averages and
+# same-day readings now travel on separate, explicitly labelled lines.
+
+class TestCtxHealthWindowLabels:
+    @staticmethod
+    def _day(db, offset, **cols):
+        from datetime import date, timedelta
+        d = (date.today() - timedelta(days=offset)).isoformat()
+        keys = ", ".join(cols)
+        db.execute(f"INSERT INTO daily_health (date, {keys}) VALUES "
+                   f"(?{', ?' * len(cols)})", [d, *cols.values()])
+        db.commit()
+
+    def test_seven_day_average_covers_exactly_seven_days(self, server, db):
+        # A value 7 days back sits OUTSIDE a today-6..today window. With the old
+        # 8-day span it leaked in and dragged the mean.
+        for i in range(7):
+            self._day(db, i, resting_heart_rate=50)
+        self._day(db, 7, resting_heart_rate=120)
+        text = "\n".join(server._ctx_health(db))
+        assert "RHR=50.0" in text          # 8-day span would give 58.75
+
+    def test_same_day_readings_are_labelled_as_today_not_as_an_average(self, server, db):
+        self._day(db, 1, resting_heart_rate=52, hrv_last_night=40, training_readiness=80)
+        self._day(db, 0, resting_heart_rate=59, hrv_last_night=31, training_readiness=1)
+        text = "\n".join(server._ctx_health(db))
+        assert "Today: readiness 1" in text
+        assert "RHR 59" in text and "HRV 31" in text
+        # and the averages must be marked as averages, on their own line
+        assert "7d average" in text
+
+    def test_average_line_is_not_labelled_today(self, server, db):
+        for i in range(7):
+            self._day(db, i, resting_heart_rate=55, training_readiness=70)
+        lines = server._ctx_health(db)
+        avg_line = next(ln for ln in lines if "7d average" in ln)
+        assert "Today" not in avg_line
+
+    def test_readiness_driver_named_when_factors_present(self, server, db):
+        self._day(db, 0, training_readiness=1, readiness_level="POOR",
+                  readiness_recovery_time_min=3849, readiness_recovery_factor_pct=16,
+                  readiness_hrv_factor_pct=76, readiness_acwr_factor_pct=85,
+                  readiness_sleep_history_pct=83, readiness_stress_history_pct=77)
+        text = "\n".join(server._ctx_health(db))
+        assert "recovery time" in text and "64h" in text
+        assert "HRV" in text                       # reported among the fine inputs
+
+    def test_no_driver_claimed_when_factors_absent(self, server, db):
+        self._day(db, 0, training_readiness=1, readiness_level="POOR")
+        text = "\n".join(server._ctx_health(db))
+        assert "Today: readiness 1" in text
+        assert "lowest-rated input" not in text    # never invent a cause
+
+    def test_health_block_survives_an_empty_table(self, server, db):
+        text = "\n".join(server._ctx_health(db))
+        assert "Today: readiness" not in text
+        assert "7d average" not in text
+
+
 # ── _ctx_plan: elapsed-only plan adherence ──
 #
 # compute_plan_adherence() is deliberately current-ISO-week (D9) and treats any

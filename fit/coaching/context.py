@@ -1,8 +1,12 @@
 """Coaching-context assembly — the structured data summary `fit coach` reasons over.
 
-Ported verbatim from the former MCP coaching path (the `_ctx_*` builders + `get_coaching_context`).
-Single source of truth now; `assemble_coaching_context` output is byte-for-byte the legacy
-MCP output (pinned by a regression test), so the coach/dashboard see an unchanged context.
+Ported verbatim from the former MCP coaching path (the `_ctx_*` builders + `get_coaching_context`)
+and the single source of truth since. The output started byte-for-byte identical to the legacy MCP
+output; it has since diverged only where the legacy text was wrong. Deliberate divergences:
+
+- the health block separates single-day readings from multi-day averages and labels both, and its
+  "7d" average now covers 7 days rather than 8 (`-6 days`, matching `compute_rolling_week`). The
+  collapsed version let coaching quote a weekly mean as a same-day reading.
 """
 
 import json
@@ -152,13 +156,52 @@ def _ctx_health(conn) -> list[str]:
     rolling = compute_rolling_week(conn)
     if rolling:
         s.append(f"Last 7 days: {rolling['run_km']:.0f}km / {rolling['run_count']} runs")
+    # Same-day readings and multi-day averages travel on SEPARATE, labelled lines.
+    # Collapsing them let coaching quote a 7d mean as if it were today's reading
+    # ("readiness bottomed out ... with RHR at 55.1") — one same-day score dressed
+    # up as three signals failing at once.
+    latest = conn.execute("""
+        SELECT date, training_readiness, readiness_level, resting_heart_rate,
+               hrv_last_night, hrv_status, sleep_duration_hours
+        FROM daily_health ORDER BY date DESC LIMIT 1
+    """).fetchone()
+    if latest is not None and any(latest[c] is not None for c in
+                                  ("training_readiness", "resting_heart_rate",
+                                   "hrv_last_night", "sleep_duration_hours")):
+        today_iso = conn.execute("SELECT date('now') AS d").fetchone()["d"]
+        label = "Today" if latest["date"] == today_iso else f"Latest ({latest['date']})"
+        parts = []
+        if latest["training_readiness"] is not None:
+            lvl = f" ({latest['readiness_level']})" if latest["readiness_level"] else ""
+            parts.append(f"readiness {latest['training_readiness']}/100{lvl}")
+        if latest["resting_heart_rate"] is not None:
+            parts.append(f"RHR {latest['resting_heart_rate']}")
+        if latest["hrv_last_night"] is not None:
+            hrv_s = f" ({latest['hrv_status']})" if latest["hrv_status"] else ""
+            parts.append(f"HRV {latest['hrv_last_night']:g}{hrv_s}")
+        if latest["sleep_duration_hours"] is not None:
+            parts.append(f"sleep {latest['sleep_duration_hours']:.1f}h")
+        s.append(f"{label}: " + ", ".join(parts) + "  [single-day readings, not averages]")
+
+    # Why readiness reads what it reads — same source as the readiness alert.
+    # Without it a low score reads as accumulated fatigue when it is usually a
+    # hard session's recovery-time clock still running.
+    from fit.wellness import readiness_breakdown
+    rb = readiness_breakdown(conn)
+    if rb["summary"]:
+        when = "" if latest is not None and rb["date"] == latest["date"] else f" [{rb['date']}]"
+        s.append(f"  Readiness{when}: {rb['summary']}")
+
     health = conn.execute("""
         SELECT ROUND(AVG(resting_heart_rate), 1) as rhr, ROUND(AVG(sleep_duration_hours), 1) as sleep,
-               ROUND(AVG(hrv_last_night), 1) as hrv, ROUND(AVG(training_readiness), 0) as readiness
-        FROM daily_health WHERE date >= date('now', '-7 days')
+               ROUND(AVG(hrv_last_night), 1) as hrv, ROUND(AVG(training_readiness)) as readiness,
+               MAX(date) as through
+        FROM daily_health WHERE date >= date('now', '-6 days')
     """).fetchone()
-    if health:
-        s.append(f"Last 7d: RHR={health['rhr']}, Sleep={health['sleep']}h, HRV={health['hrv']}, Readiness={health['readiness']}")
+    if health and health["through"]:
+        rdy = f"{int(health['readiness'])}" if health["readiness"] is not None else "None"
+        s.append(f"7d average (through {health['through']}): RHR={health['rhr']}, "
+                 f"Sleep={health['sleep']}h, HRV={health['hrv']}, Readiness={rdy}")
     # Respiration — same wellness_snapshot the alert rules read (SSOT), sleep
     # series preferred with waking fallback; omitted entirely when no data.
     from fit.wellness import wellness_snapshot

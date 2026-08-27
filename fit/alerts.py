@@ -76,11 +76,20 @@ def run_alerts(conn: sqlite3.Connection, config: dict) -> list[dict]:
     readiness = conn.execute("SELECT training_readiness FROM daily_health ORDER BY date DESC LIMIT 1").fetchone()
     if readiness and readiness["training_readiness"] and readiness["training_readiness"] < readiness_threshold:
         context = "return-to-run" if gap else "normal"
+        # Name WHY the score is low. "Rest or very easy activity only" with no
+        # reason attached reads as accumulated fatigue, when the usual cause is a
+        # hard session's recovery-time clock still running — which resolves on its
+        # own and calls for a different response than a genuine HRV collapse.
+        from fit.wellness import readiness_breakdown
+        rb = readiness_breakdown(conn)
+        why = f" Garmin's {rb['summary']}." if rb["summary"] else ""
         fired.append(_fire(conn, today, "readiness_gate",
                            f"Readiness is {readiness['training_readiness']} (threshold: {readiness_threshold}, "
-                           f"context: {context}). Rest or very easy activity only.",
+                           f"context: {context}).{why} Rest or very easy activity only.",
                            {"readiness": readiness["training_readiness"],
-                            "threshold": readiness_threshold, "context": context}))
+                            "threshold": readiness_threshold, "context": context,
+                            "driver": rb["driver"], "driver_pct": rb["driver_pct"],
+                            "recovery_time_h": rb["recovery_time_h"]}))
 
     # Rule: SpO2 alert — avg_spo2 < threshold for 2+ consecutive days
     spo2_threshold = config.get("coaching", {}).get("spo2_alert_threshold", 95)

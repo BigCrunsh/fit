@@ -693,6 +693,10 @@ def _upsert_health(conn: sqlite3.Connection, h: dict) -> None:
             sleep_duration_hours, deep_sleep_hours, light_sleep_hours,
             rem_sleep_hours, awake_hours, deep_sleep_pct,
             training_readiness, readiness_level,
+            readiness_recovery_time_min, readiness_recovery_factor_pct,
+            readiness_sleep_factor_pct, readiness_hrv_factor_pct,
+            readiness_acwr_factor_pct, readiness_sleep_history_pct,
+            readiness_stress_history_pct, readiness_feedback, sleep_score,
             hrv_weekly_avg, hrv_last_night, hrv_status,
             avg_respiration, avg_sleep_respiration, avg_spo2
         ) VALUES (
@@ -702,6 +706,10 @@ def _upsert_health(conn: sqlite3.Connection, h: dict) -> None:
             :sleep_duration_hours, :deep_sleep_hours, :light_sleep_hours,
             :rem_sleep_hours, :awake_hours, :deep_sleep_pct,
             :training_readiness, :readiness_level,
+            :readiness_recovery_time_min, :readiness_recovery_factor_pct,
+            :readiness_sleep_factor_pct, :readiness_hrv_factor_pct,
+            :readiness_acwr_factor_pct, :readiness_sleep_history_pct,
+            :readiness_stress_history_pct, :readiness_feedback, :sleep_score,
             :hrv_weekly_avg, :hrv_last_night, :hrv_status,
             :avg_respiration, :avg_sleep_respiration, :avg_spo2
         )
@@ -725,6 +733,18 @@ def _upsert_health(conn: sqlite3.Connection, h: dict) -> None:
             deep_sleep_pct = excluded.deep_sleep_pct,
             training_readiness = excluded.training_readiness,
             readiness_level = excluded.readiness_level,
+            -- Factors overwrite alongside the score they explain (no COALESCE):
+            -- a preserved old breakdown next to a fresh score would explain the
+            -- wrong number.
+            readiness_recovery_time_min = excluded.readiness_recovery_time_min,
+            readiness_recovery_factor_pct = excluded.readiness_recovery_factor_pct,
+            readiness_sleep_factor_pct = excluded.readiness_sleep_factor_pct,
+            readiness_hrv_factor_pct = excluded.readiness_hrv_factor_pct,
+            readiness_acwr_factor_pct = excluded.readiness_acwr_factor_pct,
+            readiness_sleep_history_pct = excluded.readiness_sleep_history_pct,
+            readiness_stress_history_pct = excluded.readiness_stress_history_pct,
+            readiness_feedback = excluded.readiness_feedback,
+            sleep_score = COALESCE(excluded.sleep_score, daily_health.sleep_score),
             hrv_weekly_avg = excluded.hrv_weekly_avg,
             hrv_last_night = excluded.hrv_last_night,
             hrv_status = excluded.hrv_status,
@@ -752,6 +772,15 @@ def _upsert_health(conn: sqlite3.Connection, h: dict) -> None:
         "deep_sleep_pct": h.get("deep_sleep_pct"),
         "training_readiness": h.get("training_readiness"),
         "readiness_level": h.get("readiness_level"),
+        "readiness_recovery_time_min": h.get("readiness_recovery_time_min"),
+        "readiness_recovery_factor_pct": h.get("readiness_recovery_factor_pct"),
+        "readiness_sleep_factor_pct": h.get("readiness_sleep_factor_pct"),
+        "readiness_hrv_factor_pct": h.get("readiness_hrv_factor_pct"),
+        "readiness_acwr_factor_pct": h.get("readiness_acwr_factor_pct"),
+        "readiness_sleep_history_pct": h.get("readiness_sleep_history_pct"),
+        "readiness_stress_history_pct": h.get("readiness_stress_history_pct"),
+        "readiness_feedback": h.get("readiness_feedback"),
+        "sleep_score": h.get("sleep_score"),
         "hrv_weekly_avg": h.get("hrv_weekly_avg"),
         "hrv_last_night": h.get("hrv_last_night"),
         "hrv_status": h.get("hrv_status"),

@@ -251,6 +251,19 @@ def _fetch_day_health(api: Garmin, d: str) -> dict | None:
             m.update({
                 "training_readiness": best.get("score"),
                 "readiness_level": best.get("level"),
+                # Garmin's own factor breakdown — the score alone cannot say WHY it
+                # is low, and "still inside a hard session's recovery window" calls
+                # for a different response than "HRV has collapsed". See
+                # `readiness_breakdown` in fit/wellness.py.
+                "readiness_recovery_time_min": best.get("recoveryTime"),
+                "readiness_recovery_factor_pct": best.get("recoveryTimeFactorPercent"),
+                "readiness_sleep_factor_pct": best.get("sleepScoreFactorPercent"),
+                "readiness_hrv_factor_pct": best.get("hrvFactorPercent"),
+                "readiness_acwr_factor_pct": best.get("acwrFactorPercent"),
+                "readiness_sleep_history_pct": best.get("sleepHistoryFactorPercent"),
+                "readiness_stress_history_pct": best.get("stressHistoryFactorPercent"),
+                "readiness_feedback": best.get("feedbackShort"),
+                "sleep_score": best.get("sleepScore"),
             })
     except Exception as e:
         errors.append(f"readiness: {e}")

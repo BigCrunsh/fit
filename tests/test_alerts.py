@@ -33,6 +33,37 @@ class TestAlertRules:
         types = [a["type"] for a in alerts]
         assert "readiness_gate" not in types
 
+    def test_readiness_gate_names_the_driver_when_factors_are_stored(self, db, config):
+        # "Rest or very easy activity only" with no reason attached is what made a
+        # recovery-time countdown read as accumulated fatigue. Garmin rates the
+        # inputs; the message must say which one is low.
+        db.execute("INSERT INTO daily_health (date, training_readiness, readiness_level, "
+                   "readiness_recovery_time_min, readiness_recovery_factor_pct, "
+                   "readiness_hrv_factor_pct, readiness_acwr_factor_pct, "
+                   "readiness_sleep_history_pct, readiness_stress_history_pct) "
+                   "VALUES (date('now'), 1, 'POOR', 3849, 16, 76, 85, 83, 77)")
+        db.commit()
+        msg = next(a for a in run_alerts(db, config) if a["type"] == "readiness_gate")["message"]
+        assert "recovery time" in msg and "64h" in msg
+        assert "Readiness is 1" in msg          # the original claim is unchanged
+
+    def test_readiness_gate_message_unchanged_without_factors(self, db, config):
+        # Rows synced before the factor columns existed have nothing to explain
+        # with; the message must not gain an invented cause.
+        self._setup_health(db, readiness=20)
+        msg = next(a for a in run_alerts(db, config) if a["type"] == "readiness_gate")["message"]
+        assert "Readiness is 20" in msg
+        assert "lowest-rated input" not in msg
+
+    def test_readiness_gate_data_context_carries_the_driver(self, db, config):
+        db.execute("INSERT INTO daily_health (date, training_readiness, "
+                   "readiness_recovery_time_min, readiness_recovery_factor_pct, "
+                   "readiness_hrv_factor_pct) VALUES (date('now'), 1, 3849, 16, 76)")
+        db.commit()
+        a = next(a for a in run_alerts(db, config) if a["type"] == "readiness_gate")
+        assert a["data"]["driver"] == "recovery time"
+        assert a["data"]["recovery_time_h"] == 64
+
     def test_all_runs_too_hard(self, db, config):
         self._setup_weekly(db, z12_pct=10)
         alerts = run_alerts(db, config)
