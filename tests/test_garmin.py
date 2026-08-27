@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from fit.errors import FitError, GarminAuthError
 from fit.garmin import (
     connect,
     fetch_health,
@@ -38,7 +39,7 @@ class TestRequestWithRetry:
 
     def test_401_raises_runtime_error(self):
         func = MagicMock(side_effect=Exception("401 Unauthorized"))
-        with pytest.raises(RuntimeError, match="Garmin auth expired"):
+        with pytest.raises(GarminAuthError, match="session expired"):
             _request_with_retry(func, max_retries=3, description="test")
         assert func.call_count == 1  # no retries on 401
 
@@ -47,7 +48,7 @@ class TestRequestWithRetry:
         # an HTTP code — those used to slip past the retry layer and produce
         # silent zero-row syncs. Treat them the same as a 401.
         func = MagicMock(side_effect=Exception("Not authenticated"))
-        with pytest.raises(RuntimeError, match="Garmin auth expired"):
+        with pytest.raises(GarminAuthError, match="session expired"):
             _request_with_retry(func, max_retries=3, description="test")
         assert func.call_count == 1
 
@@ -55,7 +56,7 @@ class TestRequestWithRetry:
         # garminconnect raises "Authentication failed: ..." messages that
         # didn't match the old "401" / "not authenticated" substrings.
         func = MagicMock(side_effect=Exception("Authentication failed: bad creds"))
-        with pytest.raises(RuntimeError, match="Garmin auth expired"):
+        with pytest.raises(GarminAuthError, match="session expired"):
             _request_with_retry(func, max_retries=3, description="test")
         assert func.call_count == 1
 
@@ -64,7 +65,7 @@ class TestRequestWithRetry:
         # we still want to short-circuit to the re-auth hint.
         from garminconnect import GarminConnectAuthenticationError
         func = MagicMock(side_effect=GarminConnectAuthenticationError("anything"))
-        with pytest.raises(RuntimeError, match="Garmin auth expired"):
+        with pytest.raises(GarminAuthError, match="session expired"):
             _request_with_retry(func, max_retries=3, description="test")
         assert func.call_count == 1
 
@@ -114,7 +115,7 @@ class TestConnect:
         }))
 
     def test_missing_token_file_raises(self, tmp_path):
-        with pytest.raises(RuntimeError, match="tokens not found"):
+        with pytest.raises(GarminAuthError, match="No saved Garmin login"):
             connect(str(tmp_path))
 
     def test_failing_auth_probe_raises(self, tmp_path):
@@ -123,7 +124,7 @@ class TestConnect:
             api = MagicMock()
             api.connectapi.side_effect = Exception("Not authenticated")
             mock_garmin_cls.return_value = api
-            with pytest.raises(RuntimeError, match="auth probe failed"):
+            with pytest.raises(GarminAuthError, match="rejected the saved login"):
                 connect(str(tmp_path))
 
     def test_successful_probe_sets_display_name(self, tmp_path):
@@ -147,7 +148,7 @@ class TestConnect:
             api = MagicMock()
             api.connectapi.return_value = "<html>login</html>"
             mock_garmin_cls.return_value = api
-            with pytest.raises(RuntimeError, match="non-JSON after retry"):
+            with pytest.raises(FitError, match="non-JSON"):
                 connect(str(tmp_path))
             # Should have retried exactly once before giving up
             assert api.connectapi.call_count == 2
@@ -175,8 +176,74 @@ class TestConnect:
             api = MagicMock()
             api.client.load.side_effect = Exception("structurally failed")
             mock_garmin_cls.return_value = api
-            with pytest.raises(RuntimeError, match="could not be loaded"):
+            with pytest.raises(GarminAuthError, match="could not be read"):
                 connect(str(tmp_path))
+
+
+class TestConnectErrorQuality:
+    """The message a person reads when auth breaks.
+
+    Garmin answers an expired session with a bare 401 and an empty body, so
+    the SDK's own text ("Authentication failed: API Error 401 - ") carries no
+    information. Repeating it just buries the one instruction that helps.
+    """
+
+    def _write_tokens(self, token_dir):
+        import json
+        from fit.garmin import TOKEN_FILENAME
+        (token_dir / TOKEN_FILENAME).write_text(json.dumps({
+            "di_token": "a.b.c", "di_refresh_token": "refresh", "di_client_id": "client",
+        }))
+
+    def _raise_401(self, tmp_path):
+        self._write_tokens(tmp_path)
+        with patch("fit.garmin.Garmin") as mock_garmin_cls:
+            api = MagicMock()
+            api.connectapi.side_effect = Exception("Authentication failed: API Error 401 - ")
+            mock_garmin_cls.return_value = api
+            with pytest.raises(GarminAuthError) as excinfo:
+                connect(str(tmp_path))
+        return excinfo.value
+
+    def test_message_drops_the_empty_sdk_text(self, tmp_path):
+        err = self._raise_401(tmp_path)
+        assert "API Error 401" not in str(err)
+        assert "Authentication failed" not in str(err)
+
+    def test_message_is_a_single_sentence(self, tmp_path):
+        err = self._raise_401(tmp_path)
+        assert str(err).count(":") == 0
+
+    def test_next_step_is_a_separate_hint(self, tmp_path):
+        err = self._raise_401(tmp_path)
+        assert err.hint is not None
+        assert "fit auth login" in err.hint
+        assert "fit auth login" not in str(err)
+
+    def test_original_exception_is_kept_for_the_log(self, tmp_path):
+        # Suppressed on the console, but `raise ... from e` keeps it in the
+        # traceback that sync.log records.
+        err = self._raise_401(tmp_path)
+        assert "API Error 401" in str(err.__cause__)
+
+    def test_missing_tokens_names_the_path_it_looked_in(self, tmp_path):
+        with pytest.raises(GarminAuthError) as excinfo:
+            connect(str(tmp_path))
+        assert str(tmp_path) in str(excinfo.value)
+        assert "fit auth login" in excinfo.value.hint
+
+    def test_transient_failure_does_not_tell_you_to_re_authenticate(self, tmp_path):
+        # A DNS blip is not an expired login. Sending someone through a full
+        # re-login for a network hiccup is the wrong instruction.
+        self._write_tokens(tmp_path)
+        with patch("fit.garmin.Garmin") as mock_garmin_cls:
+            api = MagicMock()
+            api.connectapi.side_effect = Exception("Connection reset by peer")
+            mock_garmin_cls.return_value = api
+            with pytest.raises(FitError) as excinfo:
+                connect(str(tmp_path))
+        assert not isinstance(excinfo.value, GarminAuthError)
+        assert "try again" in excinfo.value.hint.lower()
 
 
 # ════════════════════════════════════════════════════════════════

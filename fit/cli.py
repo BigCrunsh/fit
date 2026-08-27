@@ -6,10 +6,37 @@ from pathlib import Path
 import click
 from rich.console import Console
 
-from fit.logging_config import setup_logging
+from fit.errors import FitError
+from fit.logging_config import ALREADY_SHOWN, log_path, setup_logging
 
 console = Console()
 logger = logging.getLogger(__name__)
+
+
+def _fail(exc: Exception, *, doing: str) -> None:
+    """Report a failed command and exit 1.
+
+    Two audiences, two treatments. A `FitError` is something we anticipated,
+    so its own sentence is the whole message — prefixing it with "X failed:"
+    only stacks context the way `Sync failed: Garmin auth probe failed:
+    Authentication failed: API Error 401 - .` did, pushing the one instruction
+    that helps to the far end of the line. Anything else is a bug, so we name
+    the operation and point at the log rather than dumping stack frames from
+    libraries the user never called.
+
+    Args:
+        exc: The exception that ended the command.
+        doing: What was being attempted, e.g. "Sync".
+    """
+    if isinstance(exc, FitError):
+        console.print(f"[bold red]✗[/bold red] {exc}")
+        if exc.hint:
+            console.print(f"  [cyan]→[/cyan] {exc.hint}")
+    else:
+        console.print(f"[bold red]✗ {doing} failed:[/bold red] {exc}")
+        console.print(f"  [cyan]→[/cyan] Full traceback in {log_path()} (or re-run with -v).")
+    logger.error("%s failed: %s", doing, exc, exc_info=True, extra={ALREADY_SHOWN: True})
+    raise SystemExit(1)
 
 # Repo root: parent of fit/ package
 REPO_ROOT = Path(__file__).parent.parent
@@ -43,7 +70,27 @@ def _sparkline(values: list[float]) -> str:
     return "".join(_SPARKLINE_BARS[int((v - vmin) / span * last_bar)] for v in values)
 
 
-@click.group()
+class FitGroup(click.Group):
+    """Renders any escaped `FitError` as a clean message instead of a traceback.
+
+    Commands guard their own work, but the setup before that guard — loading
+    config, opening the database — is outside it. A missing config value used
+    to escape uncaught and print a raw traceback: the same bad experience, one
+    layer up. Catching here means every command gets the treatment, including
+    ones added later, and no anticipated failure can leak a stack trace.
+
+    Deliberately narrow: only `FitError`. A genuine bug still propagates, so
+    it stays visible rather than being dressed up as a handled failure.
+    """
+
+    def invoke(self, ctx: click.Context):
+        try:
+            return super().invoke(ctx)
+        except FitError as e:
+            _fail(e, doing=(ctx.invoked_subcommand or "Command").capitalize())
+
+
+@click.group(cls=FitGroup)
 @click.version_option(version="0.1.0", prog_name="fit")
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug logging to console.")
 def main(verbose: bool):
@@ -85,9 +132,7 @@ def sync(days: int, full: bool, splits: bool, backfill: bool):
             _backfill_splits(conn, config)        # bulk-process ALL activities missing splits
         console.print("[bold green]Done.[/bold green]")
     except Exception as e:
-        console.print(f"[bold red]Sync failed:[/bold red] {e}")
-        logger.exception("Sync failed")
-        raise SystemExit(1)
+        _fail(e, doing="Sync")
     finally:
         conn.close()
 
@@ -470,9 +515,7 @@ def splits(backfill: bool, activity_id: str):
             console.print("Use `fit sync --splits --backfill` to process all missing, "
                           "or `--activity-id` for one activity.")
     except Exception as e:
-        console.print(f"[bold red]Splits failed:[/bold red] {e}")
-        logger.exception("Splits failed")
-        raise SystemExit(1)
+        _fail(e, doing="Splits")
     finally:
         conn.close()
 
