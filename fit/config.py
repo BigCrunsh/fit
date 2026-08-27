@@ -8,6 +8,8 @@ from typing import Any
 
 import yaml
 
+from fit.errors import ConfigError
+
 logger = logging.getLogger(__name__)
 
 _PLACEHOLDER_RE = re.compile(r"\$\{([^}]+)\}")
@@ -27,7 +29,7 @@ def _deep_merge(base: dict, override: dict) -> dict:
 def _resolve_placeholders(obj: Any, path: str = "") -> Any:
     """Walk a nested dict/list and resolve ${VAR} placeholders from env vars.
 
-    Supports defaults: ${VAR:-default}. Raises ValueError for unresolved
+    Supports defaults: ${VAR:-default}. Raises ConfigError for unresolved
     required placeholders. Empty string values (from ${VAR:-}) are kept as-is.
     """
     if isinstance(obj, str):
@@ -38,8 +40,10 @@ def _resolve_placeholders(obj: Any, path: str = "") -> Any:
                 return os.environ.get(var_name, default)
             value = os.environ.get(expr)
             if value is None:
-                raise ValueError(f"Config placeholder ${{{expr}}} at '{path}' has no value. "
-                                 f"Set it in config.local.yaml or as environment variable {expr}.")
+                raise ConfigError(
+                    f"Config placeholder ${{{expr}}} at '{path}' has no value",
+                    hint=f"Set it in config.local.yaml, or export {expr}.",
+                )
             return value
 
         resolved = _PLACEHOLDER_RE.sub(_replace, obj)

@@ -7,9 +7,17 @@ from pathlib import Path
 
 from garminconnect import Garmin
 
+from fit.errors import FitError, GarminAuthError
+
 logger = logging.getLogger(__name__)
 
-_REAUTH_HINT = "Run `fit auth login` to re-authenticate."
+# Garmin answers an expired session with a bare 401 and an empty body, so the
+# SDK's own text ("Authentication failed: API Error 401 - ") says nothing a
+# person can use. These are the sentences we say instead; the SDK exception is
+# chained onto the raise, so the real detail still reaches sync.log.
+_REAUTH_HINT = "Run `fit auth login` to sign in again."
+_RETRY_HINT = "Usually temporary — try again in a few minutes."
+_SESSION_EXPIRED = "Garmin rejected the saved login — the session expired and could not be refreshed."
 TOKEN_FILENAME = "garmin_tokens.json"
 
 
@@ -50,7 +58,7 @@ def _request_with_retry(func, max_retries=3, description="API call"):
                 time.sleep(wait)
                 continue
             elif _is_auth_error(e):
-                raise RuntimeError(f"Garmin auth expired. {_REAUTH_HINT}") from e
+                raise GarminAuthError(_SESSION_EXPIRED, hint=_REAUTH_HINT) from e
             elif any(code in err_str for code in ("500", "502", "503", "504")):
                 wait = 2 ** attempt
                 logger.warning("%s server error (attempt %d/%d). Retrying in %ds...",
@@ -81,20 +89,27 @@ def connect(token_dir: str) -> Garmin:
         Authenticated Garmin API client.
 
     Raises:
-        RuntimeError: If tokens are missing, malformed, or rejected by the
-            Garmin API, with a hint to run `fit auth login`. We fail loud here
-            rather than returning a client that produces silent zero-row syncs.
+        GarminAuthError: If tokens are missing, malformed, or rejected by
+            Garmin — the fix is to sign in again.
+        FitError: If Garmin is unreachable or answers with something other
+            than JSON — the fix is to wait and retry.
+
+        Either way we fail loud rather than returning a client that produces
+        silent zero-row syncs.
     """
     token_file = _token_file(token_dir)
     if not token_file.exists():
-        raise RuntimeError(f"Garmin tokens not found at {token_file}. {_REAUTH_HINT}")
+        raise GarminAuthError(
+            f"No saved Garmin login found at {token_file}", hint="Run `fit auth login` to sign in."
+        )
 
     api = Garmin()
     try:
         api.client.load(str(token_file))
     except Exception as e:
-        raise RuntimeError(
-            f"Garmin tokens at {token_file} could not be loaded: {e}. {_REAUTH_HINT}"
+        raise GarminAuthError(
+            f"The saved Garmin login at {token_file} could not be read",
+            hint="Run `fit auth login` to re-create it.",
         ) from e
 
     # Auth probe: fetch profile. A failure here means the saved tokens are
@@ -112,22 +127,24 @@ def connect(token_dir: str) -> Garmin:
             profile = api.connectapi("/userprofile-service/socialProfile")
         except Exception as e:
             if _is_auth_error(e):
-                raise RuntimeError(f"Garmin auth probe failed: {e}. {_REAUTH_HINT}") from e
-            raise RuntimeError(
-                f"Garmin auth probe error (likely transient): {e}. "
-                f"If this persists, run `fit auth login`."
-            ) from e
+                raise GarminAuthError(_SESSION_EXPIRED, hint=_REAUTH_HINT) from e
+            raise FitError(f"Could not reach Garmin ({e})", hint=_RETRY_HINT) from e
         if isinstance(profile, dict):
             break
         last_non_dict = profile
         if attempt == 0:
-            logger.warning("Garmin auth probe returned non-dict (%r); retrying once", profile)
+            logger.warning("Garmin returned a non-JSON response; retrying once")
             time.sleep(2)
     if not isinstance(profile, dict):
-        raise RuntimeError(
-            f"Garmin auth probe returned non-JSON after retry: {last_non_dict!r}. "
-            f"This usually means Garmin returned a Cloudflare/maintenance page. "
-            f"Wait a few minutes and retry; if it persists, run `fit auth login`."
+        # The body identifies which wall we hit — a Cloudflare challenge, a
+        # maintenance page, a redirect to the login form. Truncated and sent
+        # to the log rather than the console: it is diagnostic detail, not
+        # something the person running `fit sync` can act on.
+        logger.debug("Garmin auth probe body after retry: %.500r", last_non_dict)
+        raise FitError(
+            "Garmin returned a non-JSON response twice — usually a Cloudflare "
+            "challenge or a maintenance window, not a login problem",
+            hint=f"{_RETRY_HINT} If it persists, run `fit auth login`.",
         )
     api.display_name = profile.get("displayName")
     api.full_name = profile.get("fullName")
