@@ -351,6 +351,12 @@ def get_active_calibration(conn: sqlite3.Connection, metric: str,
 # surfaced at the confirm prompt). Only three things vary: family (→ min_samples
 # 1 vs 3), MaxHR's longer 365d window (max HR is hit ~yearly), and the unit of
 # `differs` (reusing _AGREE_TOLERANCE). See standardize-calibration-anchors.
+# Distance range a race must fall in to yield a usable Daniels VDOT: below 5 km the
+# effort is too anaerobic for the formula, above 25 km fuelling/glycogen dominate.
+# Matches get_fitness_anchors' defaults (fit/fitness.py) — the effort channel's gate.
+RACE_VDOT_MIN_KM = 5.0
+RACE_VDOT_MAX_KM = 25.0
+
 AGGREGATION_POLICY = {
     "vdot":   {"family": "max",    "window_days": 180, "min_samples": 1, "differs": 1.0},
     "max_hr": {"family": "max",    "window_days": 365, "min_samples": 1, "differs": 2.0},
@@ -840,42 +846,69 @@ def backfill_race_vdot(conn: sqlite3.Connection) -> int:
     aggregation policy's windowed max and the calibration-history chart WITHOUT
     becoming the active value — under the human-confirmed model the athlete
     confirms the anchor via `fit calibrate vdot <value>` (or the sync prompt).
-    Official `result_time` is preferred over `garmin_time`. Idempotent on
-    source_activity_id. Returns the number of rows added.
+
+    **A time is only ever divided by the distance that time was run over.** The
+    official `result_time` is the RACE's time, so it pairs with the RACE's
+    distance; `garmin_time` is the whole ACTIVITY's elapsed time, so it pairs
+    with the activity's distance. Mixing the two invents performances: a
+    10,000 m track race sitting inside an 11.21 km activity (warm-up + race +
+    cool-down) read as "11.21 km in 48:13" = 4:18/km → VDOT 48.1 instead of the
+    true 41.8 — and since the VDOT policy is a 180-day MAX, that phantom
+    outranked every honest race and became the standing suggestion. The 5–25 km
+    range is judged on the same chosen distance, so a 3,000 m race no longer
+    qualifies merely because the activity containing it was 6 km.
+
+    Re-running REPAIRS a row whose stored value no longer matches what its
+    inputs imply (rows written before this fix hold the phantom); idempotent
+    otherwise, keyed on source_activity_id. Returns the number of rows written.
     """
     from fit.fitness import compute_vdot_from_race
 
     races = conn.execute("""
-        SELECT a.id, a.date, a.name, a.distance_km,
-               COALESCE(rc.result_time, rc.garmin_time) AS race_time
+        SELECT a.id, a.date, a.name,
+               a.distance_km AS activity_km,
+               rc.distance_km AS official_km,
+               rc.result_time, rc.garmin_time
         FROM race_calendar rc JOIN activities a ON a.id = rc.activity_id
-        WHERE rc.status = 'completed' AND a.distance_km >= 5 AND a.distance_km <= 25
+        WHERE rc.status = 'completed'
         ORDER BY a.date ASC
     """).fetchall()
 
-    added = 0
+    written = 0
     for r in races:
-        secs = _parse_hms(r["race_time"])
-        if not secs:
+        # Pick the time first, then the distance that time was run over.
+        if r["result_time"]:
+            secs = _parse_hms(r["result_time"])
+            km = r["official_km"] or r["activity_km"]   # official; fall back if never recorded
+        else:
+            secs = _parse_hms(r["garmin_time"])
+            km = r["activity_km"]                       # Garmin's clock is the activity's own
+        if not secs or not km:
             continue
-        vdot = compute_vdot_from_race(r["distance_km"], secs)
+        if km < RACE_VDOT_MIN_KM or km > RACE_VDOT_MAX_KM:
+            continue
+        vdot = compute_vdot_from_race(km, secs)
         if vdot is None:
             continue
-        exists = conn.execute(
-            "SELECT 1 FROM calibration WHERE metric = 'vdot' AND method = 'race_observation' "
+        note = f"Race estimate from {r['name']} ({km:.1f}km)"
+        existing = conn.execute(
+            "SELECT id, value FROM calibration WHERE metric = 'vdot' AND method = 'race_observation' "
             "AND source_activity_id = ? LIMIT 1", (r["id"],),
         ).fetchone()
-        if exists:
+        if existing:
+            if round(existing["value"], 1) != vdot:      # repair a stale/miscomputed reading
+                conn.execute("UPDATE calibration SET value = ?, notes = ? WHERE id = ?",
+                             (vdot, note, existing["id"]))
+                written += 1
             continue
         conn.execute("""
             INSERT INTO calibration (metric, value, method, confidence, date,
                                      source_activity_id, notes, active, flags)
             VALUES ('vdot', ?, 'race_observation', 'low', ?, ?, ?, 0, '[]')
-        """, (round(vdot, 1), r["date"], r["id"],
-              f"Race estimate from {r['name']} ({r['distance_km']:.1f}km)"))
-        added += 1
+        """, (vdot, r["date"], r["id"], note))
+        written += 1
     conn.commit()
-    return added
+    return written
 
 
 def backfill_effort_vdot(conn: sqlite3.Connection, days: int = 720) -> int:

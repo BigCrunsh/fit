@@ -205,3 +205,105 @@ class TestNoPolicyFallback:
         a = get_calibration_anchor(db, "weight")
         assert a.value == 75.4
         assert a.suggestion is None
+
+
+class TestRaceVdotDistanceTimePairing:
+    """A race time must be divided by the distance that time was actually run over.
+
+    Real failure (2026-08-26): a 10,000 m track race recorded inside an 11.21 km
+    activity (warm-up + race + cool-down, 56.4 min total). `backfill_race_vdot`
+    took the distance from the ACTIVITY (11.21 km) and the time from the RACE
+    (official 48:13), inventing a 4:18/km performance → VDOT 48.1. Nobody ran
+    that. Because the VDOT anchor policy is a 180-day MAX, the phantom
+    immediately became the standing suggestion and outranked every honest race.
+    The correct reading is 10.0 km in 48:13 → 41.8.
+    """
+
+    def _seed(self, db, aid, days_ago, act_km, act_min, race_km,
+              result_time=None, garmin_time=None):
+        d = (date.today() - timedelta(days=days_ago)).isoformat()
+        db.execute("INSERT INTO activities (id, date, type, name, distance_km, duration_min) "
+                   "VALUES (?, ?, 'running', 'Track night', ?, ?)", (aid, d, act_km, act_min))
+        db.execute("INSERT INTO race_calendar (date, name, distance, distance_km, status, "
+                   "result_time, garmin_time, activity_id) "
+                   "VALUES (?, 'Race', ?, ?, 'completed', ?, ?, ?)",
+                   (d, f"{race_km:g}km", race_km, result_time, garmin_time, aid))
+        db.commit()
+        return d
+
+    @staticmethod
+    def _vdot(db):
+        row = db.execute("SELECT value FROM calibration WHERE metric='vdot'").fetchone()
+        return row["value"] if row else None
+
+    def test_official_time_pairs_with_official_distance(self, db):
+        """The regression: warm-up distance must not be credited to the race time."""
+        from fit.calibration import backfill_race_vdot
+        from fit.fitness import compute_vdot_from_race
+        self._seed(db, "trk", 19, act_km=11.21, act_min=56.4, race_km=10.0,
+                   result_time="0:48:13", garmin_time="0:56:24")
+        assert backfill_race_vdot(db) == 1
+        assert self._vdot(db) == compute_vdot_from_race(10.0, 48 * 60 + 13)      # 41.8 — real
+        assert self._vdot(db) != compute_vdot_from_race(11.21, 48 * 60 + 13)     # 48.1 — phantom
+
+    def test_garmin_time_pairs_with_activity_distance(self, db):
+        """`garmin_time` is the ACTIVITY's elapsed time, so it belongs with the
+        activity's distance — swapping in the official distance would invent a
+        performance in the other direction (too slow)."""
+        from fit.calibration import backfill_race_vdot
+        from fit.fitness import compute_vdot_from_race
+        self._seed(db, "nochip", 25, act_km=11.21, act_min=56.4, race_km=10.0,
+                   result_time=None, garmin_time="0:56:24")
+        assert backfill_race_vdot(db) == 1
+        assert self._vdot(db) == compute_vdot_from_race(11.21, 56 * 60 + 24)
+
+    def test_short_race_inside_a_longer_activity_is_out_of_range(self, db):
+        """A 3,000 m race is below the 5 km floor even when the activity that
+        contains it (with warm-up) is 6 km. Judging range on the activity let a
+        1,500 m/3,000 m track effort through as if it were a 6 km race."""
+        from fit.calibration import backfill_race_vdot
+        self._seed(db, "t3k", 30, act_km=6.0, act_min=33.0, race_km=3.0,
+                   result_time="0:12:52")
+        assert backfill_race_vdot(db) == 0
+        assert self._vdot(db) is None
+
+    def test_corrects_a_previously_miscomputed_row_in_place(self, db):
+        """Idempotency must not freeze a wrong value: rows written before this fix
+        hold the phantom VDOT, and skipping on source_activity_id would keep it
+        forever. Re-running repairs the value without duplicating the row."""
+        from fit.calibration import backfill_race_vdot
+        from fit.fitness import compute_vdot_from_race
+        d = self._seed(db, "trk", 19, act_km=11.21, act_min=56.4, race_km=10.0,
+                       result_time="0:48:13", garmin_time="0:56:24")
+        db.execute("INSERT INTO calibration (metric, value, method, confidence, date, "
+                   "source_activity_id, notes, active, flags) "
+                   "VALUES ('vdot', 48.1, 'race_observation', 'low', ?, 'trk', 'stale', 0, '[]')", (d,))
+        db.commit()
+        backfill_race_vdot(db)
+        rows = db.execute("SELECT value FROM calibration WHERE metric='vdot'").fetchall()
+        assert len(rows) == 1                                                    # repaired, not duplicated
+        assert rows[0]["value"] == compute_vdot_from_race(10.0, 48 * 60 + 13)
+
+    def test_missing_official_distance_falls_back_to_activity_distance(self, db):
+        """A hand-entered race with a time but no distance still yields the best
+        available reading rather than being dropped."""
+        from fit.calibration import backfill_race_vdot
+        from fit.fitness import compute_vdot_from_race
+        d = (date.today() - timedelta(days=40)).isoformat()
+        db.execute("INSERT INTO activities (id, date, type, name, distance_km, duration_min) "
+                   "VALUES ('nod', ?, 'running', 'Race', 10.0, 46.6)", (d,))
+        db.execute("INSERT INTO race_calendar (date, name, distance, distance_km, status, "
+                   "result_time, activity_id) VALUES (?, 'Race', '10km', NULL, 'completed', "
+                   "'0:46:35', 'nod')", (d,))
+        db.commit()
+        assert backfill_race_vdot(db) == 1
+        assert self._vdot(db) == compute_vdot_from_race(10.0, 46 * 60 + 35)
+
+    def test_matching_distances_are_unchanged(self, db):
+        """The common case — the activity IS the race — must read exactly as before."""
+        from fit.calibration import backfill_race_vdot
+        from fit.fitness import compute_vdot_from_race
+        self._seed(db, "road", 1, act_km=10.0, act_min=46.6, race_km=10.0,
+                   result_time="0:46:35", garmin_time="0:46:36")
+        assert backfill_race_vdot(db) == 1
+        assert self._vdot(db) == compute_vdot_from_race(10.0, 46 * 60 + 35)
