@@ -425,6 +425,7 @@ def _ctx_forecast(conn) -> list[str]:
     try:
         from fit.marathon.predict import (
             forecast as run_forecast, required_chronic_for_goal, _current_c, forecast_context,
+            extrapolation_assessment,
         )
     except ImportError:
         return []
@@ -451,15 +452,42 @@ def _ctx_forecast(conn) -> list[str]:
         x = int(round(x))
         return f"{x // 3600}:{(x % 3600) // 60:02d}:{x % 60:02d}"
 
+    def _mins(secs):
+        return f"{secs / 60:.0f} min" if secs >= 30 else "<1 min"
+
     ex = fc["extrapolation"]
     s = [f"Marathon forecast (durability model, maximal effort): {_hms(fc['median'])} "
          f"[90% {_hms(fc['lo'])}–{_hms(fc['hi'])}]"]
     if goal_secs and fc.get("p_ceiling") is not None:
         s.append(f"  P(goal {_hms(goal_secs)}) = {fc['p_ceiling']:.0%} — fitness-SUFFICIENCY ceiling, "
                  f"NOT race-day odds (excludes weather/pacing/fuelling)")
-    if ds.d_max < ds.goal:
-        s.append(f"  UNVALIDATED: longest effort {ds.d_max:.0f} km vs {ds.goal:.0f} km goal — "
-                 f"treat the interval as a floor; a 30 km+ run is what validates it")
+
+    # Reaching past the longest observed effort, reported as facts + a price. The old
+    # binary "UNVALIDATED (d_max < goal)" label was permanently true for a marathon and
+    # came with a hard-coded "do a 30 km+ run" remedy — which read as nonsense to an
+    # athlete whose longest run was already 35 km. See extrapolation_assessment.
+    from fit.goals import days_to_target_race
+    a = extrapolation_assessment(fc, days_to_race=days_to_target_race(conn))
+    if a["extrapolating"]:
+        s.append(f"  EXTRAPOLATION: longest effort {a['d_max']:.1f} km"
+                 + (f" ({a['d_max_date']})" if a["d_max_date"] else "")
+                 + f" → {a['goal']:.1f} km goal — a {a['reach_pct']:.0f}% reach beyond the observed range")
+        s.append(f"    price: the wall penalty adds ~{_mins(a['wall_cost_median_sec'])} at the median and "
+                 f"~{_mins(a['wall_cost_hi_sec'])} at the slow end. It is ONE-SIDED (can only add time), "
+                 f"so the fast end of the interval is a FLOOR, not a best case")
+        s.append(f"    durability evidence: {a['evidence']}"
+                 + (" [NO qualifying long-run evidence — generic population prior]"
+                    if a["evidence_defaulted"] else ""))
+        if a["covered"]:
+            s.append(f"    long-run range COVERED ({a['d_max']:.1f} km ≥ {a['coverage_km']:.1f} km) — "
+                     f"extrapolating from here is the NORMAL state of marathon training, not a finding; "
+                     f"do NOT prescribe a longer run to 'validate' the model")
+        elif a["action"]:
+            s.append(f"    long-run range SHORT ({a['d_max']:.1f} km < {a['coverage_km']:.1f} km) — a long run "
+                     f"of {a['action']['target_km']:.0f} km+ would materially narrow this interval")
+        else:
+            s.append(f"    long-run range SHORT ({a['d_max']:.1f} km < {a['coverage_km']:.1f} km) but the race is "
+                     f"too close to add one — report the wider interval; do NOT prescribe added long-run volume")
     if goal_secs:
         req = required_chronic_for_goal(post, ds, goal_seconds=goal_secs,
                                         extrapolation_scale=ex["scale"], nu=ex["nu"])

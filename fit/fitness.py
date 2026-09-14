@@ -7,7 +7,7 @@ from datetime import date
 
 import numpy as np
 
-from fit.analysis import RUNNING_TYPES_SQL, RIEGEL_EXPONENT
+from fit.analysis import RUNNING_TYPES_SQL, RIEGEL_EXPONENT, LONG_RUN_COVERAGE_FRAC
 
 logger = logging.getLogger(__name__)
 
@@ -362,7 +362,7 @@ def _compute_resilience(conn: sqlite3.Connection) -> dict:
 
     # Confidence: enough recent long runs near the goal distance → high; thin/stale/short → low.
     recent = best_age <= RESILIENCE_HALF_LIFE_DAYS
-    covered = (goal_long is None) or (longest >= 0.8 * goal_long)
+    covered = (goal_long is None) or (longest >= LONG_RUN_COVERAGE_FRAC * goal_long)
     if n_eff >= 4 and recent and covered:
         level, reason = "high", "several recent long runs near goal distance"
     elif n_eff < 1.5 or stale_hl > 2.5 or (goal_long and longest < 0.5 * goal_long):

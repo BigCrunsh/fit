@@ -784,6 +784,17 @@ def compute_daniels_paces(vo2max: float | None, lthr: int | None = None) -> dict
 # in several places (D15).
 RIEGEL_EXPONENT = 1.06
 
+# Fraction of the goal distance a longest run must reach for the long-run range to
+# count as COVERED. Training peaks well below race distance by design — 0.8 puts the
+# marathon bar at ~33.8 km, the standard 32–35 km peak long run — so "covered" means
+# "another long run would no longer materially improve the model", NOT "validated at
+# goal distance" (only racing it does that). Single source for the resilience
+# dimension's confidence rule (_compute_resilience) and the forecast's
+# extrapolation assessment (marathon/predict.extrapolation_assessment), which must
+# not drift apart: one saying "covered" while the other nags for a longer run is
+# exactly the contradiction this constant exists to prevent.
+LONG_RUN_COVERAGE_FRAC = 0.8
+
 
 def predict_race_time(conn: sqlite3.Connection | None = None,
                       races: list[dict] | None = None,

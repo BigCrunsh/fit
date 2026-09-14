@@ -360,7 +360,86 @@ def forecast(conn, *, avg_hr=None, goal_seconds=None, seed=0, posterior=None):
     res["goal"] = ds.goal
     res["d_max"] = ds.d_max
     res["gap"] = gap
+
+    # What the reach past d_max actually COSTS, in seconds. Re-run the same draws with
+    # gap=0 — the one difference is the wall penalty — so the athlete can be told the
+    # price of extrapolating instead of a bare "unvalidated" label. The penalty is
+    # one-sided (HalfStudentT ≥ 0), so both numbers are ≥ 0 and the interval's fast end
+    # is a floor, not a best case.
+    if gap > 0:
+        flat = predict(idata, x=0.0, c=c, h=h, h_draws=h_draws, gap=0.0,
+                       extrapolation_scale=prior["scale"], nu=prior["nu"], seed=seed)
+        res["wall_cost_median_sec"] = max(0.0, res["median"] - flat["median"])
+        res["wall_cost_hi_sec"] = max(0.0, res["hi"] - flat["hi"])
+    else:
+        res["wall_cost_median_sec"] = res["wall_cost_hi_sec"] = 0.0
+
+    longest = ds.efforts.loc[ds.efforts["distance_km"].idxmax()]
+    d = longest["date"]
+    res["d_max_date"] = d.date().isoformat() if hasattr(d, "date") else str(d)[:10]
     return res
+
+
+# A long run only helps the model if it can still be absorbed and tapered from. Inside
+# three weeks of the race, adding one costs more than the extrapolation gap it closes —
+# so the assessment reports the gap but prescribes nothing.
+MIN_DAYS_TO_EXTEND_LONG_RUN = 21
+
+
+def extrapolation_assessment(fc: dict, days_to_race: int | None = None) -> dict:
+    """The facts about reaching past the longest effort the model has seen.
+
+    This replaces a binary `unvalidated = d_max < goal` flag, which was degenerate
+    for a marathon goal: nobody runs 42 km in training, so it was permanently true
+    and carried no information. Worse, it was paired with a hard-coded "do a 30 km+
+    run" remedy, which fires as advice even for an athlete whose longest run is
+    already 35 km — the contradiction that prompted this rewrite.
+
+    Three quantities govern the reach, and only one is actionable:
+
+    - **reach** — how far past ``d_max`` the goal sits (the penalty's lever arm,
+      ``log(goal/d_max)``). Reducible only by running further.
+    - **price** — what the wall penalty adds, in seconds, at the median and at the
+      slow end. Computed by `forecast`, not guessed.
+    - **evidence** — what set the wall scale: demonstrated long-run pace-holding, or
+      the generic population prior when no qualifying long run exists (``defaulted``).
+
+    An action is proposed only when the long-run range is genuinely short (below
+    `LONG_RUN_COVERAGE_FRAC` of the goal — the same rule the resilience dimension
+    uses, so the two can't contradict each other) AND there is still time to run one.
+    Otherwise ``action`` is None and ``action_blocked`` says why.
+    """
+    from fit.analysis import LONG_RUN_COVERAGE_FRAC
+
+    d_max, goal = float(fc["d_max"]), float(fc["goal"])
+    prior = fc.get("extrapolation") or {}
+    extrapolating = d_max < goal
+    coverage_km = LONG_RUN_COVERAGE_FRAC * goal
+    covered = d_max >= coverage_km
+
+    action, blocked = None, None
+    if not covered:
+        if days_to_race is not None and days_to_race < MIN_DAYS_TO_EXTEND_LONG_RUN:
+            blocked = "too-close-to-race"
+        else:
+            action = {"kind": "extend_long_run", "target_km": round(coverage_km, 1),
+                      "from_km": round(d_max, 1)}
+
+    return {
+        "d_max": round(d_max, 1),
+        "d_max_date": fc.get("d_max_date"),
+        "goal": round(goal, 1),
+        "extrapolating": extrapolating,
+        "reach_pct": round((goal / d_max - 1) * 100, 1) if extrapolating else 0.0,
+        "coverage_km": round(coverage_km, 1),
+        "covered": covered,
+        "wall_cost_median_sec": fc.get("wall_cost_median_sec", 0.0),
+        "wall_cost_hi_sec": fc.get("wall_cost_hi_sec", 0.0),
+        "evidence": prior.get("reason"),
+        "evidence_defaulted": bool(prior.get("defaulted")),
+        "action": action,
+        "action_blocked": blocked,
+    }
 
 
 def _current_c(conn):

@@ -21,9 +21,14 @@ over what it contains; do not assume you have database or tool access, and do no
 It is median + 90% interval + P(goal). The interval is estimation uncertainty (mean-curve posterior
 + extrapolation wall + effort-assumption (beta, T0) uncertainty), NOT race-day spread. Read P(goal)
 as a fitness-SUFFICIENCY ceiling — "is current fitness enough under a maximal, well-executed effort"
-— NOT race-day odds; never tell the athlete "you have an X% chance on the day". If the forecast is
-UNVALIDATED (longest effort below goal distance), treat the interval as a floor and make the headline
-action a 30 km+ long run to validate it. The model's lever is chronic load (durability beta_d is
+— NOT race-day odds; never tell the athlete "you have an X% chance on the day". The EXTRAPOLATION
+block, when present, gives the reach past their longest effort, what it costs in minutes, and
+whether the long-run range is COVERED or SHORT. The wall penalty is one-sided, so the interval's
+fast end is a floor — never quote it as a best case. Prescribe a longer run ONLY when that block
+says SHORT and offers a target distance; quote that distance, never one of your own. When it says
+COVERED, extrapolating from a long run below race distance is the normal state of marathon training
+— it is not a finding, not a caveat worth a headline, and not a reason to add volume. The model's
+lever is chronic load (durability beta_d is
 normal); coach volume/consistency toward the required-CTL figure, not "fade resistance". A
 prior-dominated coefficient is not yet measured from their data — don't over-claim it.
 

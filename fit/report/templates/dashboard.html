@@ -156,7 +156,7 @@
           {% elif race_readiness.verdict == 'at_risk' %}<strong style="color:var(--danger)">at risk</strong>{% endif %}
         </span>
         {% endif %}
-        {% if marathon_forecast.unvalidated %}<span class="badge badge-yellow" title="longest effort {{ marathon_forecast.d_max }} km vs {{ marathon_forecast.goal_km }} km goal">⚠ unvalidated past {{ marathon_forecast.d_max }} km</span>{% endif %}
+        {% if marathon_forecast.extrapolating %}<span class="badge {{ 'badge-gray' if marathon_forecast.covered else 'badge-yellow' }}" title="Reaching {{ marathon_forecast.reach_pct }}% past your longest effort ({{ marathon_forecast.d_max }} km) to {{ marathon_forecast.goal_km }} km. The one-sided wall penalty adds ~{{ marathon_forecast.wall_cost_median_min }} min at the median and ~{{ marathon_forecast.wall_cost_hi_min }} min at the slow end, so the fast end of the interval is a floor.{% if not marathon_forecast.covered %} Long-run range is short of {{ marathon_forecast.coverage_km }} km.{% endif %}">{{ '↗' if marathon_forecast.covered else '⚠' }} {{ marathon_forecast.reach_pct }}% past {{ marathon_forecast.d_max }} km</span>{% endif %}
       </div>
       <div class="race-hero-subtitle" style="margin-top:5px;color:var(--text-dim)">Durability β<sub>d</sub>, race-equivalents and the long-run extrapolation → <strong>Profile</strong> tab.</div>
       {% else %}

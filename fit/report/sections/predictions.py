@@ -48,6 +48,7 @@ def _marathon_forecast(conn, maximal_hr=None):
     try:
         from fit.marathon.predict import (
             forecast as run_forecast, derived_metrics, influence, _current_c, forecast_context,
+            extrapolation_assessment,
         )
     except ImportError:
         return _anchor("durability model extra not installed")
@@ -62,6 +63,8 @@ def _marathon_forecast(conn, maximal_hr=None):
         if not fc:
             return _anchor("forecast could not be produced")
         ex = fc["extrapolation"]
+        from fit.goals import days_to_target_race
+        xa = extrapolation_assessment(fc, days_to_race=days_to_target_race(conn))
         c = _current_c(conn)
         dm = derived_metrics(idata, ds, c=c, extrapolation_scale=ex["scale"], nu=ex["nu"])
         import math
@@ -97,7 +100,14 @@ def _marathon_forecast(conn, maximal_hr=None):
                                     f"(fitted from {n_maximal} maximal race{'' if n_maximal == 1 else 's'})"
                                     if beta_fitted else f"β {sched['beta']:.1f} (population prior)"),
             "extrap_reason": ex["reason"], "extrap_defaulted": bool(ex["defaulted"]),
-            "unvalidated": bool(ds.d_max < ds.goal), "d_max": round(ds.d_max, 1),
+            # Reaching past d_max is reported as a measured reach + price, not a binary
+            # "unvalidated" warning that a marathon build can never clear (see
+            # extrapolation_assessment). Only a SHORT long-run range warrants caution.
+            "extrapolating": xa["extrapolating"], "covered": xa["covered"],
+            "reach_pct": xa["reach_pct"], "coverage_km": xa["coverage_km"],
+            "wall_cost_median_min": round(xa["wall_cost_median_sec"] / 60),
+            "wall_cost_hi_min": round(xa["wall_cost_hi_sec"] / 60),
+            "d_max": round(ds.d_max, 1),
             "dist_min": round(float(ds.efforts["distance_km"].min()), 1),  # distance-colour legend domain
 
             "equiv": [{"label": r["label"], "time": _hms(r["median"])} for r in dm["race_equivalency"]],
