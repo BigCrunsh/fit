@@ -447,7 +447,10 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
         from fit.calibration import evaluate_suggestions
         pending = evaluate_suggestions(conn)
         if pending:
-            counts["calibration_suggestions"] = len(pending)
+            # The LIST, not a count — the CLI renders each metric/value/next step.
+            # A bare count gave the console nothing to show, so the summary dropped
+            # it and the whole accept/reject governance was visible only in the log.
+            counts["calibration_suggestions"] = pending
             for p in pending:
                 logger.info("Calibration suggestion: %s %s (active %s) — review with "
                             "`fit calibrate %s`", p["metric"], p["value"], p["active"], p["metric"])
