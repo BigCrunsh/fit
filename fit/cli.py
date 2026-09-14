@@ -128,6 +128,13 @@ def sync(days: int, full: bool, splits: bool, backfill: bool):
             console.print(f"  [green]✓[/green] Synced {counts['planned_workouts']} planned workouts")
         for w in counts.get("warnings", []):
             console.print(f"  [yellow]⚠ {w}[/yellow]")
+        # Anchors never change silently: a policy suggestion that differs from the
+        # confirmed value needs a human accept/reject. `fit status` and the dashboard
+        # showed it; sync — the command actually run daily — only logged it, so a
+        # VDOT anchor could sit years behind the race evidence unnoticed.
+        for p in counts.get("calibration_suggestions") or []:
+            console.print(f"  [yellow]○[/yellow] {p['metric']} suggestion: [bold]{p['value']:g}[/bold] "
+                          f"(active {p['active']:g}) — review with [bold]fit calibrate {p['metric']}[/bold]")
         if backfill:
             _backfill_splits(conn, config)        # bulk-process ALL activities missing splits
         console.print("[bold green]Done.[/bold green]")
