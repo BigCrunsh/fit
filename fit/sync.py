@@ -370,6 +370,21 @@ def run_sync(conn: sqlite3.Connection, config: dict, days: int = 7, full: bool =
     # 7. Match activities to race calendar
     _match_race_calendar(conn)
 
+    # 7b. Roll training-phase status forward to today. Phases turn over on calendar
+    #     dates, not on anything sync ingests — but nothing else in the daily path
+    #     advanced them, so `advance_phase_status` only ran on `fit recompute`. A plan
+    #     stayed on "Phase 2 — Volume" for 45 days past its 2026-07-31 end, and every
+    #     phase-driven comparison (zone targets, the weekly-km band, the coaching
+    #     phase line, `fit status`) silently graded against the wrong block.
+    try:
+        from fit.periodization import advance_phase_status
+        moved = advance_phase_status(conn)
+        if moved:
+            counts["phases_advanced"] = moved
+            logger.info("Advanced %d training phase(s) to today's date", moved)
+    except Exception as e:
+        logger.debug("Phase status advance skipped: %s", e)
+
     # 8. Body comp staleness check. The actual import is the manual
     # `fit import-health <Export.zip>` workflow — parsing the ~1 GB XML on
     # every sync would dominate run time, and Apple Health exports are
