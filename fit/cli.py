@@ -233,8 +233,19 @@ def forecast(refit, hr):
     console.print(f"\n  Durability β_d: {bd['median']:.3f} [90% {bd['lo']:.3f}–{bd['hi']:.3f}]{dom}")
     console.print(f"  Extrapolation: scale {ex['scale']:.3f} (shrink {ex['shrink']:.2f}"
                   f"{', DEFAULTED' if ex['defaulted'] else ''}) — {ex['reason']}")
-    if ds.d_max < ds.goal:
-        console.print(f"  [dim]⚠ unvalidated: longest effort {ds.d_max:g} km vs {ds.goal:g} km goal[/dim]")
+    from fit.marathon.predict import extrapolation_assessment
+    from fit.goals import days_to_target_race
+    xa = extrapolation_assessment(fc, days_to_race=days_to_target_race(conn))
+    if xa["extrapolating"]:
+        console.print(f"  [dim]Reach: {xa['reach_pct']:g}% past your longest effort "
+                      f"({xa['d_max']:g} km → {xa['goal']:g} km) — wall penalty adds "
+                      f"~{xa['wall_cost_median_sec'] / 60:.0f} min at the median, "
+                      f"~{xa['wall_cost_hi_sec'] / 60:.0f} min at the slow end (one-sided: "
+                      f"the fast end is a floor)[/dim]")
+        if not xa["covered"]:
+            console.print(f"  [yellow]⚠ long-run range short of {xa['coverage_km']:g} km"
+                          + (f" — a {xa['action']['target_km']:g} km+ run would narrow this"
+                             if xa["action"] else " — too close to the race to close it") + "[/yellow]")
 
     console.print("\n  Race-equivalency (today's fitness):")
     for r in dm["race_equivalency"]:

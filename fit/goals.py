@@ -188,6 +188,23 @@ def get_target_race(conn: sqlite3.Connection) -> dict | None:
     return dict(row) if row else None
 
 
+def days_to_target_race(conn: sqlite3.Connection) -> int | None:
+    """Days until the target race, or None when there isn't one (or its date is unusable).
+
+    Single source for advice that only makes sense with a training block still left —
+    chiefly "go run further", which is wrong inside the taper no matter what the
+    forecast's extrapolation gap says.
+    """
+    from datetime import date as _date
+    race = get_target_race(conn)
+    if not race or not race.get("date"):
+        return None
+    try:
+        return (_date.fromisoformat(str(race["date"])[:10]) - _date.today()).days
+    except ValueError:
+        return None
+
+
 def get_next_race(conn: sqlite3.Connection) -> dict | None:
     """Get the nearest upcoming race (for 'next race' countdown, not the anchor)."""
     row = conn.execute("""
